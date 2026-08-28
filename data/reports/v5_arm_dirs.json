@@ -1,0 +1,7 @@
+{
+  "v4_baseline": "data/models/20260721_070717",
+  "v5_distill": "data/models/20260721_101248",
+  "v5_distill_w160": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ \uc2dc\ubc94\uc5f0\ub8cc\ubd09 \uc7a5\uc804 \uc778\ud5c8\uac00 \uacfc\uc81c\\2026\\2_\uacc4\uc0b0\\5_RL\\data\\models\\20260721_105824",
+  "v5_full": "data/models/20260721_073328",
+  "v5_minus_shape": "data/models/20260721_081043"
+}

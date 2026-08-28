@@ -1,0 +1,476 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — flat_power WAVE CAMPAIGN with MASTER verification
+# box 199  |  `python -m lpopt optimize --input fpcamp5_j5j6_199.inp`
+#
+# GOAL (user acceptance bar 2026-07-30): produce a MASTER-verified core with FLAT
+# nodal power that satisfies a cycle-length target and the design constraints,
+# and measure prediction-vs-MASTER agreement ON THE VERIFIED OPTIMAL CANDIDATES.
+#
+# ---------------------------------------------------------------------------
+# CASE  J5_J6 / feed 121  (ga80, e_core 5.10, 2-batch, calibration cell
+#                          `feed=121|ebin=5.05`)
+#
+# THIS IS A NEW CELL.  Campaigns v1..v4 (fpcamp_199 .. fpcamp4_199) all ran
+# E1_E2 / f121 under the OLD champion 20260729_054749 and that cell's flatness
+# frontier has SATURATED — measured on data/store/records.parquet, best
+# node_peak per campaign in E1_E2/f121:
+#
+#     alsearch_E1_E2_f121_frB (pre-campaign store)   1.28418
+#     fpcamp_199   (v1, 96 calls)                    1.22840   (-0.0558)
+#     fpcamp2_199  (v2, 99 calls)                    1.20850   (-0.0199)
+#     fpcamp3_199  (v3, 97 calls)                    1.19320   (-0.0153)
+#     fpcamp4_199  (v4, 97 calls)                    1.18990   (-0.0033)
+#
+# Four campaigns, ~390 MASTER calls, and the last one bought 0.0033 — which is
+# BELOW the champion's own node_peak agreement in that cell (per-cell |pred -
+# MASTER| median 0.0198, data/store/map_calibration.json cell feed=121|ebin=5.0).
+# v4's gain is not distinguishable from the model's noise floor.  Spending a
+# fifth 100-call budget there buys a number nobody can defend.
+#
+# ---------------------------------------------------------------------------
+# WHY J5_J6 / f121, AND WHAT IT IS AND IS NOT
+#
+# It is NOT a flatter cell.  Be explicit about this, because the opposite
+# reading would make the campaign look like a failure at wave 0.  The 31
+# flattest feasible E1_E2/f121 patterns were re-run under J5_J6 fuel with the
+# arrangement HELD FIXED (campaign `frtransfer_J5J6boot`, 2026-08-10, native
+# restart, exact case deck).  Paired by parent_record_id, n=31:
+#
+#     delta            mean      min       max     sign
+#     node_peak      +0.0888  +0.0533   +0.1115   31/31 WORSE
+#     map_cov        +0.0423  +0.0371   +0.0474   31/31 WORSE
+#     F_r            -0.0253  -0.0547   -0.0001   31/31 BETTER
+#     F_q            -0.0279  -0.0948   +0.0271   24/31 better
+#     CBC_max        -36.90   -41.79    -33.38    31/31 BETTER
+#     cyclen         +1.9602  +1.7390   +2.1020   31/31 LONGER
+#
+#   parents (E1_E2)  node_peak 1.1899 - 1.2033 | F_r 1.5065 - 1.5473
+#   children (J5_J6) node_peak 1.2561 - 1.3050 | F_r 1.4896 - 1.5140
+#
+# That is the 13-anchor fuel screen's rho(F_r, node_peak) = -0.750 seen at the
+# level of single cores: this fuel trades ~0.089 of node_peak for ~0.025 of F_r,
+# 37 ppm of CBC and 2 EFPD of cycle.  So the comparator for THIS campaign is the
+# J5_J6 incumbent 1.2561, NOT the program frontier 1.1899.  Anyone reading
+# wave-0 output against 1.1899 will mis-read a healthy run as a regression.
+#
+# The four reasons this cell is worth 100 calls anyway, all measured:
+#
+#   1. LICENSING MARGIN IS WHAT THE DELIVERY RULE ACTUALLY RANKS.  Program §2.2 /
+#      D2 ranks delivery candidates by compliance_margin = 1.55 - F_r, on rows
+#      that already cleared the flat band.  Over the mapped rows of each cell:
+#        E1_E2/f121 (n=792)  F_r min 1.4636 p50 1.7043 p95 2.5632 max 3.4784
+#                            flattest core F_r 1.5233  -> margin 0.0267
+#        J5_J6/f121 (n= 32)  F_r min 1.4896 p50 1.5004 p95 1.5115 max 1.5140
+#                            flattest core F_r 1.4982  -> margin 0.0518
+#      EVERY J5_J6 row in the store is compliant; in E1_E2 half the cell is not.
+#      The J5_J6 core delivers ~2x the licensing headroom of the E1_E2 frontier
+#      core at a flatness cost of 0.066.
+#   2. THE CONSTRAINT SET IS INERT AND THE OBJECTIVE IS UNOBSTRUCTED.  On the 32
+#      mapped rows: F_q p95 1.8694 / max 1.8711 (limit 2.41), CBC p90 1302.1 /
+#      max 1302.4 (limit 1550), |AO| max 0.0394 (limit 0.30), F_r max 1.5140
+#      against the 1.700 safety gate.  ZERO rows are within 0.18 of any limit.
+#      In-cell rho(node_peak, F_q) = +0.959 and rho(node_peak, F_r) = +0.782, so
+#      flattening moves AWAY from every constraint.  The search spends its whole
+#      budget on the objective and none of it fighting a gate.
+#   3. THE CELL IS UNEXPLORED.  Its 32 mapped rows are all FIXED-ARRANGEMENT
+#      TRANSFERS of E1_E2 optima — not one of them was ever produced by a search
+#      run IN this fuel.  Their node_peak spread is 0.0132 SD (1.2561 - 1.3050),
+#      i.e. they are 31 near-clones.  E1_E2 gave up 0.094 of node_peak to search
+#      from a comparable starting point; there is no reason to expect this cell's
+#      arrangement optimum to sit where the E1_E2 optimum's transfer landed.
+#   4. ASSETS ARE EXACT AND NATIVE.  bases/J5_J6/MAS_RST.APRQ_11_0638.15 +
+#      22 package cores under cores/J5_J6/, and CaseKey(pair="J5_J6", feed=121)
+#      .folder == "J5_J6", so resolution succeeds at fallback_level 0 with an
+#      exact case deck (verified live on 199, 2026-08-10).  flat_power sets
+#      strict_restart=True on the live path, which REQUIRES this.
+#
+# CYCLE-LENGTH TARGET  >= 630 EFPD  (observed window 633.8-643.0)
+#   Measured on this cell's 54 converged store rows: cyclen 633.80 - 643.01,
+#   ALL 54 >= 630 EFPD, p50 635.26.  On the 32 mapped rows specifically:
+#   633.80 - 635.56, p50 634.93, sd 0.52.  Within a FIXED cell only the
+#   arrangement varies (within-cell e_core sd 0.0), so cycle length is a ~+-1
+#   EFPD property OF THE CELL here — tighter than E1_E2's +-4.9 — and the target
+#   is met by construction.  flat_power keeps cyclen RECORD-ONLY by contract
+#   (there is no cyclen gate in this mode and there must not be one): the target
+#   is VERIFIED, not enforced — read `cyclen` on every row of labels.jsonl /
+#   delivery.json.  Champion agreement on cyclen in THIS cell is 0.639 EFPD
+#   (median |pred - MASTER| after the per-cell calibration, n=142,
+#   data/models/20260810_bu_T/cell_calibration.json cell feed=121|ebin=5.05),
+#   so the 630 floor is resolvable ~6x over and the >=625 program reference ~14x.
+#
+# ---------------------------------------------------------------------------
+# CHAMPION AGREEMENT IN THIS CELL — measured 2026-08-10 by serving
+#   data/models/20260810_bu_T (cond_schema v6b, in_channels 58) on CPU over the
+#   cell's 32 MASTER-labelled J5_J6 rows, i.e. exactly the elite pool this
+#   campaign starts from:
+#     target      median |pred - MASTER|   median bias   within-cell Spearman
+#     node_peak          0.00565             -0.00327          +0.790
+#     map_cov            0.00336             -0.00313          +0.513
+#     cyclen             0.418 EFPD          +0.418            +0.763
+#     F_r                0.0290              +0.0290           -0.098
+#   Read these three ways:
+#     * The objective is RESOLVABLE.  node_peak agreement 0.00565 against an
+#       elite-pool spread of 0.0132 SD, Spearman +0.790 over 32 near-clone
+#       boards — the model can rank inside the very band the exploit arm mutates.
+#       (E1_E2's cell, for comparison, resolves node_peak to 0.0198.)
+#     * cyclen is verified at 0.418 EFPD against a 630 floor the cell clears by
+#       3.8 EFPD at its worst row — the record-only target cannot be missed by
+#       an amount this campaign could fail to see.
+#     * F_r has NO in-cell ranking skill (Spearman -0.098) and that is harmless
+#       HERE, for two independent reasons: (i) the whole cell spans F_r
+#       1.4896-1.5140, so there is 0.024 of signal to rank and the 0.0290
+#       residual swamps it; (ii) F_r enters this mode only as a 1.700 SAFETY
+#       GATE, which sits ~5.9 residual-sigmas above the predicted level, and the
+#       DELIVERY ranking (§2.2) uses MASTER-VERIFIED F_r with zero bias
+#       correction, never a prediction.  Nothing downstream consumes an F_r rank.
+#
+# ---------------------------------------------------------------------------
+# A/B ELEMENT: NONE.  The rm1i arm carried by v2/v3/v4 is DROPPED HERE.
+#   v3 and v4 are byte-identical to each other apart from title and seed, i.e.
+#   the rm1i measurement is a single accumulating experiment PINNED TO ONE CELL
+#   (E1_E2/f121, dose 0.02, n=31 -> ~223 in-cell labelled rows).  Its registered
+#   scope is exactly that: data/reports/session_report_20260810.md §2 lists it as
+#   "캠페인 v4 (199) | flat_power, seed 907, rm1i A/B 지속" and nowhere else; there
+#   is no preregistration extending it to another cell (grep rm1i / R-03 /
+#   rule_penalty over docs/ + data/reports/ returns that one line).
+#   Carrying the arm into J5_J6 would NOT add to that measurement, it would fork
+#   it: the deck's own evidence is that the rm1i-node_peak correlation is
+#   CELL-DEPENDENT (+0.183 p=0.32 in E1_E2/f121, +0.352 p=0.026 in G3_G4/f121,
+#   +0.079 p=0.68 in K1_K2/f121), so an E1_E2 estimate does not transfer and a
+#   96-row J5_J6 estimate would be a new, under-powered, treatment-x-cell
+#   measurement bought with the budget of the cell's FIRST characterization.
+#   Consequence, and it is the point: all 8 slots per wave are UNTREATED, so this
+#   campaign's flatness statistics are a clean description of the cell rather
+#   than of a cell under a preference.  Every rule penalty below is 0.0.
+#
+# ---------------------------------------------------------------------------
+# DELIVERY POLICY (NEW, retrospective — adopted 2026-08-10 from the
+#   verify-5-of-20 K2 result, data/reports/session_report_20260810.md §1.2):
+#   THE DELIVERED CANDIDATE SET IS THE TOP-5 VERIFIED, NOT THE TOP-1.
+#   Three preregistered batches of 20 (seeds 4636/4784/4785) measured
+#   P1 - P5 = +0.0071 / +0.0784 / +0.0375 (mean +0.0410) of realized F_r,
+#   against a random-ranking null of 0.0299 (excess +0.0111, positive in 2/3
+#   batches); the registered rule (mean >= 0.030 AND 2/3 agreement) fired.
+#   The rank-1 prediction is not reliable enough to be the hand-off.
+#   HOW IT IS APPLIED HERE:
+#     * `delivery.json` already carries the FULL ranking — campaign.py:2149 calls
+#       select_delivery(rows) with NO top_k, so `ranked` is every in-band
+#       feasible row ordered by compliance_margin.  The policy is therefore a
+#       READ-TIME rule on that file: hand over ranked[0:5], not ranked[0].
+#       There is no deck knob that truncates it and none is wanted.
+#     * The one knob that DOES exist is [constraints] post_verify_top_k, which
+#       chooses how many of those ranked candidates the D9 SDM/MTC pre-delivery
+#       gate actually verifies (sdm_mtc.py:1518).  It is raised 3 -> 5 below so
+#       the licensing gate covers exactly the delivered set.  Cost: 2 extra
+#       MASTER calls, reported SEPARATELY from the 100-call search budget.
+#
+# ---------------------------------------------------------------------------
+# BOX 199: 24 logical cores, all-P server box -> use_all_cores = true,
+#   host_reserve = 0.  workers = 8 == wave_size: a wave never has more than 8
+#   chains in flight, so 8 pinned workers saturate the wave and the remaining
+#   cores stay available to the inter-wave CPU inference / fine-tune.
+#   Cost note vs v4: the champion is now cond_schema v6b (58 input channels vs
+#   52), same width/blocks/heads (10.36M params x 5 members), so CPU inference
+#   cost is within a few percent of v4's measured 7 combined predictions/s ->
+#   pool 2500 ~= 6 min/wave, local search 1500 ~= 3.5 min/wave; MASTER is the
+#   CHEAP half (184 s/chain measured, 8 in parallel ~= 3-5 min/wave).
+#   Expect ~20-25 min/wave, ~4-5 h for 12 waves + the reserve wave.
+#
+# ---------------------------------------------------------------------------
+# PRECONDITION (program §2.1, enforced at construction — campaign.py:518-520;
+#   the campaign ABORTS with ModelMismatchError otherwise):
+#   data/store/map_calibration.json must be fitted on THE SERVING champion.
+#
+#   THIS IS ALREADY DONE — the artifact was refit locally against
+#   20260810_bu_T on 2026-08-10T07:06:44 and is SHIPPED WITH THIS DECK.
+#   run_fpcamp5_j5j6_199.bat therefore runs NO refit step (v1 did; v2/v3/v4
+#   skipped it on the grounds that fold C was empty — that is no longer true,
+#   the store has grown 1,444 rows past the frozen S1 id list, and the refit ran
+#   cleanly on 1,280 of them).  Refit evidence, from the artifact's own `fit`
+#   block: model_id 20260810_bu_T, fingerprint 9048108754f9..., split S1,
+#   fold C, 7 cells fitted of 20 seen (floor 12), libraries ga80 1232 /
+#   paramA 48.  Cell `feed=121|ebin=5.05` IS fitted, n=57, 100% ga80:
+#       node_peak  bias -0.004257  sigma 0.01162  sigma_extra 0.0
+#                  median |pred-MASTER| 0.00915 -> 0.00784 de-biased
+#       map_cov    bias -0.004622  sigma 0.00440  sigma_extra 0.0
+#                  median |pred-MASTER| 0.00504 -> 0.00297 de-biased
+#       f_r        bias +0.026426  sigma 0.01624  sigma_extra 0.0
+#                  median |pred-MASTER| 0.02813 -> 0.01095 de-biased
+#   Two consequences worth stating plainly:
+#     (a) fr_bias = max(0, -f_r.bias) = 0.0 and fr_sigma = 0.0, so the D1 F_r
+#         SAFETY GATE HOLDS AT EXACTLY 1.700.  The head OVER-predicts F_r here by
+#         0.026 — the conservative direction — and the clamp forbids a fitted
+#         bias from ever LOOSENING the gate.  A correction IS available and it
+#         is a no-op; that is a proven hold, not an unverified one.
+#     (b) sigma_extra = 0.0 on all three targets: the 5-member ensemble is
+#         already over-dispersed in this cell (sigma_ens 0.060 vs residual sigma
+#         0.0116 on node_peak), so the calibrated UCB sigma is byte-identical to
+#         the raw ensemble spread.  The correction can only ever ADD pessimism
+#         and here it adds none.
+#
+#   NOTE on the model's own flatness_calibration.json — it does NOT satisfy this
+#   precondition and cannot: it is a different artifact (per-cell de-bias applied
+#   INSIDE predict_map_flatness) read from the model dir, while the precondition
+#   is MapCalibration.from_store(store_dir).require_model(...) on the STORE
+#   artifact, which supplies the D1 gate keys and the ensemble-missing sigma.
+#   Relevant fact for this cell: bu_T's flatness_calibration has NO entry for
+#   feed=121|ebin=5.05 (fitted on S1 TRAIN rows at min_rows=30; this cell was
+#   under the floor), so the map head falls back to its ga80 GLOBAL intercept
+#   (node_peak b=+0.00448 n=5297).  The per-cell residual correction in this cell
+#   therefore comes ENTIRELY from the store artifact refit above — which is
+#   exactly why the refit was not optional here.
+####################################################################################
+
+[flow]
+title = "flat_power 199 fpcamp6 — J5_J6/f121 round 2, champion split_S1b (low-F_r-aware), elite pool incl. fpcamp5 winners (1.2277)"
+output_root = "runs"
+random_seed = 911
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8                  # == wave_size; one pinned core per in-flight chain
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # relative to the kit root (cwd at launch)
+harvest_maps = true                  # REQUIRED by flat_power: the objective IS
+                                     # node_peak/map_cov off the harvested EDIT5
+                                     # map (campaign.py:546-552 refuses without it)
+
+[case]
+mode = "fixed"
+pair = "J5_J6"
+feed = 121
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/split_S1b"     # promoted 2026-08-10 (gate-promote,
+                                            # both gates PASS); 6 per-cell
+                                            # calibration artifacts incl. flatness
+cond_schema = "v6b"                         # 58-channel encoder (v6's 52 + the
+                                            # source-chain burn-state block);
+                                            # accepted by _valid_cond_schemas()
+                                            # ONLY on lpopt >= the 0b landing —
+                                            # see the bat's ship list, this is
+                                            # the blocking item for box 199
+map_head_mode = "multiscale"                # must move as one set with cond_schema
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"                     # network-independent; 199 has no GPU role
+library_id = "ga80"
+store_dir = "data/store"
+# The four [model] knobs above are DECLARATIVE on the optimize path: cli.py:801
+# builds PosValCnnBackend.from_dir(model_dir, ...) and model_api.py:451-456
+# rebuilds cond_schema / encoder / map head from the CHECKPOINT's own meta.json.
+# They are kept in the deck (and validated) so the deck cannot silently disagree
+# with what is served.  bu_T's other training flags — cyclen_physics_prior,
+# quantile_heads, promote_max_asm_bu — are likewise read from the checkpoint and
+# are deliberately NOT restated here: no serving code path reads them off the
+# deck, so a deck copy of them could only ever go stale.
+
+[search]
+pool_size = 2500             # 2500/7 preds-per-s ~= 6 min/wave of CPU scoring
+pool_cap = 100000
+elite_frac = 0.65            # fixed-cell exploitation: mutate the cell's elites
+guided_frac = 0.10           # beam rollouts are the expensive arm -> keep small
+diversity_frac = 0.25        # feeds the control arm with novel boards
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32             # THE POOL IS EXACTLY 32 (measured, see below)
+near_miss_top_k = 8          # flat_power seeds the tight arm from the K FLATTEST
+                             # verified rows (never from low-F_r rows: program §10)
+dry_run_pool_size = 400
+# ELITE-POOL HONESTY.  _store_elites (campaign.py:957-994) selects on case_pair
+# ONLY, ranks FEASIBLE-FIRST, and scores with the flat_power scalar, which is
+# -inf for a row carrying no node_peak (campaign.py:1358-1365, program §1.3).
+# The store holds 54 converged J5_J6 rows:
+#     frtransfer_J5J6boot   31  node_peak 1.2561-1.3050, mapped, FEASIBLE
+#     frscreen_flat13        1  node_peak 1.2746,        mapped, FEASIBLE
+#     FEASIBLE_PACKAGE      22  ao_abs / max_pin_burnup / node_peak all NaN ->
+#                               INFEASIBLE under the NaN==missing contract (a
+#                               missing constrained quantity is not a pass), so
+#                               they fall to the infeasible BACKFILL tier
+# MEASURED, not assumed — a local CampaignDriver built on this deck reports:
+#     converged J5_J6 store rows 54 | feasible 32 | with flat label 32 |
+#     feasible AND labelled 32 | _store_elites() -> 32, all 32 carrying
+#     node_peak, {frtransfer_J5J6boot: 31, frscreen_flat13: 1}, zero -inf
+#     objectives, flattest elite node_peak 1.2561 map_cov 0.2580 F_r 1.4982
+#     objective -10.52017
+# 32 parents, 0 shortfall: the elite -> random top-up (construct.py:326-341)
+# cannot fire and the 65% elite arm is a real elite arm.  Raising elite_top_k
+# above 32 would start admitting the label-less package rows as parents;
+# lowering it would discard measured flat parents.  32 is not a carried-over
+# default here, it is exactly the pool size.
+#
+# near_miss_parents is 0 AT WAVE 0 BY DESIGN and that is not a fault:
+# _flat_near_miss_parents (campaign.py:1041-1073) seeds from THIS campaign's own
+# verified rows, which do not exist until wave 0 completes.  The tight (n_moves=1)
+# arm switches on from wave 1, seeded by the 8 flattest rows this run produced.
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 50                   # (feed 117-125, e_core 5.10 +- 0.10) holds 3,907
+                             # converged+valid store rows, 100% ga80, 2,253 of
+                             # them mapped — the region is dense, not a stub
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+objective = "flat_power"     # -(node_peak/PEAK_SCALE + w_cov*map_cov/COV_SCALE), UCB
+budget = 100                 # 12 waves x 8 + 4 reserve = 100 MASTER calls
+wave_size = 8
+exploit = 5                  # ALL THREE ARMS UNTREATED (no rule penalty, see header)
+explore = 2                  # A local dry-run of this deck produced exactly
+control = 1                  #   5 exploit / 2 explore / 1 control at wave 0, and
+                             #   all 5 exploit picks carried origin="elite" with
+                             #   5 DISTINCT frtransfer_J5J6boot parents
+                             #   (node_peak 1.2708-1.2937) — the exploit arm
+                             #   really does mutate this cell's measured elites.
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1            # in objective units; with this cell's peak_scale
+                             # 0.151892 that is 0.0152 of node_peak, i.e. 1.3x
+                             # the champion's own in-cell residual sigma (0.01162)
+                             # — ties are broken inside the noise floor, not
+                             # across it.  (E1_E2 v4 realized 1.03x; same intent.)
+finetune_new_weight = 4
+risk_z = 0.25
+
+# --- feasibility (flat_power: F_r is a SAFETY GATE, never the objective) ------
+cbc_limit = 1550.0
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+flatpower_fr_limit = 1.7     # decision D1 — held at 1.70, not relaxed.  The
+                             # refit map_calibration resolves fr_bias 0.0 /
+                             # fr_sigma 0.0 in this cell, so the applied gate is
+                             # exactly 1.700 (a PROVEN hold, see header)
+flatpower_pin_bu_limit = 80.0
+# f_r_limit / cycle_target_efpd / cycle_tolerance_efpd are NOT read by
+# flat_power (F_r ungated as an objective axis, cyclen record-only).  Left at
+# their defaults deliberately so nothing implies a gate this mode does not have.
+
+# --- flatness normalization (decision D4) ------------------------------------
+flatpower_w_cov = 0.5
+flatpower_per_cell_scale = true   # cell feed=121|ebin=5.05 IS fitted in
+                                  # flat_scale.json: n=31, 100% ga80, feed 121,
+                                  # e_core 5.10 -> peak_scale 0.151892,
+                                  # cov_scale 0.057316.  NO REFIT of that
+                                  # artifact: it is a property of the label
+                                  # corpus, not of the champion, so the model
+                                  # swap does not touch it — and re-fitting it
+                                  # would silently redefine the objective UNITS
+                                  # of all 63 cells, making every stored E1_E2
+                                  # best incomparable (flat_scale.identity /
+                                  # identity_matches, flat_scale.py:179-215).
+                                  # Provenance of the cell's 31 rows: campaign
+                                  # alsearch_J1_J2_f121_frB — case pair J1_J2,
+                                  # not J5_J6.  That is NOT contamination under
+                                  # the program's definition (the cell key is
+                                  # (feed, e_core-bin); the E1_E2 cell likewise
+                                  # mixes E1_E2+E3_E4).  The contamination test
+                                  # is LIBRARY purity and this cell is 100% ga80
+                                  # — unlike feed=121|ebin=5.5, which is 110/150
+                                  # rows of library 5.8_5.1 and whose scales are
+                                  # ~2.4x inflated.
+                                  # WHY NOT the 32 J5_J6 rows' own SD (0.01325 /
+                                  # 0.00235)?  Because they are 31 fixed-LP
+                                  # clones of one E1_E2 optimum, not a search
+                                  # population; the J1_J2 rows in the same cell
+                                  # span node_peak 1.27-1.94 (SD 0.129), which is
+                                  # the order a real search pool spans here.
+                                  # WHY NOT the global constants?  They would
+                                  # realize w_cov = 0.5 * (0.057316/0.081127) /
+                                  # (0.151892/0.370285) = 0.861 — map_cov
+                                  # weighted 1.72x its declared 0.5.  Per-cell is
+                                  # the only setting under which the declared
+                                  # ratio is the realized one (flat_scale.py:20-34).
+flatpower_peak_scale = 0.0        # 0 = use the artifact (do NOT hand-tune)
+flatpower_cov_scale = 0.0
+flatpower_min_map_harvest = 0.5   # HARD abort if a wave stops harvesting maps
+                                  # (campaign.py:1937-1940).  The bootstrap
+                                  # harvested 31/31 in this cell, so a drop below
+                                  # 0.5 means the EDIT5 path broke, not that the
+                                  # cell is hard.
+                                  # NOTE for anyone repeating the local
+                                  # validation: `optimize --dry-run` ALWAYS ends
+                                  # in MAP_HARVEST_ABORT at wave 0 with this
+                                  # deck, because the StubEvaluator produces no
+                                  # EDIT5 map (harvest 0.00 < 0.50).  That is the
+                                  # knob working, not a deck fault — the dry-run
+                                  # still proves construction, the preconditions,
+                                  # the pool and the 5/2/1 selection before it
+                                  # trips.  Use `--dry-run` (not `--budget 0`,
+                                  # which refuses without [master].executable).
+
+# --- rule penalties: ALL OFF (the rm1i arm is dropped, see header) -----------
+flatpower_rule_penalty_rm1i = 0.0
+flatpower_rule_penalty_rm1 = 0.0
+flatpower_rule_penalty_rm2 = 0.0
+flatpower_rule_penalty_rm2i = 0.0
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+# Only the asset-resolution knobs matter to `optimize` (promoted restarts +
+# template fallbacks).  template_fallbacks is EMPTY on purpose: J5_J6/f121 has
+# 22 exact package decks under cores/J5_J6/ and a native base restart
+# (bases/J5_J6/MAS_RST.APRQ_11_0638.15), and a ga80 glob fallback could silently
+# win resolution.
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+[constraints]
+# SDM / MTC PRE-DELIVERY GATE (decision D9).  Runs AFTER the delivery ranking,
+# on the top-K flat feasible cores; its MASTER calls are reported SEPARATELY
+# from the 100-call search budget.
+#
+# REPORT-ONLY on purpose: enable = true with NO limit set measures and records
+# the number and marks nobody a violator.  The APR1400 DCD Table 4.3 values are
+# the physically standard suggestion and are the project's OPEN question, so they
+# stay commented out until confirmed — uncomment to switch the axis to GATED:
+#     mtc_max_pcm_per_c = 9.0
+#     mtc_min_pcm_per_c = -54.0
+#     sdm_required_pcm  = 10870.0
+mtc_enable = true            # ~1 extra MASTER call per candidate (5 total)
+sdm_enable = false           # lpopt has no full-core rod asset -> the SDM branch
+                             # can only report INCONCLUSIVE; enabling it would
+                             # spend calls for no number.  Flip to true only once
+                             # a full-core %ROD_CFG/%ROD_MAP seed exists.
+post_verify_top_k = 5        # RAISED 3 -> 5 for the top-5 delivery policy (see
+                             # header): the licensing gate must cover exactly the
+                             # candidate set that is handed over.  2 extra MASTER
+                             # calls, outside the search budget.

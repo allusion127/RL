@@ -1,0 +1,268 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — R-SEED CONTROL: 2-TYPE, SAME DONOR-ENRICHED ELITE
+# POOL THE 3-TYPE CAMPAIGN GOT.  P6253Z1G06N24_P6253Z2G10N24 / feed 125 / paramA
+# champion s1h (cond_schema v7)  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_HGD569_f125_SEEDCTL_199.inp \
+#        --run-dir runs/fpcamp_minfr_hgd569_f125_seedctl --no-early-stop`
+#
+# Written 2026-08-17, AFTER the 3-type campaign closed (tripletype_f125_results
+# _20260817.md) and demanded exactly this run in its own §8 (R-SEED): "re-run
+# the 2-type deck at this cell with elite_seed_cases pointing at the same donor
+# population. Same seeding, one type fewer. That single run separates the two."
+# Pre-registration: data/reports/hgd569_f125_seedctl_prereg_20260817.md
+#
+################################################################################
+# WHY THIS RUN EXISTS — closing the confound the 3-type campaign flagged
+################################################################################
+#
+# The 3-type campaign's headline (1.5993, -0.0364 vs the 2-type joint frontier
+# 1.6357) is CONFOUNDED: it changed two things at once versus the original
+# 2-type run (fpcamp_minfr_HGD569_f125_199.inp) —
+#   1. the fresh-type alphabet (2 -> 3), the thing under test;
+#   2. the elite seed pool (all-infeasible 32-row backfill -> 32 REAL optimized
+#      boards drawn from this pair's own 129 converged store rows, both feeds).
+#
+# This deck changes ONLY (2), reusing (2)'s exact mechanism, while leaving the
+# alphabet at 2. Same cell, same feed, same objective, same gates, same budget,
+# same box. If the control's joint-clean F_r lands close to 1.5993, seeding
+# explains most of the original delta; if it stays close to 1.6357, the third
+# type is doing real work. See the prereg for the pinned verdict thresholds.
+#
+################################################################################
+# HOW THE SEEDING PARITY IS ACHIEVED — NOT via the elite_seed_cases KNOB
+################################################################################
+#
+# The 3-type deck set `[search] elite_seed_cases =
+# ["P6253Z1G06N24_P6253Z2G10N24"]` because ITS OWN case_pair (a 3-way graded
+# id) matches zero store rows by `case_pair ==` — elite_seed_cases named the
+# 2-type pair as an external DONOR to patch that gap.
+#
+# THIS run's own case_pair IS "P6253Z1G06N24_P6253Z2G10N24" — the donor
+# itself. Setting elite_seed_cases to that same string here is a proven
+# NO-OP: `CampaignDriver._elite_seed_rows` (lpopt/search/campaign.py:1018-1019)
+# filters `str(c) != self.ctx.pair`, so a donor equal to the case's own pair is
+# dropped before the store is even queried. Verified by reading the source, not
+# assumed. The knob is therefore OMITTED here rather than set-and-ignored.
+#
+# The actual mechanism that reproduces the 3-type run's advantage is
+# `_case_store_rows` (own-case, no feed filter) drawing on a store that now
+# holds this pair's own converged output — exactly the same 129-row donor pool
+# (73 converged @ f125, 56 @ f109) the 3-type run received via elite_seed_cases,
+# because BOTH mechanisms read `case_pair == "P6253Z1G06N24_P6253Z2G10N24"`
+# from the same canonical store. VERIFIED DIRECTLY on box 199 before launch
+# (read-only probe, no MASTER started): the store already resident at
+# `data/store/records.parquet` on 199 (sha256 pinned below) carries 74,537
+# total rows and, for this pair, 167 rows / 129 converged (73 @ f125 rounded up
+# through the original campaign's own +57 verified rows, 56 @ f109) — IDENTICAL
+# counts to what elite_seed_cases fed the 3-type run. No store reship was
+# needed or performed: box 199's store already grew to this state through the
+# 3-type run's own harvest, and was left in place.
+#
+# `elite_top_k = 32` (unchanged from the original deck) then ranks that 129-row
+# pool best-objective-first, same as the 3-type run — the parent set is this
+# pair's best ~32 F_r boards, not a fabricated match to the 3-type acceptance
+# path.
+#
+################################################################################
+# EVERYTHING ELSE IS THE ORIGINAL 2-TYPE DECK, BYTE-FOR-BYTE ON EVERY OTHER
+# KNOB. Diff against fpcamp_minfr_HGD569_f125_199.inp is exactly:
+#   [flow] title, random_seed 5695 -> 5696 (fresh, unused anywhere in the repo)
+#   [model] model_dir s1g -> s1h, cond_schema v6b -> v7 (current champion —
+#           the same checkpoint the 3-type run used; s1g is no longer the
+#           champion as of 2026-08-17 and using a stale model would itself be a
+#           second, unregistered confound)
+#   comments only: the ELITE SEEDING block above (mechanism changed, numeric
+#           knobs did not) and this header
+# `near_miss_f_r` stays 1.75 (the ORIGINAL value, not the 3-type run's 1.70) —
+# this control must diff from the original by seeding-mechanism-and-model ONLY.
+# `cycle_target_efpd`/`cycle_tolerance_efpd` stay the original 723.1/40.0
+# (report-only, gate nothing) for the same reason.
+#
+################################################################################
+# MODEL CAVEAT — s1h, NOT a fresh caveat versus the original deck's s1g
+################################################################################
+# s1h (v7) is the champion promoted 2026-08-17 (gate_s1h.json PASS), trained on
+# the 74,477-row all-2-type store — which by its training snapshot already
+# included this pair's own f125 campaign output (that campaign's results were
+# written at 15:07, s1h's gate at 19:55, same day). So unlike the 3-type run,
+# THIS deck's candidates stay ENTIRELY inside v7's training distribution: 2
+# fresh types, g_type_frac_3 == 0, g_n_fresh_types == 2 — the constant channels
+# the 3-type run drove out of range never move here. This run carries LESS
+# model risk than either predecessor, not more.
+#
+################################################################################
+# ASSET RESOLUTION — level 3 (pair_ecore), unchanged from the original deck
+################################################################################
+# Same pair, same feed, same resolver path: `bases/P0_P1/MAS_RST.APRQ_11_0705.02`
+# — verified present on 199 before launch (not assumed).
+#
+################################################################################
+# FLEET RULES.  199 only (busy gate refuses rather than stacks; deck-hash gate
+# refuses on any edit).  198 / 181 / 238 untouched.  Fresh run dir.  Ship-don't-
+# remote-edit: every file scp'd in whole.  Store is NOT reshipped (see above —
+# it already carries the required donor rows; the launch script's store gate
+# pins the SHA256 observed on 199 at pre-flight, so any drift refuses rather
+# than silently running on a different population).
+# NOTE (D) — the `[optimize][DEPRECATED]` banner for min_fr_max_cycle is
+# EXPECTED (campaign.py), not a failed launch.
+# NOTE (R) — `lpopt report`'s "Best verified loading patterns" table ranks by
+# CYCLE DISTANCE regardless of objective and will NOT show the F_r winner.
+# Read `state.json -> best`.  Known defect, unchanged from every prior run.
+################################################################################
+
+[flow]
+title = "R-SEED CONTROL: min_fr_max_cycle 2-type, donor-enriched elites (parity with the 3-type run) — P6253Z1G06N24_P6253Z2G10N24/f125 (paramA, n_gd 24, e_core 5.694), champion s1h (v7), CBC gate 1600, pin-BU gate 78"
+output_root = "runs"
+random_seed = 5696
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+workers = 8
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"   # the paramA package (NOT FEASIBLE_PACKAGE)
+harvest_maps = true                    # record-only on this objective; kept so
+                                       # every row carries node_peak / map_cov
+
+[design]
+# paramA routing (anchors_meshv3_198.inp idiom).  `build_case_resolver` sends a
+# library="paramA" case to THIS package plus the registry alias bridge and the
+# package's own %GEN_DIM dims; without it the case would be routed at the ga80
+# FEASIBLE_PACKAGE and come back unresolved.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[case]
+mode = "fixed"
+pair = "P6253Z1G06N24_P6253Z2G10N24"   # n_gd 24, e_core 5.694 — identical to
+                                       # both the original 2-type deck and the
+                                       # 3-type run's donor pair
+feed = 125                             # n_fresh 31 (feed = 1 + 4N).  Unchanged.
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1h"   # 9th champion (v7).  CURRENT champion as of
+                                # this run — see MODEL CAVEAT above.  Changed
+                                # from the original deck's s1g because running
+                                # a stale model here would be an unregistered
+                                # second confound against the 3-type comparison.
+cond_schema = "v7"              # MUST track model_dir (s1h requires v7).
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "paramA"           # featurize reads the paramA fuel rows; the six
+                                # P6253* type_ids are present in
+                                # data/store/fuel_types.parquet (verified)
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # 32 parents fill — UNLIKE the original deck, this
+                             # is now the pair's REAL 129-row converged pool
+                             # (73 @ f125 incl. the original campaign's own
+                             # output, 56 @ f109), not all-infeasible backfill.
+                             # See the HOW THE SEEDING PARITY block above; no
+                             # elite_seed_cases knob is set (proven no-op here).
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+near_miss_f_r = 1.75          # UNCHANGED from the original 2-type deck (not the
+                             # 3-type run's 1.70) — this control isolates the
+                             # seeding+model change only.
+near_miss_top_k = 8          # INERT here (flat_power only); left at the default
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the campaign's OWN cell is unconditionally
+                             # in-region (TrustRegion.__init__), so n_min cannot
+                             # starve the fixed case — it only decides which
+                             # OTHER bins count as support
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1                  # at f113 this arm produced 37 of 41 feasible cores
+                             # once the elites had seeded a basin
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 60                  # 7 waves x 8 + 4 reserve — SAME as both
+                             # predecessors.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 7
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 1000.0        # the code's own "F_r strictly dominates" default,
+                             # carried from every min_fr precedent.  lambda = 0
+                             # would DELETE the F_r term (acquisition.py:
+                             # scalar = cyclen_lcb - lam_fr*fr_ucb) and silently
+                             # invert this into cycle-length maximisation.
+
+# --- feasibility: F_r / CBC / F_q / |AO| GATE, and pin BU too ----------------
+f_r_limit = 1.55             # licensing limit AND the primary success bar
+cbc_limit = 1600.0           # programme decision 2026-08-11.  THIN margin here
+                             # — anchor floor is 1561.31, only 38.69 ppm under.
+f_q_limit = 2.41             # anchor floor already passes here (2.2810, 2/16
+                             # anchors pass) — expected non-binding.
+ao_abs_limit = 0.30          # slack here: in-cell |AO| max is 0.0630
+
+minfr_pin_bu_limit = 78.0    # UNCHANGED.  LEU+ limit 80 minus 2.0 model margin.
+                             # Screens the PREDICTION only (surrogate target
+                             # index 6); `is_feasible` passes a missing pin BU
+                             # by design.
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING. --------------------------
+cycle_target_efpd = 723.1    # UNCHANGED from the original deck (this cell's own
+                             # measured f125 anchor cyclen p50, 16 rows).
+cycle_tolerance_efpd = 40.0  # UNCHANGED. band 683.1-763.1.
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # MUST stay empty on paramA: a ga80 reload deck
+                             # would win resolution and then fail the paramA
+                             # %GEN_DIM sanity gate (resolver.py header)

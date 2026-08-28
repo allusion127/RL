@@ -1,0 +1,18 @@
+pool 640 -> predicted-feasible 61
+verifying 16 candidates...
+converged 15/16, constraint-feasible 7
+{'status': 'converged', 'pred_cyclen': 729.432, 'pred_f_r': 1.881, 'cyclen': 741.73, 'f_r': 1.852, 'f_q': 2.321, 'cbc_max': 1529.38, 'ao_abs': 0.063, 'feasible': True}
+{'status': 'converged', 'pred_cyclen': 731.643, 'pred_f_r': 1.905, 'cyclen': 740.238, 'f_r': 1.944, 'f_q': 2.623, 'cbc_max': 1529.28, 'ao_abs': 0.073, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 733.929, 'pred_f_r': 1.852, 'cyclen': 739.81, 'f_r': 1.826, 'f_q': 2.456, 'cbc_max': 1546.28, 'ao_abs': 0.064, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 728.524, 'pred_f_r': 1.771, 'cyclen': 738.796, 'f_r': 1.626, 'f_q': 2.058, 'cbc_max': 1515.97, 'ao_abs': 0.05, 'feasible': True}
+{'status': 'converged', 'pred_cyclen': 730.041, 'pred_f_r': 1.893, 'cyclen': 737.836, 'f_r': 2.048, 'f_q': 2.656, 'cbc_max': 1540.13, 'ao_abs': 0.046, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 728.694, 'pred_f_r': 1.864, 'cyclen': 737.212, 'f_r': 1.877, 'f_q': 2.441, 'cbc_max': 1531.17, 'ao_abs': 0.04, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 729.441, 'pred_f_r': 1.929, 'cyclen': 734.094, 'f_r': 1.911, 'f_q': 2.625, 'cbc_max': 1505.27, 'ao_abs': 0.072, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 732.198, 'pred_f_r': 1.808, 'cyclen': 729.981, 'f_r': 1.794, 'f_q': 2.251, 'cbc_max': 1482.17, 'ao_abs': 0.041, 'feasible': True}
+{'status': 'converged', 'pred_cyclen': 730.952, 'pred_f_r': 1.929, 'cyclen': 729.033, 'f_r': 1.942, 'f_q': 2.5, 'cbc_max': 1541.72, 'ao_abs': 0.053, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 729.394, 'pred_f_r': 1.849, 'cyclen': 726.813, 'f_r': 1.866, 'f_q': 2.386, 'cbc_max': 1511.18, 'ao_abs': 0.037, 'feasible': True}
+{'status': 'converged', 'pred_cyclen': 725.548, 'pred_f_r': 1.844, 'cyclen': 725.489, 'f_r': 1.774, 'f_q': 2.352, 'cbc_max': 1484.92, 'ao_abs': 0.065, 'feasible': True}
+{'status': 'converged', 'pred_cyclen': 725.15, 'pred_f_r': 1.837, 'cyclen': 724.294, 'f_r': 1.793, 'f_q': 2.321, 'cbc_max': 1565.48, 'ao_abs': 0.046, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 724.291, 'pred_f_r': 1.849, 'cyclen': 723.347, 'f_r': 1.985, 'f_q': 2.504, 'cbc_max': 1505.95, 'ao_abs': 0.046, 'feasible': False}
+{'status': 'converged', 'pred_cyclen': 726.551, 'pred_f_r': 1.781, 'cyclen': 719.777, 'f_r': 1.714, 'f_q': 2.177, 'cbc_max': 1475.35, 'ao_abs': 0.056, 'feasible': True}
+{'status': 'converged', 'pred_cyclen': 723.868, 'pred_f_r': 1.843, 'cyclen': 717.89, 'f_r': 1.821, 'f_q': 2.328, 'cbc_max': 1465.52, 'ao_abs': 0.051, 'feasible': True}

@@ -1,0 +1,390 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — PIN-GATED RE-CAMPAIGN
+# N1_N2 / feed 113 / ga80 (e_core 5.4)  |  champion s1i (v8)  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_N1N2_f113_PIN_199.inp \
+#        --run-dir runs/fpcamp_minfr_N1N2_f113_pin --no-early-stop`
+#
+# Cloned from fpcamp_minfr_N1N2_f113_199.inp (sha256
+# d93ecff3343959762b6ef80dd067ea98f14cd3901d903e2792e32d0e8782734d, results
+# data/reports/fpcamp_N1N2_f113_results_20260816.md).  That campaign's own
+# result stands unchanged; this is a NEW campaign at the SAME cell under a gate
+# it predates.
+#
+################################################################################
+# PRE-REGISTRATION — written 2026-08-20, BEFORE launch.  Task-approved design.
+# Full marks/readouts: data/reports/f113_pin_prereg_20260820.md
+################################################################################
+#
+# WHY THIS RUN EXISTS — the original campaign's winner is a pin FAIL
+#
+# The 2026-08-16 campaign found 41 F_r-feasible cores at this cell (F_r
+# 1.4961-1.5500, all four legacy gates: F_r/CBC/F_q/|AO|) and reported them as
+# the result. `min_fr_max_cycle` gated NOTHING on pin burnup at that time — the
+# knob `[acquisition] minfr_pin_bu_limit` (config.py:280, default 78.0) was
+# added 2026-08-17, one day AFTER this cell's campaign closed. The addendum
+# written that same day (results doc section 7a) predicted every one of the 41
+# cores breaches 80 GWd/tU pin burnup by the model's own estimate (41/41
+# predicted >= 80, winner predicted 86.75). The 2026-08-20 measured wave
+# (data/reports/pinbu_wave_results_20260820.md) CONFIRMED this on 5 MASTER
+# chains, not just the model: the winner `c9bc21e9513b` (F_r 1.4961, cyclen
+# 641.635) measures pin burnup **86.189 GWd/tU — FAIL** against the LEU+ 80
+# limit, and all 5 spot-checked top-ranked cores from this cell FAIL (85.26 -
+# 86.78 measured, 0/5 PASS). The F_r record stands; it is not deliverable.
+#
+# WHY IT IS WORTH RE-RUNNING, NOT JUST ABANDONING THE CELL
+#
+# The MASTER-verified feasible-core database proves a pin-clean core exists
+# HERE: the best DB core at N1_N2/feed-113 (cid eb995b0da60d, F_r 1.5374, EFPD
+# 659.7) has `pinmax_node_GWd = 73.30` — 6.7 GWd/tU under the 80 limit and
+# 4.7 under this deck's own 78.0 model-margin gate
+# (data/reports/dbx_frontier_table.csv, addendum section 7a). The cell's DB
+# character is the mildest of the three cells checked (frac_node_ge75 =
+# 0.378, vs E1_E2/f109's 0.886 and N1_N2/f109's 1.000 dead end). Nothing about
+# this cell rules out a pin-clean, F_r-competitive core; the ORIGINAL search
+# just never had a reason to look for one, because nothing screened for it.
+#
+# THE PIN HEAD IS NOW VALIDATED — the second precondition this run needed
+#
+# data/reports/pinbu_wave_results_20260820.md scored the champion-served pin
+# head (raw, unfitted `pinbu_physics` — s1i carries none, same as every
+# champion s1c..s1i) against 41 measured MASTER chains, pooled bias **-0.32**
+# GWd/tU, MAE **1.02**, 95% CI [-0.74, +0.08] — inside the 2.0 GWd/tU margin
+# `minfr_pin_bu_limit = 78.0` already spends (80 - 78 = 2.0) and BELOW the
+# H1=+9 head-bias hypothesis the recalibration trigger was written to catch.
+# Section 6's verdict: recalibration NOT triggered, "LEAVE THE SERVE PATH
+# ALONE." That report is registered mark (3) below, together with an honest
+# caveat this deck does NOT get to average away: the feed-113 SLICE of that
+# same validation (n=17, the only feed-113 pin labels the store has ever had)
+# reads bias **-0.83**, MAE **1.44**, 95% CI [-1.59, -0.13] — worse than
+# pooled, and the sign says the head UNDER-predicts locally, i.e. a core
+# gated at 78.0 could measure nearer 78.8-79.4 at THIS cell specifically, not
+# the pooled 77.7. The gate keeps roughly one feed-113-local MAE of headroom
+# under 80 (78 + 1.44 = 79.44), not the two the pooled number would suggest.
+# Registered as a risk, not smoothed into the pooled figure.
+#
+# ---------------------------------------------------------------- THE MARKS --
+# Measured, not assumed. Full table and sourcing: the prereg (path above).
+#
+#  DB existence proof (this cell):      F_r 1.5374,  DB pinmax_node 73.30
+#  Old winner (this campaign's own):    F_r 1.4961,  measured pin   86.189 FAIL
+#  N1_N2/f113 F_r-feasible population:  41 rows (data/store/records.parquet),
+#                                       ALL pin-heavy: 7 measured (85.26-86.78,
+#                                       0/7 <=78), 34 unmeasured but predicted
+#                                       86-88 (2026-08-17 addendum) -> the
+#                                       ENTIRE known feasible population of
+#                                       this cell sits on the wrong side of
+#                                       the new gate.
+#  E1_E2/f109 donor population:        52 F_r-feasible converged rows exist
+#                                       in the store for fpcamp_minfr_E1E2_f109
+#                                       (NOTE: this is E1_E2's own count, not
+#                                       this cell's -- see ELITE SEEDING below
+#                                       for why it is registered but NOT wired
+#                                       into this deck as a donor).
+#
+# ---------------------------------------------------------------------------
+# ELITE SEEDING — investigated, and elite_seed_cases is DELIBERATELY *UNSET*.
+# ---------------------------------------------------------------------------
+#
+# The brief suggested `[search] elite_seed_cases = ["E1_E2"]` (an f109 donor,
+# "the proven knob" per the TRIPLE_f125/HGD569_SEEDCTL precedent). It was
+# checked against the CURRENT code, not assumed transferable, and the
+# precedent does NOT hold here:
+#
+#   * The SEEDCTL precedent's donor pair
+#     ("P6253Z1G06N24_P6253Z2G10N24") shares its ENTIRE 2-type fuel alphabet
+#     with its target's 3-type alphabet
+#     ("P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24") -- the donor's types are a
+#     literal SUBSET of the target's. `graded_morph` relabels a slice of the
+#     donor pattern onto the ONE type it lacks; every other position keeps a
+#     batch label the target case already recognises.
+#   * E1_E2 and N1_N2 are DISJOINT ga80 fuel-type alphabets (E1/E2 vs N1/N2,
+#     no shared member). `GeneralOrbitGenome.from_pattern` (genome.py:356)
+#     parses whatever batch string sits on each fresh position with NO check
+#     against a case-specific alphabet (`validate()`, genome.py:249, only
+#     requires a non-empty string). `_parent_to_genome` -> `_morph_feed`
+#     (construct.py:264,140) relabels ONLY the add/remove DELTA of fresh
+#     units to `ctx.batches`; every donor position untouched by that delta
+#     keeps its ORIGINAL E1/E2 label. Every E1_E2 store row sits at feed
+#     121/109/117/125 (never 113), so the morph delta fires but does not
+#     reach every position.
+#   * Because ga80 is one SHARED 80-type library (E1/E2 are real, resolvable
+#     assemblies elsewhere in the corpus), this would NOT fail loudly --
+#     `to_pattern()`/`validate()` accept the mixed labels, and the resolver
+#     would very likely place a genuine mixed N1/N2/E1/E2 core, MISLABELLED
+#     under `case_pair = "N1_N2"` (the record-id / store-write path fixes
+#     `case_pair` to `ctx.pair` regardless of what fuel types the pattern
+#     actually carries). No precedent in this program proves that path safe,
+#     and it was not test-fired here given the run's own time budget.
+#
+# The knob is therefore left at its default (empty) rather than set-and-
+# hoped. This is NOT a loss of the intended lever: `_case_store_rows`
+# (campaign.py:992, case_pair-only, no feed filter -- unchanged since the
+# 2026-08-16 campaign) already feeds EVERY converged N1_N2 row, any feed,
+# into `_store_elites` automatically, with NO deck knob required -- the SAME
+# safe same-alphabet cross-feed mechanism the original campaign proved. That
+# pool is now 41 (f113, native) + 26 (f121 x14 + f125 x12, the original
+# campaign's own cross-feed elites) = 67 converged feasible N1_N2 rows, all
+# real, all same fuel alphabet.
+#
+# THE OPERATIVE LEVER IS NOT ELITE-PARENT CLEANLINESS ANYWAY. `is_feasible`
+# (campaign.py:263) treats a MISSING `max_pin_burnup` as PASS by explicit
+# 2026-07-31 contract ("a strict reject would zero feasibility on every row
+# that lacks the field, starving elites / best-tracking / the outer
+# weights"). 34 of the 41 f113 elites and effectively all of the f121/f125
+# ones carry no pin label at all, so elite-ranking is UNCHANGED by this
+# deck -- the pool still seeds from the same pin-heavy-but-unlabelled basin
+# the original campaign used. What is NEW is the ACQUISITION-TIME screen:
+# `score_min_fr_max_cycle` (acquisition.py:464-524) now penalises every
+# CANDIDATE's own model-predicted pin-burnup UCB (column 6) against 78.0 with
+# the same 1e4-tier constraint penalty as F_r/CBC/F_q/|AO|. The search does
+# not need clean parents; it needs the exploit/local-search mutation arms to
+# be steered AWAY from high-predicted-pin children every wave, exactly the way the
+# original campaign steered from F_r-infeasible elites toward F_r-feasible
+# children with no F_r-clean elites to start from either. Registering this
+# so the mechanism claim is checkable, not asserted.
+#
+# ---------------------------------------------------------------------------
+# EVERYTHING ELSE IS THE ORIGINAL DECK, BYTE-FOR-BYTE ON EVERY OTHER KNOB
+# EXCEPT: [flow] title/random_seed, [model] model_dir/cond_schema (current
+# champion), [acquisition] budget/wave_size/n_waves (60, not 100) and the new
+# `minfr_pin_bu_limit = 78.0` line (5th gate; the knob already defaults to
+# 78.0 -- set explicitly here so the gate is visibly ACTIVE and auditable,
+# not a silent default). lambda_Fr stays 1000.0 (unchanged rationale, see the
+# parent deck's own header). NO cycle band (`cycle_target_efpd` /
+# `cycle_tolerance_efpd` stay report-only, unchanged values, gate nothing on
+# this objective -- re-verified against the SAME code path, unmoved since
+# 2026-08-16). `near_miss_f_r = 1.65` is UNCHANGED (still below the store's
+# pre-2026-08-16 f113 floor of 1.7243 and above the mesh's bias-corrected
+# floor of 1.5960 -- both still valid reference points; it is a search knob
+# and gates nothing).
+#
+# ---------------------------------------------------------------------------
+# MODEL — s1i (v8), not s1f. s1f (2026-08-16) is now three champions stale;
+# running it here would silently re-introduce the exact frontier bias this
+# deck exists to correct for, on top of never having seen a single pin label
+# during training. s1i is CURRENT as of 2026-08-20 (data/models/s1i,
+# member meta.json cond_schema="v8", DONE marker present) and is the model
+# `pinbu_wave_results_20260820.md` itself validated. `map_head_mode` /
+# `map_prior_residual` / `map_spectral_weight` carried over from
+# fpcamp_mt1_e50_f113_199.inp (the only other f113/box-199 deck already
+# running s1i/v8 on this kit) -- these four keys move as one set with
+# cond_schema (config.py note, unchanged rule).
+#
+# ---------------------------------------------------------------------------
+# ASSET RESOLUTION / STORE / PRECONDITIONS -- reused verbatim, re-verified
+# on box 199 before arming (probe_199.ps1, read-only, no MASTER started):
+#   * box 199 idle: master=0, python=0 processes at probe time.
+#   * data/models/s1i ALREADY on the kit (ensemble.json + DONE present,
+#     member_20260716/meta.json cond_schema="v8") -- no reship needed.
+#   * data/store/records.parquet on the kit is BYTE-IDENTICAL to the local
+#     canonical store: sha256 76346dfd6324bda8d48117ca14fd344ca5be29af76c0e0
+#     1bb31a96267fa336ff on BOTH sides, 74,597 rows (the post-pinbu-merge
+#     store, `max_pin_burnup` non-null 40,808) -- no reship needed.
+#   * Level-2 pair_feed restart resolution (bases/N1_N2/
+#     MAS_RST.APRQ_11_0677.23) -- unchanged from the parent deck, confirmed
+#     present on the kit by the original campaign (98/98 rows resolved this
+#     way, 98% convergence).
+#   * `strict_restart` NOT set (unchanged); `promote()` never called from
+#     `lpopt optimize` (unchanged).
+#
+# CONSTRAINTS HONOURED: 198 / 181 / 238 untouched. Canonical local store
+# READ-ONLY until the final merge. Nothing here touches
+# runs/fpcamp_minfr_N1N2_f113 (CLOSED, 2026-08-16, merged) --
+# this run uses a FRESH run-dir, `runs/fpcamp_minfr_N1N2_f113_pin`.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle PIN-GATED RE-CAMPAIGN — N1_N2/f113 (ga80, e_core 5.4), champion s1i (v8), PURE F_r min, NO cycle band, CBC gate 1600, pin-BU gate 78 (NEW)"
+output_root = "runs"
+# Fresh seed. 1202 is not used by any prior campaign in this program (the
+# parent deck ran 1201; see the full used-seed list checked before picking
+# this one). Adjacent-but-distinct from the parent on purpose: same cell,
+# same lineage, a genuinely new draw.
+random_seed = 1202
+
+[master]
+# BOX 199 path. Do NOT "fix" this to a D: drive -- that is the local box.
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8                  # == wave_size; one pinned core per in-flight chain
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16              # not binding: 0 of the parent campaign's 98
+                             # converged rows hit the cap; they land in 7-12
+                             # cycles
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # relative to the kit root (cwd at launch).
+                                    # THE ga80 PACKAGE -- unchanged.
+harvest_maps = true                 # RECORD-ONLY on this objective. Kept true
+                                    # so every row carries node_peak / map_cov.
+
+[case]
+mode = "fixed"
+pair = "N1_N2"
+feed = 113
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1i"   # 10th champion (2026-08-18, v8). Validated by
+                                # the pin-burnup wave this deck's whole gate
+                                # depends on (pooled bias -0.32, MAE 1.02).
+cond_schema = "v8"              # MUST track model_dir. 62ch (v6b 58 + v6c ADF
+                                # 4) + globals extended for the 3..5-fresh-type
+                                # alphabet (inert here: this case is 2-type).
+map_head_mode = "multiscale"    # must move as one set with cond_schema
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"         # network-independent; 199 has no GPU role
+library_id = "ga80"             # all N1_N2 store rows are ga80
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # UNCHANGED. Elite parents now number 67
+                             # converged feasible N1_N2 rows (41 native f113 +
+                             # 26 cross-feed f121/f125) -- see ELITE SEEDING
+                             # above for why no elite_seed_cases donor is set.
+guided_frac = 0.10            # beam rollouts are the expensive arm -> keep small
+diversity_frac = 0.25         # feeds the control arm with novel boards
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32              # unchanged; feasible-first ranking now draws
+                             # from a larger same-cell pool than the parent
+                             # deck had (67 vs 26)
+# elite_seed_cases -- DELIBERATELY UNSET. See the ELITE SEEDING section above
+# for the code-level reason this run does not name E1_E2 as a donor.
+#
+# LIVE on this objective: `_near_miss_parents` admits THIS CAMPAIGN'S OWN
+# verified rows with F_r <= this bound into the elite-parent set with an
+# n_moves=1 tight-move bias. UNCHANGED from the parent deck: 1.65 sits below
+# the store's pre-campaign f113 floor (1.7243) and above the mesh's
+# bias-corrected floor (1.5960); it is a search knob and gates nothing.
+near_miss_f_r = 1.65
+near_miss_top_k = 8          # INERT here (flat_power only). Left at the default.
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the (feed 113, e_core 5.4 +- 0.1) bin now holds
+                             # 226 converged labels (was 128 pre-campaign) --
+                             # comfortably in support.
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1                  # at this cell the local-search arm produced 37 of
+                             # 41 feasible cores last time, once the elites had
+                             # seeded a basin -- the same arm now has to find
+                             # the pin-clean SUB-basin of that F_r-feasible
+                             # region.
+
+[acquisition]
+# MINIMISE F_r (primary), cyclen the subordinate tie-break. Exploit scalar is
+# `cyclen_LCB - lambda_Fr * F_r_UCB` minus a 1e4-tier penalty for any predicted
+# violation of the FIVE gated axes (F_r/CBC/F_q/|AO|/pin-BU -- pin-BU is the
+# one new axis versus the parent deck).
+objective = "min_fr_max_cycle"
+budget = 60                  # 7 waves x 8 + 4 reserve. Deliberately smaller
+                             # than the parent's 100: this is a re-campaign
+                             # under a new gate at an already-characterised
+                             # cell, not an opening campaign.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 7
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1            # NOTE: at lambda 1000 a 0.1 band on the exploit
+                             # scalar is a 0.0001 band on F_r, so the margin
+                             # tie-break effectively never fires and the
+                             # ranking is pure exploit -- unchanged from the
+                             # parent deck's own note.
+finetune_new_weight = 4
+risk_z = 0.25                # cyclen enters at mu-0.25sigma (LCB), F_r AND
+                             # pin-BU at mu+0.25sigma (UCB) -- conservative on
+                             # all three legs
+
+# --- THE objective weight (unchanged rationale, parent deck header) ----------
+minfr_lambda = 1000.0        # NOT 0.0: lambda=0 collapses the scalar to
+                             # `cyclen_lcb` and silently inverts the campaign
+                             # into pure cycle-length maximisation. 1000 is the
+                             # code's own "F_r strictly dominates" default.
+
+# --- feasibility: all FIVE axes GATE in this mode -----------------------------
+f_r_limit = 1.55             # the licensing limit and the campaign's own
+                             # SECONDARY success bar (see prereg). NOT
+                             # tightened toward the DB's 1.5374 for the same
+                             # reason the parent deck gave: at 1.55 the pair
+                             # offers 67 verified-feasible elite parents.
+cbc_limit = 1600.0           # program decision 2026-08-11, unchanged.
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+minfr_pin_bu_limit = 78.0    # THE NEW GATE (5th axis). Default per config.py
+                             # -- set explicitly here so it is visibly ACTIVE,
+                             # not a silent inherited default. LEU+ 80 minus a
+                             # 2.0 GWd/tU model-margin haircut. Pooled
+                             # validation (n=41): bias -0.32, MAE 1.02 --
+                             # inside this margin. Feed-113 slice (n=17): bias
+                             # -0.83, MAE 1.44 -- worse; registered as a risk
+                             # in the header, not tightened against (the task
+                             # specified 78.0 and 78.0 is what is armed).
+
+# --- REPORT-ONLY cycle readouts. THEY GATE NOTHING. (unchanged) ---------------
+cycle_target_efpd = 659.7    # the DB-truth core's own EFPD.
+cycle_tolerance_efpd = 30.0  # renders the report band as 629.7-689.7.
+
+# NOT SET, because this objective does not read them (unchanged rule):
+#   flatpower_*   (flat_power branch only)      fuelcost_*   (min_fuel_cost only)
+#   fr_boundary_* (fr_boundary only)            mcmf_lambda  (max_cycle_min_fr only)
+
+# --- wave online-update gate (unchanged) --------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping (unchanged) -----------------------------------------------------
+# The launcher passes --no-early-stop. `_is_on_target` returns True for ANY
+# constraint-feasible row in this mode (now including the pin gate), which
+# would satisfy early-stop on the FIRST pin-clean feasible label -- unwanted
+# when the frontier below it is also wanted.
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+# Only the asset-resolution knobs matter to `optimize`.
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # EMPTY ON PURPOSE, unchanged rationale (N1_N2
+                             # resolves via the "any same-pair deck" tier).
+
+[constraints]
+# SDM / MTC PRE-DELIVERY GATE (decision D9). REPORT-ONLY here (unchanged --
+# the parent campaign found this block inert on this objective; carried for
+# consistency with every min_fr deck in this line, not because it does
+# anything new).
+mtc_enable = true
+sdm_enable = false           # lpopt has no full-core rod asset -> INCONCLUSIVE only
+post_verify_top_k = 5        # a no-op if the campaign finds no feasible core

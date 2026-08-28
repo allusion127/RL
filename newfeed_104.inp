@@ -1,0 +1,144 @@
+# lpopt NEW-FEED coverage deck -- 104 LOCAL (ga80 feeds 105/129/137, P-cores).
+# Directive 2026-07-25 (a): the 105/129/137 columns are EMPTY across the whole
+# corpus yet fully producible -- the resolver reaches them at level-2 pair_feed
+# with the EXISTING ga80 library (verified: restart Y + template Y on all pairs).
+# Zero new physics assets, maximum grid diversity: 3 feeds x 3 ga80 bands = 9 cells.
+# These feeds are valid on the 1+4N grid; they were simply never in the curriculum
+# feed set (101/109/117/125/133/141 + 113/121).
+# P-CORES ONLY (use_all_cores=false). Disjoint vs fill_* and vs 198 paramA feeds.
+
+[flow]
+title = "new-feed 104 (ga80 f105/f129/f137, P-cores, seed 1110)"
+output_root = "runs"
+random_seed = 1110
+
+[master]
+executable = "D:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "../3_GA_Surrogate/FEASIBLE_PACKAGE"
+harvest_maps = true
+
+[model]
+model_dir = "data/models/20260725_063351"   # A6 champion (honest-gate promoted 2026-07-25, v6)
+cond_schema = "v6"           # A6 = 52ch v6; must match the champion
+store_dir = "data/store"
+library_id = "ga80"
+device = "cpu"
+
+[produce]
+campaign = "newfeed20260725"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+workers = 8
+use_all_cores = false
+host_reserve = 1
+chain_timeout = 3600
+max_cycles = 14
+purge_intermediate = true
+promoted_root = "data/produce/promoted"
+template_fallbacks = [
+  "../3_GA_Surrogate/runs_flow/*/cases/*/*/candidates/*/rank_*_*/MAS_INP_cy*.inp",
+]
+
+[[produce.strata]]
+name = "nf_5-5.25_f105"
+campaign = "nf_5-5.25_f105"
+library = "ga80"
+pairs = ["A2_A8", "E1_E2", "E3_E4", "J1_J2"]
+feed = 105
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 120
+
+[[produce.strata]]
+name = "nf_5.25-5.5_f105"
+campaign = "nf_5.25-5.5_f105"
+library = "ga80"
+pairs = ["L1_L2", "L3_L4", "L5_L6", "N1_N2", "N3_N4", "N5_N6"]
+feed = 105
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 120
+
+[[produce.strata]]
+name = "nf_5.5-5.75_f105"
+campaign = "nf_5.5-5.75_f105"
+library = "ga80"
+pairs = ["G3_G4", "H1_H2", "H3_H4"]
+feed = 105
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 120
+
+[[produce.strata]]
+name = "nf_5-5.25_f129"
+campaign = "nf_5-5.25_f129"
+library = "ga80"
+pairs = ["A2_A8", "E1_E2", "E3_E4", "J1_J2"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 110
+
+[[produce.strata]]
+name = "nf_5.25-5.5_f129"
+campaign = "nf_5.25-5.5_f129"
+library = "ga80"
+pairs = ["L1_L2", "L3_L4", "L5_L6", "N1_N2", "N3_N4", "N5_N6"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 110
+
+[[produce.strata]]
+name = "nf_5.5-5.75_f129"
+campaign = "nf_5.5-5.75_f129"
+library = "ga80"
+pairs = ["G3_G4", "H1_H2", "H3_H4"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 110
+
+[[produce.strata]]
+name = "nf_5-5.25_f137"
+campaign = "nf_5-5.25_f137"
+library = "ga80"
+pairs = ["A2_A8", "E1_E2", "E3_E4", "J1_J2"]
+feed = 137
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 100
+
+[[produce.strata]]
+name = "nf_5.25-5.5_f137"
+campaign = "nf_5.25-5.5_f137"
+library = "ga80"
+pairs = ["L1_L2", "L3_L4", "L5_L6", "N1_N2", "N3_N4", "N5_N6"]
+feed = 137
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 100
+
+[[produce.strata]]
+name = "nf_5.5-5.75_f137"
+campaign = "nf_5.5-5.75_f137"
+library = "ga80"
+pairs = ["G3_G4", "H1_H2", "H3_H4"]
+feed = 137
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 100
+priority = 100

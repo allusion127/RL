@@ -1,0 +1,25 @@
+mini campaigns: ['e6.0_f113', 'e6.0_f109']  (80 chains)
+probe chains: 160 over 11 cells
+TOTAL 240 / 250 chains; high-e (e>=5.8) share 64% (floor 60%) -> OK
+
+wrote C:\Users\USER\Desktop\CT&RPL\2_Project\KNF_LEU+ 시범연료봉 장전 인허가 과제\2026\2_계산\5_RL\data\reports\mesh_v3_20260817\anchor_plan.csv
+
+--- the anchor set ---
+     cell     role  n_chains                 anchor_pair anchor_realizability  anchor_n_store_pair_feed  GAP   DIS  REACH  score  lrm_ceil_efpd  surrogate_ceil  min_pred_f_r  fr_true_min
+e5.6_f129    probe        16 P6253Z2G06N24_P6253Z2G10N24                  미발견                         0  1.0 1.000    0.8  0.960        739.760         721.696         1.695          NaN
+e5.6_f125    probe        16 P6253Z2G06N24_P6253Z2G10N24                  미발견                         0  1.0 1.000    0.8  0.960        725.760         712.602         1.705          NaN
+e6.0_f109 campaign        40 P6257Z1G10N12_P6656Z2G08N12                  미발견                         0  1.0 1.000    0.8  0.960        720.283         739.602         1.790          NaN
+e6.0_f113 campaign        40 P6257Z1G10N12_P6656Z2G08N12                  미발견                         0  1.0 1.000    0.8  0.960        735.930         759.936         1.762          NaN
+e6.4_f113    probe        15 P6661Z1G06N12_P6661Z1G06N16      격자-우회(fallback)                         0  1.0 1.000    0.6  0.920        777.143         812.531         1.851          NaN
+e6.4_f129    probe        15 P6661Z1G06N12_P6661Z1G06N16      격자-우회(fallback)                         0  1.0 1.000    0.6  0.920        840.544         871.748         1.822          NaN
+e6.2_f129    probe        15 P6656Z1G10N16_P6656Z2G08N12      격자-우회(fallback)                         0  1.0 1.000    0.6  0.920        818.348         831.260         1.830          NaN
+e6.1_f129    probe        15 P6656Z1G10N16_P6656Z2G08N12      격자-우회(fallback)                         0  1.0 0.879    0.6  0.872        805.375         816.163         1.803          NaN
+e5.3_f129    probe        15                       L1_L2                실현 확인                        14  0.6 1.000    1.0  0.840        700.566         684.548         1.583        1.847
+e6.1_f113    probe        14 P6656Z1G10N16_P6656Z2G08N12      격자-우회(fallback)                         0  1.0 0.714    0.6  0.806        744.627         756.167         1.876          NaN
+e5.7_f125    probe        14 P6253Z2G08N16_P6253Z2G10N20                  미발견                         0  1.0 0.466    0.8  0.746        738.965         738.021         1.710          NaN
+e5.4_f129    probe        14                       N1_N2                실현 확인                        22  0.6 0.729    1.0  0.732        713.716         703.263         1.618        1.729
+e5.3_f121    probe        11                       L1_L2                실현 확인                        78  0.3 1.000    1.0  0.720        669.368         667.502         1.485        1.491
+
+--- MASTER 실측 F_r 바닥 (보고용, 점수에 미반영) ---
+  저농축 e<5.6: 36셀, 실측 최소 F_r 1.464–1.847; Tier-1(<=1.55) 17셀, Tier-2(<=1.65) 23셀, Tier-3(<=1.8) 34셀
+  고농축 e>=5.6: 26셀, 실측 최소 F_r 1.730–2.135; Tier-1(<=1.55) 0셀, Tier-2(<=1.65) 0셀, Tier-3(<=1.8) 6셀

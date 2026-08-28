@@ -1,0 +1,469 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — LOW-FEED OPENING CAMPAIGN
+# N1_N2 / feed 113 / ga80 (e_core 5.4)  |  champion s1f  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_N1N2_f113_199.inp \
+#        --run-dir runs/fpcamp_minfr_N1N2_f113 --no-early-stop`
+#
+# Cloned from fpcamp_minfr_T6T4_199.inp (conventions) + fpcamp_minfr_199.inp
+# (the ga80/199 objective audit — read its header for the full derivation of
+# NOTE (D)/(S)/(M) and the cyclen-gating gap; all of it still applies).
+#
+################################################################################
+# PRE-REGISTRATION — written 2026-08-16, BEFORE launch.  User-approved design.
+################################################################################
+#
+# OBJECTIVE (registered, one line):
+#   PURE F_r MINIMISATION UNDER SAFETY GATES ONLY.  NO cycle-length target and
+#   NO cycle-length band.  cyclen is RECORDED on every row and is the objective's
+#   subordinate tie-break, nothing more.  (User directive 2026-08-16:
+#   "주기길이를 특정 efpd에 고정하지 말고" — do not pin the cycle length to a
+#   specific EFPD.)  All FOMs are recorded, so the (cyclen, F_r) Pareto front is
+#   preserved for a multi-objective readout later (user: "최적의 해는 정의가
+#   바뀔 수도" — the definition of the optimum may yet change).
+#
+# ------------------------------------------------------------------ PURPOSE --
+#   (a) FIND FEASIBLE CORES (F_r <= 1.55) AT feed 113.  The MASTER-verified
+#       feasible-core database proves they exist in THIS cell; our store's
+#       minimum here is 1.7243, and every one of those rows is PRODUCE SAMPLING,
+#       never an optimisation.
+#   (b) GENERATE FRONTIER LABELS that correct the champion's low-feed pessimism.
+#       s1f moved toward truth in the labelled cells, but the labels it moved on
+#       were unoptimised produce rows.  This campaign supplies OPTIMISED ones.
+#
+# ---------------------------------------------------------------- THE MARKS --
+# Measured, not assumed.  Sources are named so every number can be re-derived.
+#
+# 1. DB TRUTH — data/reports/scoping_mesh_20260815/feasible_database.xlsx,
+#    sheet `cores`, pair N1_N2 & feed 113 (45 rows; 13 with eq_ok AND
+#    feasible_at_metrics):
+#       F_r      min 1.5374   p50 1.5493   max 1.5499   sd 0.0034
+#       EFPD     659.5 - 660.2          CBC_max  ~1431 - 1440
+#       F_q      ~1.922 - 1.945         |AO|     <= 0.048
+#       enrichment_segment 5.4 (realized 5.416) — the SAME segment our store's
+#       N1_N2 rows carry (e_core 5.4 on all 1600 of them), so this is a
+#       like-for-like comparison, not a cross-enrichment one.
+#    The single best DB core: cid eb995b0da60d, F_r 1.5374, EFPD 659.7,
+#    composition "N1 x61, N2 x52" (split 0.540).
+#
+# 2. OUR STORE'S FLOOR IN THIS CELL — data/store/records.parquet,
+#    case_pair=N1_N2, feed=113, converged (n=128 of 187):
+#       F_r      min 1.7243   p10 1.8539   p50 2.0627
+#       cyclen   617.5 - 651.0 (p50 634.1)
+#       by campaign:  feedgrid_t1_N1_N2_f113   96 conv, F_r min 1.7243
+#                     fill_5.25-5.5_f113       20 conv, F_r min 1.8375
+#                     alsearch_N1_N2_f113_frB  12 conv, F_r min 1.8032
+#       NOT ONE of the 128 is constraint-feasible.  Best CBC/F_q/|AO|-passing
+#       row still sits at F_r 1.7243.
+#    THE DATA GAP IS THEREFORE +0.1869 F_r (1.7243 - 1.5374) and it is the
+#    single largest term in this cell's error budget.
+#
+# 3. THE MODEL-ONLY MESH ALREADY TRIED THIS AND FELL SHORT —
+#    data/reports/scoping_mesh_20260815/cell_verdicts.csv row 29
+#    (segment 5.4 / feed 113 IS N1_N2/f113; see pair_selection.csv):
+#       mesh_min_pred_f_r   1.6226     mesh_n_feasible     0
+#       f_r_bias_tail      +0.0266     corrected_floor     1.5960
+#       gap_total          +0.0852     gap_data           +0.1869
+#       gap_pool           +0.0586     gap_search         -0.1283
+#       verdict            pool-starved
+#    READ gap_search: it is NEGATIVE.  The pool already beat the store's own
+#    minimum by 0.128 — the pool machinery is not the problem.  And the mesh's
+#    own diagnosis (comparison_readout.md section 3) names OUR MECHANISM
+#    explicitly: "모자란 것은 셔플 카드(장전 배치) 자체이고, 그 이유는 엘리트
+#    부모가 feed 121 패턴을 feed-morph 해서 만들어졌기 때문이다" — what is
+#    missing is the loading arrangement itself, BECAUSE the elite parents were
+#    made by feed-morphing feed-121 patterns.
+#
+#    THIS DECK RUNS THAT SAME CROSS-FEED TRANSFER AGAIN.  Registering the
+#    difference honestly, in advance: the mesh was MODEL-ONLY (1200 predictions,
+#    zero MASTER calls, no wave-to-wave learning).  This campaign adds 100 MASTER
+#    labels IN THE CELL plus a per-wave online finetune, which is the only lever
+#    that can move the data gap.  If it still stalls above 1.55, the mesh's
+#    reading stands and the honest conclusion is written below under NULL.
+#
+# --------------------------------------------------------------- SUCCESS ----
+#   PRIMARY   a MASTER-verified constraint-feasible core (F_r <= 1.55, CBC <= 1600,
+#             F_q <= 2.41, |AO| <= 0.30) at N1_N2/feed-113.  There is currently
+#             ZERO such row in the store for this cell; one row is the result.
+#   SECONDARY F_r <= 1.5374, i.e. matching or beating the DB's own best core in
+#             this cell with a loading pattern we actually hold (the DB ships no
+#             shuffle card — see comparison_readout.md section 1: 0 of 6113 cids
+#             resolve to any store key).
+#   PARTIAL   no feasible row, but the cell's floor moves below 1.7243.  Every
+#             0.01 of that is a FRONTIER LABEL in the region s1f has never seen,
+#             which is purpose (b) and is delivered whether or not (a) is.
+#   NULL      the floor does not move below ~1.72 in 100 calls.  PUBLISHABLE, and
+#             the reading is NOT that the cell is closed — the DB proves it is
+#             not.  The reading is that CROSS-FEED ELITE TRANSFER IS INSUFFICIENT
+#             here and the cell needs its own retrain loop (the r3/r4 pattern):
+#             label -> retrain -> re-search, rather than one-shot transfer.
+#
+# ---------------------------------------------------------------------------
+# WHY CROSS-FEED SEEDING WORKS WITHOUT A CODE CHANGE — audited, not assumed.
+#
+# The brief asked whether build_pool would receive usable elites for a cell whose
+# own 128 rows are all infeasible, and whether the feed-morph machinery has to be
+# wired up.  Neither is needed.  Both facts were read off the code ON THE KIT:
+#
+#   * `_case_store_rows` (campaign.py:980 on the 199 kit) filters the store by
+#     `case_pair` ONLY — there is NO feed filter.  So `_store_elites` for this
+#     campaign already sees ALL 1600 N1_N2 rows across feeds 101..141.
+#   * `_store_elites` (campaign.py:985-1022) ranks FEASIBLE-FIRST by
+#     `_campaign_objective`, which on this objective is `-F_r*1e6 + cyclen`
+#     (campaign.py:1457 on the kit).  So the elite parents are automatically the
+#     lowest-F_r constraint-feasible N1_N2 rows in the whole store.
+#   * `_parent_to_genome` (construct.py:165 on the kit) feed-morphs any parent
+#     whose n_fresh differs from the case's: `_morph_feed(genome, rng,
+#     ctx.n_fresh, ctx.batches)`.  The 121->113 and 125->113 morphs are exactly
+#     this call.
+#
+# WHAT THE ELITE SET WILL ACTUALLY BE (computed against the store shipped with
+# this launch — 26 constraint-feasible N1_N2 rows exist, and NONE is at f113):
+#       feed 121   14 rows   F_r 1.4932 .. 1.5500   cyclen 673.3 .. 679.6
+#       feed 125   12 rows   F_r 1.5176 .. 1.5431   cyclen 680.7 .. 690.3
+#   Top parent: 8a025125a033..., campaign frscreen_flat13, f121, F_r 1.4932,
+#   cyclen 673.3.  `elite_top_k = 32` then backfills 6 more with the best
+#   INFEASIBLE converged rows.  The pool is neither empty nor degenerate, so no
+#   near-miss/elite re-wiring was made.  SMALLEST CHANGE = NO CHANGE.
+#
+# ---------------------------------------------------------------------------
+# lambda_Fr — THE ONE PLACE THE BRIEF'S INSTRUCTION HAD TO BE INVERTED.
+#
+# The brief said to try `minfr_lambda = 0.0` for "pure F_r minimisation", and to
+# check the lambda=0 path for degeneracy first.  IT WAS CHECKED AND IT IS
+# DEGENERATE — in the exact opposite direction:
+#
+#     acquisition.py:474   scalar = cyclen_lcb - lam_fr * fr_ucb
+#
+# At lam_fr = 0.0 the F_r term VANISHES and `scalar` collapses to `cyclen_lcb`.
+# The acquisition would then rank candidates by PURE CYCLE-LENGTH MAXIMISATION —
+# the precise opposite of this campaign — with F_r surviving only as a 1.55 gate.
+# There is no division and no NaN; it simply silently inverts the objective.
+#
+# Worse, it would put the two halves of the campaign in open contradiction:
+# best-tracking is HARD-CODED to strict lexicographic (F_r asc, cyclen desc) via
+# `-F_r*1e6 + cyclen` (campaign.py:1457) and 1e6 is NOT a knob.  At lambda = 0
+# the search would spend its MASTER calls chasing long cycles while `best` and
+# `_store_elites` ranked purely on F_r.
+#
+#   lambda_Fr = 1000.0  (the code's own documented default, config.py:241)
+#
+# is therefore the FAITHFUL implementation of "pure F_r minimisation, cyclen a
+# tie-break only": config.py:239-241 states it "sizes F_r to STRICTLY dominate
+# cyclen (lambda*0.01 = 10 EFPD)".  At 1000 the acquisition ordering AGREES with
+# the hard-coded best-tracking ordering, which is the property the brief wanted.
+#
+# NOTE this is a DELIBERATE departure from the two parent decks (E1_E2 used 200,
+# T6_T4 used 400).  Both lowered lambda to PROTECT a cycle-length floor.  THIS
+# CAMPAIGN HAS NO CYCLE FLOOR TO PROTECT — that is the user directive — so the
+# reason those decks reduced lambda does not exist here.
+#
+# Sanity check that lambda=1000 does not break the constraint hierarchy: the
+# gated-axis penalty is multiplied by `_MAXCYCLE_CONSTRAINT_TIER = 1.0e4`
+# (acquisition.py:191) with F_r width 0.01, so a candidate predicted at F_r 1.75
+# carries a penalty of 1e4 * ((1.75-1.55)/0.01)^2 = 4.0e6, dwarfing the
+# lambda*F_r term (~1750).  Feasibility still strictly dominates.  Confirmed.
+#
+# ---------------------------------------------------------------------------
+# NO CYCLE BAND — what was checked, and what the two cycle knobs below do.
+#
+# The T6_T4 deck's cyclen readouts (633.0 +- 5.0) are NOT carried over; carrying
+# them would have described a 628-638 EFPD band that has nothing to do with this
+# cell (its own rows run 617-651 and the DB's best sits at 659.7).
+#
+# `cycle_target_efpd` / `cycle_tolerance_efpd` GATE NOTHING on this objective.
+# Re-verified on the kit's own code for this launch:
+#   * `feasibility_limits_for` (campaign.py) leaves cyclen_lo / cyclen_hi = None
+#     for every objective EXCEPT min_fuel_cost — min_fr_max_cycle has no cyclen
+#     gate at all, and there is no knob that would create one.
+#   * `_is_on_target` short-circuits to True for min_fr_max_cycle before the
+#     +-tolerance test is ever reached.
+# They are set below ONLY so two report readouts are meaningful rather than
+# reading against the meaningless default of 625: `_maybe_update_best` writes
+# `distance = |cyclen - cycle_target_efpd|` into `best`, and `lpopt report`
+# renders a band.  They are set to the DB-truth cycle with a tolerance wide
+# enough to span this cell's entire observed range, so the band cannot express a
+# preference and `distance` reads as "EFPD short of the DB-truth core's cycle".
+#
+# CBC: `cbc_limit = 1600.0` IS a live gate and is the program-wide 2026-08-11
+# value.  It is not a "band screen" and is not inherited from T6_T4 — it is the
+# program decision.  It is generous at this cell (our f113 rows run CBC ~1401
+# median; the DB's feasible cores ~1432), so it will rarely bind.
+#
+# ---------------------------------------------------------------------------
+# ASSET RESOLUTION — level 2 (pair_feed), verified, expected, NOT a warning.
+#
+# `CaseKey.folder` is `pair` when feed == 121 and `<pair>_f<feed>` otherwise
+# (vendor/masterrl/domain.py:259-260).  So this case's folder is `N1_N2_f113`:
+#   * restart: bases/N1_N2_f113 does NOT exist -> promoted/N1_N2_f113 (absent on
+#     this kit) -> LEVEL 2 pair_feed -> FEASIBLE_PACKAGE/bases/N1_N2/
+#     MAS_RST.APRQ_11_0677.23  (confirmed present on the kit, single file).
+#   * template: cores/N1_N2_f113/*/MAS_INP_cy*.inp does NOT exist -> "any
+#     same-pair deck" -> FEASIBLE_PACKAGE/cores/N1_N2/<hash>/MAS_INP_cy12.inp
+#     (32 such dirs on the kit, each holding exactly one cy12 deck).
+#
+# THIS IS ALREADY PROVEN FOR THIS EXACT CELL: 67 of the store's f113 rows carry
+# `restart_provenance = pair_feed:MAS_RST.APRQ_11_0677.23` and converged normally
+# (n_cycles 7-12).  Spot-check labels.jsonl on wave 0: every row must read
+# `pair_feed:MAS_RST.APRQ_11_0677.23` (or `promoted:...` if a promotion lands).
+# `strict_restart` is NOT set on this objective (NOTE (S) in fpcamp_minfr_199.inp)
+# and would not fire anyway — it only raises at level >= 3.
+#
+# PROMOTION: `resolver.promote()` is called ONLY from ProduceDriver
+# (produce.py:1287); `lpopt optimize` never calls it.  So this campaign READS a
+# promoted restart if one exists and never writes one.  Nothing to verify beyond
+# the level-2 path above.  (The kit's `assets.py:867 promote()` carries the
+# atomic-copy + single-restart-normalisation body — checked — but it is not on
+# this run's code path.)  The `_done()` helper the brief mentions lives in
+# `ablation_wave.py`, not in lpopt; `lpopt optimize` resumes from its own
+# state.json / labels.jsonl and does not use it.
+#
+# FIXED-POINT TOLERANCE: `max_cycles = 16`, `consecutive = 2`, unchanged.  All
+# 128 converged f113 rows landed in 7-12 cycles and ZERO hit the cap, so 16 is
+# not binding.  Budget realism: this cell converges at 128/187 = 68.4% (the 59
+# failures are all `non_finite_flux`), so 100 MASTER calls should be expected to
+# return roughly 65-70 usable labels, not 100.
+#
+# ---------------------------------------------------------------------------
+# NOTE (D) — THE DEPRECATION BANNER IS EXPECTED.  `min_fr_max_cycle` is in
+# `_RETIRED_PRODUCTION_OBJECTIVES` (campaign.py:72 on the kit), so
+# CampaignDriver.__init__ logs `[optimize][DEPRECATED] objective=
+# 'min_fr_max_cycle' is a RETIRED production mode ...`.  It RUNS.  This campaign
+# is the sanctioned use: a measured baseline on the F_r axis, aimed at a cell the
+# flatness objective cannot express a question about.  Do not read it as failure.
+#
+# NOTE (M) — no map_calibration precondition and no map-harvest abort on this
+# objective (both live inside the flat_power branch).  harvest_maps stays true so
+# every row carries node_peak / map_cov for the flatness-vs-F_r trade readout.
+#
+# PRECONDITIONS SHIPPED WITH THIS LAUNCH (all verified before arming):
+#   1. data/models/s1f -> the kit (it was NOT there; the kit held only up to
+#      s1e).  199 MB, 5 ensemble members + the five per-axis calibrations.
+#   2. data/store/records.parquet refreshed on the kit.  The kit's copy was from
+#      2026-08-15 16:15 and held only 43 N1_N2/f113 rows (32 converged, F_r min
+#      1.8032) — it was MISSING all 144 feedgrid_t1_N1_N2_f113 rows.  The local
+#      store was verified a STRICT SUPERSET first (0 kit-only record_ids of
+#      72,777; 1,126 local-only), so the refresh cannot lose a label.
+#      Post-refresh the (feed 113, e_core 5.4) trust-region bin holds 128
+#      converged labels, comfortably above `n_min` below.
+#   3. s1f IS calibrated for this exact cell: `feed=113|ebin=5.4` is present in
+#      all five calibration artefacts with n=153.  F_r is an AFFINE fit
+#      (a 1.1674, b -0.2261) taking MAE 0.1032 -> 0.0334.  The cell is not
+#      out-of-distribution for the champion's calibration layer.
+#
+# CONSTRAINTS HONOURED: 198 / 181 / 238 untouched.  The canonical local store is
+# READ-ONLY until the final merge.  199 had 57 GB free and zero running
+# python/master processes at arming time.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle LOW-FEED OPENING — N1_N2/f113 (ga80, e_core 5.4), champion s1f, PURE F_r min, NO cycle band, CBC gate 1600"
+output_root = "runs"
+# Fresh seed.  1201 is not used by any prior campaign in this program (E1_E2 ran
+# 1103, T6_T4 ran 1111, the lat1600 line ran 1600, the flat line ran 830), so
+# wave 0 draws a pool no earlier run has already spent MASTER calls on.
+random_seed = 1201
+
+[master]
+# BOX 199 path.  Do NOT "fix" this to a D: drive — that is the local box.
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8                  # == wave_size; one pinned core per in-flight chain
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16              # not binding: 0 of this cell's 128 converged rows
+                             # hit the cap; they land in 7-12 cycles
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # relative to the kit root (cwd at launch).
+                                    # THE ga80 PACKAGE — not data/design/package,
+                                    # which is the paramA package and has no
+                                    # N1_N2 bases at all (checked on the kit).
+harvest_maps = true                 # RECORD-ONLY on this objective (NOTE (M)).
+                                    # Kept true so every row carries node_peak /
+                                    # map_cov: a low-F_r core that is also peaked
+                                    # is worth knowing about before delivery.
+
+[case]
+mode = "fixed"
+pair = "N1_N2"
+feed = 113
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1f"   # 7th champion (2026-08-16).  Calibrated for THIS
+                                # cell: feed=113|ebin=5.4, n=153, F_r affine fit
+                                # MAE 0.0334.  Frontier bias here is +0.0266,
+                                # i.e. s1f is mildly PESSIMISTIC on low-feed F_r —
+                                # which is exactly the bias purpose (b) exists to
+                                # correct with optimised labels.
+cond_schema = "v6b"
+map_head_mode = "multiscale"    # must move as one set with cond_schema
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"         # network-independent; 199 has no GPU role
+library_id = "ga80"             # all 1600 N1_N2 store rows are ga80
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # the 26 cross-feed feasible parents (f121 x14,
+                             # f125 x12) are the whole point of this campaign;
+                             # they are fed in automatically — see the
+                             # CROSS-FEED SEEDING audit in the header.
+guided_frac = 0.10           # beam rollouts are the expensive arm -> keep small
+diversity_frac = 0.25        # feeds the control arm with novel boards
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32             # 26 feasible + 6 best-infeasible backfill
+# DELIBERATELY UNCHANGED from the two proven decks.  The mesh readout says the
+# pool machinery is not what is failing here (gap_search is NEGATIVE, -0.128):
+# the pool already out-performs the store's own minimum.  Re-tuning the pool mix
+# on the same 100 calls that test a new cell would confound both questions.
+#
+# LIVE on this objective: `_near_miss_parents` (campaign.py) admits THIS
+# CAMPAIGN'S OWN verified rows with F_r <= this bound into the elite-parent set
+# with an n_moves=1 tight-move bias.  It reads campaign rows only, never the
+# store, so it starts empty and arms itself as the campaign makes progress.
+# 1.65 is chosen against this cell's measured numbers: it sits BELOW the store's
+# f113 floor (1.7243) so the arm cannot fill with the produce rows this campaign
+# is trying to beat, and ABOVE the mesh's bias-corrected floor (1.5960) so it
+# arms as soon as the campaign enters genuinely new territory.  It is a SEARCH
+# knob and gates nothing.
+near_miss_f_r = 1.65
+near_miss_top_k = 8          # INERT here (read only by `_flat_near_miss_parents`,
+                             # i.e. flat_power).  Left at the default.
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the (feed 113, e_core 5.4 +- 0.1) bin holds 128
+                             # converged labels AFTER the store refresh
+                             # (precondition 2) — comfortably in support, so the
+                             # frontier sigma inflation below will not fire on
+                             # every candidate.  It held only 32 on the kit's
+                             # stale store, which is why the refresh was a
+                             # precondition and not a convenience.
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+# MINIMISE F_r (primary), cyclen the subordinate tie-break.  Exploit scalar is
+# `cyclen_LCB - lambda_Fr * F_r_UCB` minus a 1e4-tier penalty for any predicted
+# violation of the FOUR gated axes.  F_r has a DUAL role: objective AND hard gate.
+objective = "min_fr_max_cycle"
+budget = 100                 # 12 waves x 8 + 4 reserve.  At this cell's 68.4%
+                             # convergence rate, expect ~65-70 usable labels.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1            # NOTE: at lambda 1000 a 0.1 band on the exploit
+                             # scalar is a 0.0001 band on F_r, so the margin
+                             # tie-break effectively never fires and the ranking
+                             # is pure exploit.  That is the intended behaviour
+                             # for a pure-F_r campaign, not an oversight.
+finetune_new_weight = 4
+risk_z = 0.25                # cyclen enters at mu-0.25sigma (LCB), F_r at
+                             # mu+0.25sigma (UCB) — conservative on both legs
+
+# --- THE objective weight (see the lambda_Fr section of the header) -----------
+minfr_lambda = 1000.0        # NOT 0.0: lambda=0 collapses the scalar to
+                             # `cyclen_lcb` and silently inverts the campaign
+                             # into pure cycle-length maximisation.  1000 is the
+                             # code's own "F_r strictly dominates" default and is
+                             # the faithful reading of the user's directive.
+
+# --- feasibility: all four axes GATE in this mode -----------------------------
+f_r_limit = 1.55             # the licensing limit (delivery.py LICENSING_FR_LIMIT)
+                             # and the campaign's own PRIMARY success bar.  NOT
+                             # tightened toward the DB's 1.5374: at 1.55 the pair
+                             # offers 26 verified-feasible elite parents; at
+                             # 1.5374 it would offer 4, the 1e4 constraint tier
+                             # would sink nearly every candidate, and the search
+                             # would rank by "least infeasible" instead of
+                             # exploiting a feasible basin.  1.5374 is the
+                             # SECONDARY success bar, not the feasibility bar.
+cbc_limit = 1600.0           # program decision 2026-08-11.  Rarely binding here
+                             # (cell median 1401; DB feasible cores ~1432).
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING.  See the header. ---------
+cycle_target_efpd = 659.7    # the DB-truth core's own EFPD, so `distance` in
+                             # best / state.json reads as "EFPD short of the
+                             # DB-truth cycle".  NOT a target the search pursues.
+cycle_tolerance_efpd = 30.0  # renders the report band as 629.7-689.7, which
+                             # spans this cell's entire observed range (617-651)
+                             # plus the DB region (659.7).  Deliberately too wide
+                             # to express a cycle preference — the user directive
+                             # is no band, and `_is_on_target` never reads this
+                             # value on this objective anyway.
+
+# NOT SET, because this objective does not read them and a deck that sets an
+# inert knob teaches the next reader something false:
+#   flatpower_*   (flat_power branch only)      fuelcost_*   (min_fuel_cost only)
+#   fr_boundary_* (fr_boundary only)            mcmf_lambda  (max_cycle_min_fr only)
+
+# --- wave online-update gate -------------------------------------------------
+# This is the lever the model-only mesh did not have.  The mesh's verdict at this
+# cell was "pool-starved" with a +0.187 DATA gap; per-wave finetune on fresh
+# in-cell MASTER labels is the only mechanism in this deck that can move it.
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+# The launcher passes --no-early-stop.  `_is_on_target` returns True for ANY
+# constraint-feasible row in this mode, so the FIRST feasible label would satisfy
+# the early-stop "have a keeper" condition and the run could stop on 3 flat waves
+# while F_r was still moving — unacceptable when the first feasible row in this
+# cell IS the primary result and the frontier below it is the secondary one.
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+# Only the asset-resolution knobs matter to `optimize`.
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # EMPTY ON PURPOSE.  N1_N2 resolves its template via
+                             # the "any same-pair deck" tier
+                             # (cores/N1_N2/<hash>/MAS_INP_cy12.inp, 32 present on
+                             # the kit).  A ga80 glob fallback could silently win
+                             # resolution ahead of the same-pair deck.
+
+[constraints]
+# SDM / MTC PRE-DELIVERY GATE (decision D9).  Runs AFTER the delivery ranking on
+# the top-K feasible cores; its MASTER calls are reported SEPARATELY from the
+# 100-call search budget.  Carried unchanged from both parent decks — a property
+# of the licensing chain, not of the search objective.  REPORT-ONLY: enabled with
+# no limit set measures the number and marks nobody a violator.
+mtc_enable = true
+sdm_enable = false           # lpopt has no full-core rod asset -> the SDM branch
+                             # can only report INCONCLUSIVE
+post_verify_top_k = 5        # a no-op if the campaign finds no feasible core

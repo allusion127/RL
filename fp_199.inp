@@ -1,0 +1,75 @@
+# lpopt FRONTIER KIT deck -- flat_power for 199 (LOW group E/J/K, maps ON).
+# Fleet reshuffle 2026-07-25: 199 = low-e_core group E1_E2/J1_J2/K1_K2 (12 cells),
+# excludes L/N/G via --exclude-cells (CLI). workers=24, use_all_cores=true,
+# host_reserve=0 -> fill all 24 logical cores (199 is an all-P server box).
+# seed 800, round-budget 80 (CLI). New champion 20260724_213535 (kit alias).
+
+[flow]
+title = "flat_power 199 (LOW group E/J/K, seed 800, maps, champion 20260724_213535)"
+output_root = "runs"
+random_seed = 800
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 24
+use_all_cores = true
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"
+harvest_maps = true
+
+[search]
+pool_size = 2000
+pool_cap = 100000
+elite_frac = 0.7
+guided_frac = 0.1
+diversity_frac = 0.2
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.1
+n_min = 50
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[model]
+model_dir = "data/models/champion"
+store_dir = "data/store"
+library_id = "ga80"
+device = "cpu"
+inference = "local_cpu"
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+[acquisition]
+objective = "flat_power"
+budget = 150
+risk_z = 0.25
+cbc_limit = 1550.0
+f_q_limit = 2.41
+ao_abs_limit = 0.3
+flatpower_fr_limit = 1.7
+flatpower_pin_bu_limit = 80.0

@@ -1,0 +1,391 @@
+{
+  "library_id": "paramA",
+  "designs": [
+    {
+      "type_id": "P5042Z1G10N16",
+      "e1": 5.0,
+      "e2": 4.25,
+      "zoning_variant": "z1",
+      "gd_wt": 10.0,
+      "n_gd": 16,
+      "alias": "T3",
+      "gd_u_enr": 4.0,
+      "gd_positions": "1:1;5:2;5:5",
+      "lat1600_id": "Y1",
+      "lat1600_role": "E1-role reactivity-matched (68 fresh slots), FF_ens 1.1073",
+      "provenance": "realize_lat1600 2026-08-11; open Gd layout (NOT the frozen template layout for this (gd,n,z)); CBC gate 1600 ppm"
+    },
+    {
+      "type_id": "P5042Z1G08N24",
+      "e1": 5.0,
+      "e2": 4.25,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 24,
+      "alias": "T4",
+      "gd_u_enr": 4.0,
+      "gd_positions": "1:1;4:1;5:5;6:3",
+      "lat1600_id": "Y2",
+      "lat1600_role": "E2-role reactivity-matched (hot, 53 slots), FF_ens 1.1409",
+      "provenance": "realize_lat1600 2026-08-11; open Gd layout (NOT the frozen template layout for this (gd,n,z)); CBC gate 1600 ppm"
+    },
+    {
+      "type_id": "P5245Z1G06N16",
+      "e1": 5.25,
+      "e2": 4.4625,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 16,
+      "alias": "T5",
+      "gd_u_enr": 4.0,
+      "gd_positions": "1:1;5:2;5:5",
+      "lat1600_id": "Y3",
+      "lat1600_role": "flat anchor, E3 layout (surrogate-truth check), FF_ens 1.1012",
+      "provenance": "realize_lat1600 2026-08-11; open Gd layout (NOT the frozen template layout for this (gd,n,z)); CBC gate 1600 ppm"
+    },
+    {
+      "type_id": "P5345Z1G06N16",
+      "e1": 5.3,
+      "e2": 4.505,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 16,
+      "alias": "T6",
+      "gd_u_enr": 4.0,
+      "gd_positions": "1:1;5:2;5:5",
+      "lat1600_id": "Y4",
+      "lat1600_role": "flat extreme at the 1600 gate, FF_ens 1.1011",
+      "provenance": "realize_lat1600 2026-08-11; open Gd layout (NOT the frozen template layout for this (gd,n,z)); CBC gate 1600 ppm"
+    },
+    {
+      "type_id": "P5849Z1G08N16",
+      "e1": 5.8,
+      "e2": 4.93,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 16,
+      "alias": "P0",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5849Z1G10N20",
+      "e1": 5.8,
+      "e2": 4.93,
+      "zoning_variant": "z1",
+      "gd_wt": 10.0,
+      "n_gd": 20,
+      "alias": "P9",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5849Z2G06N12",
+      "e1": 5.8,
+      "e2": 4.93,
+      "zoning_variant": "z2",
+      "gd_wt": 6.0,
+      "n_gd": 12,
+      "alias": "P8",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5849Z2G08N24",
+      "e1": 5.8,
+      "e2": 4.93,
+      "zoning_variant": "z2",
+      "gd_wt": 8.0,
+      "n_gd": 24,
+      "alias": "P4",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5849Z2G10N24",
+      "e1": 5.8,
+      "e2": 4.93,
+      "zoning_variant": "z2",
+      "gd_wt": 10.0,
+      "n_gd": 24,
+      "alias": "S8",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5853Z1G08N12",
+      "e1": 5.8,
+      "e2": 5.336,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 12,
+      "alias": "P7",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5853Z1G08N24",
+      "e1": 5.8,
+      "e2": 5.336,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 24,
+      "alias": "S4",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5853Z2G06N16",
+      "e1": 5.8,
+      "e2": 5.336,
+      "zoning_variant": "z2",
+      "gd_wt": 6.0,
+      "n_gd": 16,
+      "alias": "S6",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5853Z2G06N20",
+      "e1": 5.8,
+      "e2": 5.336,
+      "zoning_variant": "z2",
+      "gd_wt": 6.0,
+      "n_gd": 20,
+      "alias": "S9",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5853Z2G08N12",
+      "e1": 5.8,
+      "e2": 5.336,
+      "zoning_variant": "z2",
+      "gd_wt": 8.0,
+      "n_gd": 12,
+      "alias": "T2",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P5853Z2G08N20",
+      "e1": 5.8,
+      "e2": 5.336,
+      "zoning_variant": "z2",
+      "gd_wt": 8.0,
+      "n_gd": 20,
+      "alias": "P3",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6253Z1G06N24",
+      "e1": 6.2,
+      "e2": 5.27,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 24,
+      "alias": "S3",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6253Z1G08N20",
+      "e1": 6.2,
+      "e2": 5.27,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 20,
+      "alias": "P2",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6253Z2G06N24",
+      "e1": 6.2,
+      "e2": 5.27,
+      "zoning_variant": "z2",
+      "gd_wt": 6.0,
+      "n_gd": 24,
+      "alias": "Q0",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6253Z2G08N16",
+      "e1": 6.2,
+      "e2": 5.27,
+      "zoning_variant": "z2",
+      "gd_wt": 8.0,
+      "n_gd": 16,
+      "alias": "P5",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6253Z2G10N20",
+      "e1": 6.2,
+      "e2": 5.27,
+      "zoning_variant": "z2",
+      "gd_wt": 10.0,
+      "n_gd": 20,
+      "alias": "T1",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6253Z2G10N24",
+      "e1": 6.2,
+      "e2": 5.27,
+      "zoning_variant": "z2",
+      "gd_wt": 10.0,
+      "n_gd": 24,
+      "alias": "S5",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6257Z1G06N24",
+      "e1": 6.2,
+      "e2": 5.704,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 24,
+      "alias": "P6",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6257Z1G10N12",
+      "e1": 6.2,
+      "e2": 5.704,
+      "zoning_variant": "z1",
+      "gd_wt": 10.0,
+      "n_gd": 12,
+      "alias": "S7",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6257Z2G06N12",
+      "e1": 6.2,
+      "e2": 5.704,
+      "zoning_variant": "z2",
+      "gd_wt": 6.0,
+      "n_gd": 12,
+      "alias": "T0",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6257Z2G08N16",
+      "e1": 6.2,
+      "e2": 5.704,
+      "zoning_variant": "z2",
+      "gd_wt": 8.0,
+      "n_gd": 16,
+      "alias": "P1",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6656Z1G06N24",
+      "e1": 6.6,
+      "e2": 5.61,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 24,
+      "alias": "Q2",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6656Z1G08N20",
+      "e1": 6.6,
+      "e2": 5.61,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 20,
+      "alias": "Q4",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6656Z1G10N16",
+      "e1": 6.6,
+      "e2": 5.61,
+      "zoning_variant": "z1",
+      "gd_wt": 10.0,
+      "n_gd": 16,
+      "alias": "Q6",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6656Z2G08N12",
+      "e1": 6.6,
+      "e2": 5.61,
+      "zoning_variant": "z2",
+      "gd_wt": 8.0,
+      "n_gd": 12,
+      "alias": "Q1",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z1G06N12",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 12,
+      "alias": "S1",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z1G06N16",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z1",
+      "gd_wt": 6.0,
+      "n_gd": 16,
+      "alias": "Q9",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z1G08N16",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 16,
+      "alias": "S0",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z1G08N20",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z1",
+      "gd_wt": 8.0,
+      "n_gd": 20,
+      "alias": "Q7",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z1G10N12",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z1",
+      "gd_wt": 10.0,
+      "n_gd": 12,
+      "alias": "S2",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z1G10N20",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z1",
+      "gd_wt": 10.0,
+      "n_gd": 20,
+      "alias": "Q8",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z2G06N16",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z2",
+      "gd_wt": 6.0,
+      "n_gd": 16,
+      "alias": "Q5",
+      "gd_u_enr": 4.0
+    },
+    {
+      "type_id": "P6661Z2G10N24",
+      "e1": 6.6,
+      "e2": 6.072,
+      "zoning_variant": "z2",
+      "gd_wt": 10.0,
+      "n_gd": 24,
+      "alias": "Q3",
+      "gd_u_enr": 4.0
+    }
+  ]
+}

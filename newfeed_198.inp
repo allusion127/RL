@@ -1,0 +1,178 @@
+# lpopt NEW-FEED coverage deck -- 198 (paramA feeds 105/113/129/137).
+# Directive 2026-07-25 (a): paramA carries ONLY feeds 101/109/117/125/133/141, so
+# 105/113/129/137 are absent from every high band.  All four resolve at level-3
+# pair_ecore with restart Y + template Y (verified) -> zero new physics assets.
+# 4 feeds x 3 paramA bands = 12 cells.  (f121 high-band cells live in fill_181.inp.)
+# 198 = 100% cores. Disjoint vs fill_198/fill_181/newfeed_104.
+
+[flow]
+title = "new-feed 198 (paramA f105/f113/f129/f137, seed 1120)"
+output_root = "runs"
+random_seed = 1120
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"
+harvest_maps = true
+
+[design]
+# paramA routing: build_case_resolver() needs this or paramA resolves UNRESOLVED.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[model]
+model_dir = "data/models/20260725_063351"   # A6 champion (honest-gate promoted 2026-07-25, v6)
+cond_schema = "v6"           # A6 = 52ch v6; must match the champion
+store_dir = "data/store"
+library_id = "paramA"
+device = "cpu"
+
+[produce]
+campaign = "newfeed20260725"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+workers = 16
+use_all_cores = true
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 14
+purge_intermediate = true
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+[[produce.strata]]
+name = "nf_5.75-6_f113"
+campaign = "nf_5.75-6_f113"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 113
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 120
+
+[[produce.strata]]
+name = "nf_6-6.25_f113"
+campaign = "nf_6-6.25_f113"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12", "P6661Z2G06N16_P6661Z2G10N24", "P6656Z1G06N24_P6656Z1G08N20"]
+feed = 113
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 120
+
+[[produce.strata]]
+name = "nf_6.25-6.5_f113"
+campaign = "nf_6.25-6.5_f113"
+library = "paramA"
+pairs = ["P6661Z1G08N16_P6661Z1G08N20", "P6661Z1G10N12_P6661Z1G10N20", "P6661Z1G06N12_P6661Z1G06N16"]
+feed = 113
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 120
+
+[[produce.strata]]
+name = "nf_5.75-6_f105"
+campaign = "nf_5.75-6_f105"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 105
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 110
+
+[[produce.strata]]
+name = "nf_6-6.25_f105"
+campaign = "nf_6-6.25_f105"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12", "P6661Z2G06N16_P6661Z2G10N24", "P6656Z1G06N24_P6656Z1G08N20"]
+feed = 105
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 110
+
+[[produce.strata]]
+name = "nf_6.25-6.5_f105"
+campaign = "nf_6.25-6.5_f105"
+library = "paramA"
+pairs = ["P6661Z1G08N16_P6661Z1G08N20", "P6661Z1G10N12_P6661Z1G10N20", "P6661Z1G06N12_P6661Z1G06N16"]
+feed = 105
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 110
+
+[[produce.strata]]
+name = "nf_5.75-6_f129"
+campaign = "nf_5.75-6_f129"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 105
+
+[[produce.strata]]
+name = "nf_6-6.25_f129"
+campaign = "nf_6-6.25_f129"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12", "P6661Z2G06N16_P6661Z2G10N24", "P6656Z1G06N24_P6656Z1G08N20"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 105
+
+[[produce.strata]]
+name = "nf_6.25-6.5_f129"
+campaign = "nf_6.25-6.5_f129"
+library = "paramA"
+pairs = ["P6661Z1G08N16_P6661Z1G08N20", "P6661Z1G10N12_P6661Z1G10N20", "P6661Z1G06N12_P6661Z1G06N16"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 105
+
+[[produce.strata]]
+name = "nf_5.75-6_f137"
+campaign = "nf_5.75-6_f137"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 137
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "nf_6-6.25_f137"
+campaign = "nf_6-6.25_f137"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12", "P6661Z2G06N16_P6661Z2G10N24", "P6656Z1G06N24_P6656Z1G08N20"]
+feed = 137
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "nf_6.25-6.5_f137"
+campaign = "nf_6.25-6.5_f137"
+library = "paramA"
+pairs = ["P6661Z1G08N16_P6661Z1G08N20", "P6661Z1G10N12_P6661Z1G10N20", "P6661Z1G06N12_P6661Z1G06N16"]
+feed = 137
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100

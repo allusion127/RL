@@ -1,0 +1,38 @@
+{
+ "schema": "adf_hfamily_readout_v1",
+ "rule_doc": "data/reports/ab2_addendum_ADF_20260810.md#56",
+ "decides": false,
+ "reference_pattern": "b0ff11ef16de",
+ "label_hygiene_all_absent_from_store": true,
+ "measured_master": {
+  "D1_minus_D2": 0.007200002600000088,
+  "D3_minus_D4": 0.0004999637999998363,
+  "per_arm": {
+   "D1": 1.4613000154,
+   "D2": 1.4541000128,
+   "D3": 1.3916000128,
+   "D4": 1.391100049
+  }
+ },
+ "threshold": 0.005,
+ "models": {
+  "control": {
+   "model_dir": "data/models/split_S1b",
+   "status": "ok",
+   "cond_schema": "v6b",
+   "n_channels": 58,
+   "node_peak": {
+    "D1": 1.4076977491378784,
+    "D2": 1.4008382558822632,
+    "D3": 1.4260197877883911,
+    "D4": 1.4266403675079347
+   },
+   "D1_minus_D2": 0.00685949325561519,
+   "D3_minus_D4": -0.0006205797195435458
+  },
+  "treated": {
+   "model_dir": "data/models/adf_v6c",
+   "status": "absent"
+  }
+ }
+}

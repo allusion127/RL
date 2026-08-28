@@ -1,0 +1,210 @@
+CASEID FA_A0
+
+STATE
+ th_cond 0.04338 295.5 15.0            !LPD Temp Pressure
+
+MATERIAL
+ mixture UO2    2 10.212   626.85 / 92235 5.8
+ mixture UO2_2  2 10.212   626.85 / 92235 5.1
+ mixture UO2G    2 10.01    626.85 / 92235 4.0
+                                    6408  6.0
+ mixture AIR    0 0.001    326.85 / 2004  100.0
+ mixture CLADF  1 6.54376  306.85 / 40090 2.19772E-02
+                                    40091 4.79269E-03
+                                    40092 7.32572E-03
+                                    40094 7.42396E-03
+                                    40096 1.19604E-03
+                                    41093 4.66571E-04
+                                    29063 2.16537E-05
+                                    29065 9.35581E-06
+ mixture CLADG  1 6.54376  306.85 / 40090 2.19772E-02
+                                    40091 4.79269E-03
+                                    40092 7.32572E-03
+                                    40094 7.42396E-03
+                                    40096 1.19604E-03
+                                    41093 4.66571E-04
+                                    29063 2.16537E-05
+                                    29065 9.35581E-06 
+ mixture COO    0 -1.0     307.75
+ mixture MOD0   0 -1.0     307.75
+ mixture MOD1   0 -1.0     307.75
+ mixture MOD2   0 -1.0     307.75
+ mixture MOD3   0 -1.0     307.75
+ mixture MOD4   0 -1.0     307.75
+! CRA
+ mixture B4C    3 1.84     307.75 / 5000  78.25 6000 21.75
+ mixture B4CE   3 2.2645   307.75 / 5010  73.2
+                                    5011  3.8
+                                    6000  23.0  ! B-10 95 w/o 0.95 TD
+ mixture AIC    0 10.17    307.75 / 47107 41.06972           !Ag
+                                    47109 38.93028           !Ag   80wt%
+                                    48000 5                  !Cd   5wt%
+                                    49113 0.6318             !In
+                                    49115 14.3682            !In   15wt%
+ mixture In625  3 8.44     307.75 / 28001 100                !In625
+ mixture GAP    0 0.001    307.75 / 8016  100
+ mixture CLADC  3 8.44     307.75 / 28001 100                !In625 cladding
+ !spacergrid
+ mixture SPA    1 6.813    307.75 / 29063 0.0275226
+                                    29065 0.012656711
+                                    41093 0.883944856
+                                    40090 40.29712897
+                                    40091 8.871470779
+                                    40092 13.72499812
+                                    40094 14.19607562
+                                    40096 2.344825586
+                                    28000 10.31172279
+                                    24000 3.731861582
+                                    26000 3.563927811
+                                    42000 0.599061991
+                                    41093 1.006620558
+                                    22000 0.176772391
+                                    13027 0.098206884
+                                    25055 0.068744819
+                                    14000 0.068744819
+                                    6000  0.015713101
+GEOM
+ npins 16
+ pitch 1.285 20.7772
+!
+! CELLGEO
+!
+ cellgeo 1  0.4096 0.4178 0.4750 / 5 1 1                              ! Normal Fuel Pin
+ cellgeo 2  0.4096 0.4178 0.4750 / 10 1 1                             ! IGD Pin
+ cellgeo 3  0.57150 0.80822 0.98987 1.14300 1.24450 / 1 1 1 1 1 / 41  !GT Lower Right
+ cellgeo 4  0.57150 0.80822 0.98987 1.14300 1.24450 / 1 1 1 1 1 / 42  !GT Lower Left
+ cellgeo 5  0.57150 0.80822 0.98987 1.14300 1.24450 / 1 1 1 1 1 / 43  !GT Upper Left
+ cellgeo 6  0.57150 0.80822 0.98987 1.14300 1.24450 / 1 1 1 1 1 / 44  !GT Upper Right
+! CELL
+!
+ cell 1 1 / UO2   AIR CLADF COO                               ! UO2 high-enr fuel pin
+ cell 2 1 / UO2_2 AIR CLADF COO                               ! UO2 low-enr fuel pin (zoning)
+ cell 3 2 / UO2G AIR CLADF COO                                ! IGD
+ cell 6 5 / MOD1 MOD2 MOD3 MOD4 CLADG COO                     ! GT/IT
+ cell 7 6 / MOD1 MOD2 MOD3 MOD4 CLADG COO
+ cell 8 4 / MOD1 MOD2 MOD3 MOD4 CLADG COO
+ cell 9 3 / MOD1 MOD2 MOD3 MOD4 CLADG COO
+ spacergrid SPA 26.0578
+ gap COO
+ assembly FA_A0 45 1                                   ! FA : FA name , 45 : 1/8 core
+9
+2  3
+1  1  1
+1  1  2  6
+1  1  2  8  9
+1  1  3  2  2  3
+1  1  1  1  1  1  1
+1  1  1  1  1  1  2  2
+
+ rad_conf 45 CENT 1 1
+ FA_A0
+ albedo 0.0
+
+OPTION
+ ray 0.02 8 4 2
+ reso_opt 4 SUB
+ critical T
+ boron 500
+ xenon TR
+ cmfd T
+
+XSEC
+ nxfile D:\DeCART_MASTER\LIB\DML-E71N047G018-PV01-cr08.BIN
+ lib_type 0 0
+
+EDIT
+ grp 1 26  ! 1.8554 eV (26 group lower bounds), 2 group
+ INVENTORY 1 1 1 -45
+ isotope 90232                                      ! Th
+         91233                                      ! Pa
+         92233 92234 92235 92236 92238              ! U
+         93237 93239                                ! Np
+         94238 94239 94240 94241 94242              ! Pu
+         95241 95342 95243                          ! Am
+         96242 96244                                ! Cm
+         64152 64154 64155 64156 64157 64158 64160  ! Gd, BP01
+         68166 68167 68168 68170                    ! Er, BP02
+         5010                                       ! B,  BP03
+         60647                                      ! Nd
+         61647 61748 61649                          ! Pm
+         62649                                      ! Sm
+         53635                                      ! I
+         54635                                      ! Xe
+         1001  5000  8001  8016                     ! H B O
+
+DEPL
+ bu_type 2
+ opt_dep 2 T
+ burnup 0.0 0.2 0.5 1 -45/1.0 -80/2.5
+/
+BRANCH BORON VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ ppmvar 1000
+/
+BRANCH TFUEL VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtf -100
+/
+BRANCH DMOD1 VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtm 20
+/
+BRANCH DMOD2 VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtm -20
+/
+BRANCH DMOD3 VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtm -50
+/
+BRANCH DMOD4 VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtm -100
+/
+BRANCH DMOD5 VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtm -180
+/
+BRANCH DMOD6 VARIATION
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ dtm -290
+/
+BRANCH CR1 REFERENCE
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+/
+BRANCH CR1 VARIATION BOR
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ ppmvar 1000
+/
+BRANCH CR1 VARIATION DMOD1
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ dtm 20
+/
+BRANCH CR1 VARIATION DMOD2
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ dtm -20
+/
+BRANCH CR1 VARIATION DMOD3
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ dtm -50
+/
+BRANCH CR1 VARIATION DMOD4
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ dtm -100
+/
+BRANCH CR1 VARIATION DMOD5
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ dtm -180
+/
+BRANCH CR1 VARIATION DMOD6
+ burnup 0.0 0.2 0.5 1 3 5 7 10 15 20 25 30 40 50 60 70 80
+ mat MOD1 B4C MOD2 AIR MOD3 CLADC
+ dtm -290
+.

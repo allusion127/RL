@@ -1,0 +1,27 @@
+champion: C:\Users\USER\Desktop\CT&RPL\2_Project\KNF_LEU+ 시범연료봉 장전 인허가 과제\2026\2_계산\5_RL\data\models\20260721_105824
+[curriculum][5.5-5.75_f109] mini campaign: 0 feasible / best|Δcyclen|=1.3460000000000036 (target 625); feasible_or_progress=False
+{
+ "status": "ok",
+ "budget": 16,
+ "target_cyclen": 625.0,
+ "n_feasible": 0,
+ "best_cyclen_distance": 1.3460000000000036,
+ "blind_best_distance": 0.014999999999986358,
+ "feasible_or_progress": false
+}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 629.038, 'f_r': 1.8157, 'cbc_max': 1334.58, 'f_q': 2.1586, 'ao_abs': 0.0436, 'dist': 4.038000000000011, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 627.382, 'f_r': 1.8374, 'cbc_max': 1422.0, 'f_q': 2.3289, 'ao_abs': 0.0308, 'dist': 2.381999999999948, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 614.74, 'f_r': 1.8845, 'cbc_max': 1419.31, 'f_q': 2.3623, 'ao_abs': 0.0329, 'dist': 10.259999999999991, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 612.338, 'f_r': 1.8249, 'cbc_max': 1357.55, 'f_q': 2.3009, 'ao_abs': 0.0441, 'dist': 12.662000000000035, 'feasible': False}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 615.862, 'f_r': 1.8824, 'cbc_max': 1344.57, 'f_q': 2.367, 'ao_abs': 0.0366, 'dist': 9.138000000000034, 'feasible': False}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 629.7, 'f_r': 1.9768, 'cbc_max': 1372.1, 'f_q': 2.4536, 'ao_abs': 0.0479, 'dist': 4.7000000000000455, 'feasible': False}
+{'pair': 'G3_G4', 'status': 'converged', 'cyclen': 623.654, 'f_r': 2.0126, 'cbc_max': 1353.06, 'f_q': 2.6794, 'ao_abs': 0.0681, 'dist': 1.3460000000000036, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 639.943, 'f_r': 1.8365, 'cbc_max': 1476.36, 'f_q': 2.3346, 'ao_abs': 0.0389, 'dist': 14.942999999999984, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 614.127, 'f_r': 1.8991, 'cbc_max': 1411.98, 'f_q': 2.3851, 'ao_abs': 0.0354, 'dist': 10.873000000000047, 'feasible': False}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 621.096, 'f_r': 1.9259, 'cbc_max': 1434.03, 'f_q': 2.4701, 'ao_abs': 0.0365, 'dist': 3.9039999999999964, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 626.714, 'f_r': 1.7038, 'cbc_max': 1368.27, 'f_q': 2.1037, 'ao_abs': 0.0411, 'dist': 1.7140000000000555, 'feasible': False}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 618.819, 'f_r': 1.9803, 'cbc_max': 1448.77, 'f_q': 2.5349, 'ao_abs': 0.0435, 'dist': 6.18100000000004, 'feasible': False}
+{'pair': 'H3_H4', 'status': 'converged', 'cyclen': 629.326, 'f_r': 1.9477, 'cbc_max': 1441.96, 'f_q': 2.5256, 'ao_abs': 0.0235, 'dist': 4.326000000000022, 'feasible': False}
+{'pair': 'G3_G4', 'status': 'converged', 'cyclen': 620.785, 'f_r': 1.8457, 'cbc_max': 1321.42, 'f_q': 2.3081, 'ao_abs': 0.0497, 'dist': 4.215000000000032, 'feasible': False}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 628.744, 'f_r': 1.9361, 'cbc_max': 1367.0, 'f_q': 2.4389, 'ao_abs': 0.04, 'dist': 3.744000000000028, 'feasible': False}
+{'pair': 'H1_H2', 'status': 'converged', 'cyclen': 632.669, 'f_r': 1.9053, 'cbc_max': 1429.89, 'f_q': 2.3909, 'ao_abs': 0.0341, 'dist': 7.668999999999983, 'feasible': False}

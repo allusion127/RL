@@ -1,0 +1,639 @@
+{
+  "schema": "pinbu_wave_results_v1",
+  "created_at": "2026-08-20T11:49:46",
+  "prereg": "data/reports/pinbu_wave_prereg_20260820.md",
+  "results_file": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ \uc2dc\ubc94\uc5f0\ub8cc\ubd09 \uc7a5\uc804 \uc778\ud5c8\uac00 \uacfc\uc81c\\2026\\2_\uacc4\uc0b0\\5_RL\\runs\\pinbu_wave\\pinbu_wave_results.jsonl",
+  "integrity": {
+    "n_planned": 44,
+    "n_chains": 44,
+    "converged": 44,
+    "nonconverged": 0,
+    "error": 0,
+    "determinism_ok": 44,
+    "provenance_ok": 41,
+    "pin_present": 44,
+    "usable": 41
+  },
+  "dropped": [
+    {
+      "record_id": "83befc5b421233def1be672a5088841a926c2b9357565fb6ca1f1f0e70d1fa52",
+      "group": "calib_N1N2_f113",
+      "why": "provenance promoted:MAS_RST.APRQ_20_0633.23 -> pair_feed:MAS_RST.APRQ_11_0677.23"
+    },
+    {
+      "record_id": "0c1792ca0ee6de18563a019483af437a82a804ec3f5d4e10eba0e35ad3beed50",
+      "group": "calib_K1K2_f109",
+      "why": "provenance promoted:MAS_RST.APRQ_20_0589.25 -> pair_feed:MAS_RST.APRQ_11_0633.21"
+    },
+    {
+      "record_id": "e89822d9d675332d4e2c144154a141666b4d7165585d5409e281484aed6c68ca",
+      "group": "calib_K1K2_f109",
+      "why": "provenance promoted:MAS_RST.APRQ_20_0589.25 -> pair_feed:MAS_RST.APRQ_11_0633.21"
+    }
+  ],
+  "determinism": {
+    "f_r": {
+      "n": 44,
+      "bias": 0.0,
+      "mae": 0.0,
+      "sd": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "ci95_lo": 0.0,
+      "ci95_hi": 0.0
+    },
+    "cyclen": {
+      "n": 44,
+      "bias": -0.0001363636363604118,
+      "mae": 0.00022727272727252057,
+      "sd": 0.0012499471447515026,
+      "min": -0.007999999999924512,
+      "max": 0.002000000000066393,
+      "ci95_lo": -0.0005454545454493986,
+      "ci95_hi": 0.00013636363636816316
+    },
+    "cbc_max": {
+      "n": 44,
+      "bias": -0.00022727272727252057,
+      "mae": 0.00022727272727252057,
+      "sd": 0.0015075567228874471,
+      "min": -0.009999999999990905,
+      "max": 0.0,
+      "ci95_lo": -0.0006818181818175617,
+      "ci95_hi": 0.0
+    },
+    "f_q": {
+      "n": 44,
+      "bias": -2.272727272721976e-06,
+      "mae": 2.272727272721976e-06,
+      "sd": 1.5075567228853049e-05,
+      "min": -9.999999999976694e-05,
+      "max": 0.0,
+      "ci95_lo": -6.818181818165928e-06,
+      "ci95_hi": 0.0
+    },
+    "ao_abs": {
+      "n": 44,
+      "bias": 0.0,
+      "mae": 0.0,
+      "sd": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "ci95_lo": 0.0,
+      "ci95_hi": 0.0
+    },
+    "max_assembly_burnup": {
+      "n": 44,
+      "bias": 2.2727272727381248e-05,
+      "mae": 2.2727272727381248e-05,
+      "sd": 0.00015075567228960165,
+      "min": 0.0,
+      "max": 0.0010000000000047748,
+      "ci95_lo": 0.0,
+      "ci95_hi": 6.818181818214374e-05
+    }
+  },
+  "delivery": {
+    "N1N2_f113": {
+      "case": "fpcamp_minfr_N1N2_f113",
+      "n_measured": 5,
+      "n_pass_80": 0,
+      "n_pass_78": 0,
+      "winner_verdict": "FAIL",
+      "winner_measured_pin": 86.189,
+      "best_measured_pin": 85.26,
+      "predicted_verdict_80": "FAIL",
+      "cores": [
+        {
+          "record_id": "c9bc21e9513b86235d1c8a1f81da926ac71f840247ebaa5f87188b336f8c5eca",
+          "rank": 1,
+          "stored_f_r": 1.4961,
+          "predicted_pin": 86.09947924407143,
+          "measured_pin": 86.189,
+          "error": -0.0895207559285609,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "ae1e2004b018eeb534356cd00d7c61ae80040d49c00d195e229b46e5ec8e5224",
+          "rank": 2,
+          "stored_f_r": 1.5006,
+          "predicted_pin": 87.1950145340151,
+          "measured_pin": 85.26,
+          "error": 1.935014534015096,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "e0aad53068dba5aeb593ce1f650bc74a0431ac068da0feeeba9dd6ec1d8f2939",
+          "rank": 3,
+          "stored_f_r": 1.5013,
+          "predicted_pin": 86.0618207995172,
+          "measured_pin": 85.296,
+          "error": 0.7658207995172006,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "01e0d680c40723c58b85fb92d03cdcb5177464cc1d3231073cb8a448e1b1a600",
+          "rank": 4,
+          "stored_f_r": 1.5061,
+          "predicted_pin": 85.85569539215676,
+          "measured_pin": 85.439,
+          "error": 0.4166953921567682,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "6c5f917021d7013af9f9c821e3e653217133918684b8cc4262a1110719d4f6dc",
+          "rank": 5,
+          "stored_f_r": 1.5079,
+          "predicted_pin": 85.90491289199444,
+          "measured_pin": 86.778,
+          "error": -0.8730871080055636,
+          "verdict_80": "FAIL",
+          "under_78": false
+        }
+      ]
+    },
+    "E1E2_f109": {
+      "case": "fpcamp_minfr_E1E2_f109",
+      "n_measured": 5,
+      "n_pass_80": 0,
+      "n_pass_78": 0,
+      "winner_verdict": "FAIL",
+      "winner_measured_pin": 82.113,
+      "best_measured_pin": 81.757,
+      "predicted_verdict_80": "FAIL",
+      "cores": [
+        {
+          "record_id": "3153f3b39effbf6660082ec4bf8abe0e393bcd2e361743b6809d27839a21ab61",
+          "rank": 1,
+          "stored_f_r": 1.4787,
+          "predicted_pin": 83.76856474812699,
+          "measured_pin": 82.113,
+          "error": 1.6555647481269915,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "2357edd0e2a4dffb79f8c2b0d6713657dff588754f731336ba7f364ac1083456",
+          "rank": 2,
+          "stored_f_r": 1.4962,
+          "predicted_pin": 82.36187492402073,
+          "measured_pin": 81.996,
+          "error": 0.36587492402072996,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "4dba870bae69c4cea0388634983452319ccaed288f3a82616541574256412a5a",
+          "rank": 3,
+          "stored_f_r": 1.5042,
+          "predicted_pin": 82.50608459150719,
+          "measured_pin": 81.757,
+          "error": 0.7490845915071844,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "5370d57034ece958daa1237912dd8ac36919067594e53a4bf49ce17251970d52",
+          "rank": 4,
+          "stored_f_r": 1.5113,
+          "predicted_pin": 82.4995451392568,
+          "measured_pin": 82.373,
+          "error": 0.12654513925679112,
+          "verdict_80": "FAIL",
+          "under_78": false
+        },
+        {
+          "record_id": "7887d05bc27dd0adf87ebaa16060835e008029f372afdec01a934afc2a6e395a",
+          "rank": 5,
+          "stored_f_r": 1.5114,
+          "predicted_pin": 82.41074396514293,
+          "measured_pin": 82.379,
+          "error": 0.03174396514292255,
+          "verdict_80": "FAIL",
+          "under_78": false
+        }
+      ]
+    },
+    "HGD569_f125_2type": {
+      "case": "fpcamp_minfr_hgd569_f125",
+      "n_measured": 5,
+      "n_pass_80": 5,
+      "n_pass_78": 5,
+      "winner_verdict": "PASS",
+      "winner_measured_pin": 75.471,
+      "best_measured_pin": 75.471,
+      "predicted_verdict_80": "PASS",
+      "cores": [
+        {
+          "record_id": "8b9acbcda6c73a37d3c3b2842daf1ea350f966f0d34bcdd9cbfc6b301950e3dc",
+          "rank": 1,
+          "stored_f_r": 1.6357,
+          "predicted_pin": 75.09270672989223,
+          "measured_pin": 75.471,
+          "error": -0.37829327010777547,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "0884517be24779d60c0833cf69c376478052e83773d5b0ee0a498c79786aca5a",
+          "rank": 2,
+          "stored_f_r": 1.6606,
+          "predicted_pin": 75.33274783374188,
+          "measured_pin": 75.843,
+          "error": -0.5102521662581267,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "d9cf666de32296f9fee1304b17ab8f2f4b3bdf74181cfe3547442e78f4fd733c",
+          "rank": 3,
+          "stored_f_r": 1.6625,
+          "predicted_pin": 75.98934741168569,
+          "measured_pin": 76.494,
+          "error": -0.5046525883143147,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "9d28d004ced13934875409118c5e6ff26f7f9c01d4d763667ffa852acfed798b",
+          "rank": 4,
+          "stored_f_r": 1.6644,
+          "predicted_pin": 75.05684251536687,
+          "measured_pin": 75.98,
+          "error": -0.923157484633137,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "3b9d9cc2e0907893e631c09a92b7c2c57910ca835741839b0e86efb60182a4e0",
+          "rank": 5,
+          "stored_f_r": 1.6733,
+          "predicted_pin": 75.59436337230406,
+          "measured_pin": 75.722,
+          "error": -0.1276366276959351,
+          "verdict_80": "PASS",
+          "under_78": true
+        }
+      ]
+    },
+    "HGD569_f125_3type": {
+      "case": "fpcamp_minfr_triple_f125",
+      "n_measured": 5,
+      "n_pass_80": 5,
+      "n_pass_78": 5,
+      "winner_verdict": "PASS",
+      "winner_measured_pin": 74.378,
+      "best_measured_pin": 74.156,
+      "predicted_verdict_80": "PASS",
+      "cores": [
+        {
+          "record_id": "852d233d5421d5bc81a7b9a9c23bbd694c0e30f19aa73a6d46a1e307ba19bf77",
+          "rank": 1,
+          "stored_f_r": 1.5993,
+          "predicted_pin": 74.98442936306782,
+          "measured_pin": 74.378,
+          "error": 0.6064293630678179,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "ea5f105ef08a8fc25fb11fdff0779212a8d2b048c4fe897a1d9c6b30845e3be8",
+          "rank": 2,
+          "stored_f_r": 1.6024,
+          "predicted_pin": 75.13311633183847,
+          "measured_pin": 74.156,
+          "error": 0.9771163318384595,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "0ecd683ed9402e89695bc2771ecd86d73c9361d1045e2b09f21b1bb664b79299",
+          "rank": 3,
+          "stored_f_r": 1.6036,
+          "predicted_pin": 74.90382141578243,
+          "measured_pin": 75.501,
+          "error": -0.5971785842175734,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "72895ec55e16943b7421b760339107fa87b106587978f723ab09b466c03378e7",
+          "rank": 4,
+          "stored_f_r": 1.6096,
+          "predicted_pin": 74.98672795478797,
+          "measured_pin": 75.48,
+          "error": -0.4932720452120378,
+          "verdict_80": "PASS",
+          "under_78": true
+        },
+        {
+          "record_id": "66a9a1bcea743bf7d1f5f8598bf293ebc02a552aee079d073a411cd2256f681c",
+          "rank": 5,
+          "stored_f_r": 1.6105,
+          "predicted_pin": 74.92551994561245,
+          "measured_pin": 75.582,
+          "error": -0.6564800543875435,
+          "verdict_80": "PASS",
+          "under_78": true
+        }
+      ]
+    }
+  },
+  "accuracy": {
+    "pooled": {
+      "n": 41,
+      "bias": -0.3238259833194921,
+      "mae": 1.0244595246332204,
+      "sd": 1.3756219390116327,
+      "min": -4.326011227685001,
+      "max": 3.0892376902453123,
+      "ci95_lo": -0.7414241295663356,
+      "ci95_hi": 0.0802407178317858
+    },
+    "by_feed": {
+      "109": {
+        "n": 14,
+        "bias": 0.25066751739783655,
+        "mae": 0.8429608498458491,
+        "sd": 1.3053291246378096,
+        "min": -2.80487534630943,
+        "max": 3.0892376902453123,
+        "ci95_lo": -0.43192277450812194,
+        "ci95_hi": 0.9112458074064842
+      },
+      "113": {
+        "n": 17,
+        "bias": -0.8340490255146307,
+        "mae": 1.4368776527286726,
+        "sd": 1.6057852706301574,
+        "min": -4.326011227685001,
+        "max": 1.935014534015096,
+        "ci95_lo": -1.586050080921599,
+        "ci95_hi": -0.12718020705710834
+      },
+      "125": {
+        "n": 10,
+        "bias": -0.2607377125920166,
+        "mae": 0.5774468515732721,
+        "sd": 0.5963057698995647,
+        "min": -0.923157484633137,
+        "max": 0.9771163318384595,
+        "ci95_lo": -0.576795122067598,
+        "ci95_hi": 0.11661769087391387
+      }
+    },
+    "by_role": {
+      "delivery": {
+        "n": 20,
+        "bias": 0.12381795519446967,
+        "mae": 0.6391710236705265,
+        "sd": 0.8046264251752256,
+        "min": -0.923157484633137,
+        "max": 1.935014534015096,
+        "ci95_lo": -0.21032924695821523,
+        "ci95_hi": 0.4827538106479751
+      },
+      "calibration": {
+        "n": 21,
+        "bias": -0.7501535438089795,
+        "mae": 1.3914009541215004,
+        "sd": 1.6668505914843246,
+        "min": -4.326011227685001,
+        "max": 3.0892376902453123,
+        "ci95_lo": -1.4537572334085558,
+        "ci95_hi": -0.07781940737555335
+      }
+    },
+    "by_group": {
+      "E1E2_f109": {
+        "n": 5,
+        "bias": 0.5857626736109239,
+        "mae": 0.5857626736109239,
+        "sd": 0.6590369153383739,
+        "min": 0.03174396514292255,
+        "max": 1.6555647481269915,
+        "ci95_lo": 0.13649062656403146,
+        "ci95_hi": 1.1495045602062164
+      },
+      "HGD569_f125_2type": {
+        "n": 5,
+        "bias": -0.4887984274018578,
+        "mae": 0.4887984274018578,
+        "sd": 0.2881096333357354,
+        "min": -0.923157484633137,
+        "max": -0.1276366276959351,
+        "ci95_lo": -0.7304836624643002,
+        "ci95_hi": -0.27803061314303934
+      },
+      "HGD569_f125_3type": {
+        "n": 5,
+        "bias": -0.032676997782175476,
+        "mae": 0.6660952757446864,
+        "sd": 0.7661722393268449,
+        "min": -0.6564800543875435,
+        "max": 0.9771163318384595,
+        "ci95_lo": -0.6001178644844544,
+        "ci95_hi": 0.5881199548731246
+      },
+      "N1N2_f113": {
+        "n": 5,
+        "bias": 0.4309845723509881,
+        "mae": 0.8160277179246378,
+        "sd": 1.0423476326965282,
+        "min": -0.8730871080055636,
+        "max": 1.935014534015096,
+        "ci95_lo": -0.35717410794063087,
+        "ci95_hi": 1.2962687291267856
+      },
+      "calib_E1E2_f109": {
+        "n": 5,
+        "bias": 0.14645743278797455,
+        "mae": 0.5084815721743723,
+        "sd": 0.6945646670548921,
+        "min": -0.7709746999002363,
+        "max": 1.0932341870426256,
+        "ci95_lo": -0.3946526417579406,
+        "ci95_hi": 0.7203924096540533
+      },
+      "calib_G3G4_f109": {
+        "n": 1,
+        "bias": -2.80487534630943,
+        "mae": 2.80487534630943,
+        "sd": 0.0,
+        "min": -2.80487534630943,
+        "max": -2.80487534630943,
+        "ci95_lo": NaN,
+        "ci95_hi": NaN
+      },
+      "calib_G3G4_f113": {
+        "n": 3,
+        "bias": -1.6013618790006632,
+        "mae": 1.6013618790006632,
+        "sd": 0.7049960238443665,
+        "min": -2.388163396375205,
+        "max": -1.027055280636489,
+        "ci95_lo": -2.388163396375205,
+        "ci95_hi": -1.027055280636489
+      },
+      "calib_K1K2_f109": {
+        "n": 1,
+        "bias": -0.3494372394291929,
+        "mae": 0.3494372394291929,
+        "sd": 0.0,
+        "min": -0.3494372394291929,
+        "max": -0.3494372394291929,
+        "ci95_lo": NaN,
+        "ci95_hi": NaN
+      },
+      "calib_L1L2_f109": {
+        "n": 1,
+        "bias": 3.0892376902453123,
+        "mae": 3.0892376902453123,
+        "sd": 0.0,
+        "min": 3.0892376902453123,
+        "max": 3.0892376902453123,
+        "ci95_lo": NaN,
+        "ci95_hi": NaN
+      },
+      "calib_L1L2_f113": {
+        "n": 3,
+        "bias": -2.073073218367417,
+        "mae": 2.073073218367417,
+        "sd": 1.021627868282958,
+        "min": -3.1441499770295422,
+        "max": -1.1093766509297183,
+        "ci95_lo": -3.1441499770295422,
+        "ci95_hi": -1.1093766509297183
+      },
+      "calib_N1N2_f109": {
+        "n": 1,
+        "bias": -0.0866803929314699,
+        "mae": 0.0866803929314699,
+        "sd": 0.0,
+        "min": -0.0866803929314699,
+        "max": -0.0866803929314699,
+        "ci95_lo": NaN,
+        "ci95_hi": NaN
+      },
+      "calib_N1N2_f113": {
+        "n": 6,
+        "bias": -0.885075167233237,
+        "mae": 1.5539127024433341,
+        "sd": 1.9718153721056217,
+        "min": -4.326011227685001,
+        "max": 1.0753831068903565,
+        "ci95_lo": -2.3968991162896764,
+        "ci95_hi": 0.42342626097700037
+      }
+    }
+  },
+  "hypothesis": {
+    "verdict": "H2",
+    "why": "the head is ~unbiased here; the low-feed map closure is a search/design result, and mesh_multitype 5.1's pessimism claim is a cross-core artefact",
+    "calibration_ci95": [
+      -1.4537572334085558,
+      -0.07781940737555335
+    ],
+    "H1_bias": 9.0,
+    "H2_bias": -1.0,
+    "H2_halfwidth": 2.0
+  },
+  "calibration_curve": {
+    "n": 21,
+    "slope": 1.0320228881988793,
+    "intercept": -1.9525077325843117,
+    "resid_sd": 1.704670650881477,
+    "pred_span": [
+      77.31091435143423,
+      92.63194471936352
+    ],
+    "meas_span": [
+      76.457,
+      93.659
+    ],
+    "r": 0.9327247605447954,
+    "spearman_rank_pairs": 21
+  },
+  "recalibration": {
+    "pooled_bias": -0.3238259833194921,
+    "trigger_gwd": 2.0,
+    "triggered": false,
+    "recommendation": "LEAVE THE SERVE PATH ALONE. The measured |bias| is inside the 2.0 GWd/tU margin the decks already spend (minfr_pin_bu_limit 78 = 80-2); record the measured MAE as that margin's empirical basis."
+  },
+  "out_of_support_prior": {
+    "E1_E2/f109": {
+      "n": 33,
+      "bias": -1.2898021873436194,
+      "mae": 1.5892332678421524,
+      "sd": 1.4609089722358561,
+      "min": -3.882274577559926,
+      "max": 1.9843456653223654,
+      "ci95_lo": -1.7690354347288075,
+      "ci95_hi": -0.7880981687015889,
+      "f_r_min": 1.7984,
+      "meas_span": [
+        76.121,
+        93.635
+      ]
+    },
+    "G3_G4/f109": {
+      "n": 50,
+      "bias": -0.9107656588138471,
+      "mae": 1.3176253011393984,
+      "sd": 1.3238069873987992,
+      "min": -4.453676967041801,
+      "max": 1.760846349108661,
+      "ci95_lo": -1.2753513971715296,
+      "ci95_hi": -0.5550848621565996,
+      "f_r_min": 1.8261,
+      "meas_span": [
+        81.274,
+        102.465
+      ]
+    },
+    "L1_L2/f109": {
+      "n": 34,
+      "bias": -1.2196045982861639,
+      "mae": 1.6338858015917666,
+      "sd": 1.6554990615918432,
+      "min": -6.797040038865958,
+      "max": 3.0196891048117322,
+      "ci95_lo": -1.7713505262005658,
+      "ci95_hi": -0.6853877806500311,
+      "f_r_min": 1.731,
+      "meas_span": [
+        74.975,
+        96.472
+      ]
+    },
+    "N1_N2/f109": {
+      "n": 40,
+      "bias": -0.6233917489810488,
+      "mae": 1.333233176460059,
+      "sd": 1.95930508715823,
+      "min": -7.148883023377195,
+      "max": 4.053385260466797,
+      "ci95_lo": -1.249020628464675,
+      "ci95_hi": -0.03301093474626482,
+      "f_r_min": 1.6986,
+      "meas_span": [
+        81.618,
+        97.275
+      ]
+    },
+    "POOLED": {
+      "n": 157,
+      "bias": -0.9841017925095753,
+      "mae": 1.447180937632378,
+      "sd": 1.6107978623998063,
+      "min": -7.148883023377195,
+      "max": 4.053385260466797,
+      "ci95_lo": -1.2391739753603537,
+      "ci95_hi": -0.7353186995038762
+    }
+  }
+}

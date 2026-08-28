@@ -1,0 +1,39 @@
+# fuel_types_manual.yaml
+#
+# Manual fuel-type anchors for the physics-based fuel feature table
+# (plan section 4.3, priority source (5) — the lowest-priority fallback).
+#
+# These anchors feed the ``ga80`` letter-type library only.  Automated sources
+# (FA_*.out MASS, dec_FA_*.inp MATERIAL, HGC %DIST) are preferred and override
+# these when available; the ga80 upstream HGCs are, however, OneDrive-dehydrated
+# in this workspace, so ga80 rows currently come from these anchors alone and are
+# flagged ``feature_poor=True`` (Gd design unknown).
+#
+# Source of truth for the anchors:
+#   * 2_LP/MOCHA/../3_GA_Surrogate/SCRIPTS_PACKAGE/common/sel32_pairs.py
+#       docstring L2-3 : A=5.0  B=5.5  C=6.0  D=6.5
+#       CELL_ANCHOR L49: H=5.5  J=5.1  K=5.2  L=5.3  N=5.4
+#   * plan section 1-6 / 4.3 : the E family follows the A anchor (5.0) and the
+#     G family follows the B/H anchor (5.5).
+#
+# anchors: per-family U-average enrichment [w/o].  A ga80 type id (e.g. "K3")
+# takes the anchor of its leading letter family ("K" -> 5.2).
+anchors:
+  A: 5.0
+  E: 5.0
+  J: 5.1
+  K: 5.2
+  L: 5.3
+  N: 5.4
+  B: 5.5
+  G: 5.5
+  H: 5.5
+  C: 6.0
+  D: 6.5
+
+# excluded: the F and M family anchors are UNKNOWN, so these types are excluded
+# by design (plan section 4.3 — "F/M 앵커 미상 — 사용 배제").  No table rows are
+# emitted for any F* or M* type; they are only counted for roster accounting.
+excluded:
+  - F
+  - M

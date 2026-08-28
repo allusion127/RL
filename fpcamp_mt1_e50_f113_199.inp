@@ -1,0 +1,209 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — P3b MULTI-TYPE ANCHOR CAMPAIGN 1/1
+# E3_E1_E2  /  feed 113  /  ga80
+# champion s1i (cond_schema v8)  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_mt1_e50_f113_199.inp \
+#        --run-dir runs/fpcamp_mt1_e50_f113 --no-early-stop`
+#
+# Written 2026-08-18 from make_anchor_campaign.py.  The cell was chosen by the
+# PRE-REGISTERED rule in
+#   data/reports/mesh_multitype_20260818/PREREG_multitype_mesh_20260818.md §4.2
+# executed mechanically by anchor_select_multitype.py; the selection inputs and
+# every rejected cell's reason are in anchor_verdicts.csv.  Nothing in this
+# header was written after seeing a MASTER result at this cell.
+#
+# House pattern: fpcamp_minfr_TRIPLE_f125_199.inp (the programme's first 3-type
+# campaign — rc=0, 60/60 calls, 100% level-3 pair_ecore restart resolution).
+# Only the cell, feed, case id, donor and the numeric marks differ.
+#
+################################################################################
+# WHY THIS CELL
+################################################################################
+# The multi-type sweep (P3a, model-only, no MASTER) scored every one of the 90
+# mesh cells at 2, 3 and 4 fresh types under the same 5-axis gate, and this cell
+# carries one of the largest PREDICTED grading gains that also survives all five
+# pre-registered feasibility filters:
+#
+#   predicted joint-clean F_r floor   2-type  1.5600
+#                                     3-type  1.5163
+#   predicted delta(3-2)                      -0.0437
+#   R1 spec                           mono-spec (ga80 family E)
+#   nestedness                        the triple CONTAINS both pair members
+#   restart asset                     134 store rows at this pair+feed
+#                                     (2844 at any feed)
+#
+# The 3-type ladder is the cell's own 2-type pair with ONE rung inserted:
+#   hot   E3               e 5.0000  n_gd 16  Gd 
+#   mid   E1               e 5.0000  n_gd 20  Gd 
+#   cold  E2               e 5.0000  n_gd 24  Gd 
+#
+# equal-thirds e_core 5.000000   (2-type 50/50 reference: 5.000000)
+#
+################################################################################
+# THE MARKS — PINNED BEFORE LAUNCH
+################################################################################
+#   PRIMARY   a MASTER-verified core passing ALL FIVE gates (F_r<=1.55 &
+#             CBC<=1600 & F_q<=2.41 & |AO|<=0.30 & predicted pin<=78).
+#   STRETCH   F_r < 1.6233 CBC/F_q/AO-clean — BEAT THE MEASURED 2-type joint frontier at this exact cell and feed (134 converged 2-type rows). THE NUMBER TO BEAT.
+#   NULL      the 3-type F_r floor does not beat 1.6233.  Registered
+#             reading: "a third fresh type does not buy F_r at this cell."
+#             Reported plainly — it is a result about grading, not a failure.
+#
+#   CALIBRATION: the sweep's one falsifiable check is the hgd569/f125 cell,
+#   where a 3-type delta has actually been measured (-0.0364 joint-clean).
+#   calibration_hgd569.json records whether the sweep reproduces that sign.
+#   Read it BEFORE reading this campaign's delta as a validation of the sweep.
+#
+################################################################################
+# MODEL CAVEAT — s1i has 39 three-type training rows and ZERO four-type rows
+################################################################################
+# s1i (cond_v8) is the first promoted checkpoint that can encode a 3..5-type
+# core.  Its composition block was trained on 74,537 2-type rows and 39 3-type
+# rows (10 more went to val).  `g_type_frac_4/5` never moved at train time
+# (ab2_addendum_S1I_20260817.md §3.2).  So wave-0 rankings here are OUT OF
+# DISTRIBUTION, and the load-bearing early check is MASTER truth: do the
+# graded_morph seeds beat their own 2-type parents in waves 0-1?
+#
+# This cell has 0 store rows under this CASE ID, so the wave
+# fine-tune gate has NO in-cell holdout and will read explore/NaN — it cannot veto, and a blind gate must not later be reported as a passed gate.
+#
+################################################################################
+# FLEET RULES.  199 only (busy gate refuses rather than stacks; deck-hash gate
+# refuses on any edit).  198 / 181 / 238 untouched.  Fresh run dir.
+# Ship-don't-remote-edit: every file scp'd in whole.
+# NOTE (D) — the `[optimize][DEPRECATED]` banner for min_fr_max_cycle is
+# EXPECTED (campaign.py), not a failed launch.
+# NOTE (R) — `lpopt report`'s "Best verified loading patterns" table ranks by
+# CYCLE DISTANCE regardless of objective and will NOT show the F_r winner.
+# Read `state.json -> best`.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle 3-FRESH-TYPE GRADED — P3b anchor 1/1: E3_E1_E2 / f113 (ga80, e_core 5.0000), champion s1i (v8), CBC gate 1600, pin-BU gate 78"
+output_root = "runs"
+random_seed = 5701
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+workers = 8
+use_all_cores = true
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # the ga80 package, relative to the kit root
+harvest_maps = true
+
+[case]
+mode = "fixed"
+# member order is the radial grading order (hot, mid, cold); `case_batches`
+# parses it and `resolved_center` takes the first member.
+pair = "E3_E1_E2"
+feed = 113
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1i"   # 10th champion — cond_v8, the promoted
+                                # checkpoint that can encode 3..5 fresh types.
+cond_schema = "v8"
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "ga80"
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+# donor = this cell's own 2-type pair.  Without it the elite pool for a graded
+# case id is EMPTY and graded_morph is unreachable, and the campaign would NULL
+# for a plumbing reason wearing the costume of a physics result.
+elite_seed_cases = ["E1_E2"]
+# every one of the 60 calls must buy a genuinely GRADED core: a board that
+# dropped a rung is the same physical core as a 2-type board with an identical
+# %LPD_SHF, and re-measuring that population is a wasted MASTER call.
+require_all_fresh_types = true
+near_miss_f_r = 1.69
+near_miss_top_k = 8
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 60                  # 7 waves x 8 + 4 reserve — the house budget, so
+                             # the alphabet stays the only variable across arms.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 7
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 1000.0        # "F_r strictly dominates".  lambda = 0 would DELETE
+                             # the F_r term and silently invert this into cycle
+                             # maximisation.
+
+# --- feasibility: the FIVE-axis gate ----------------------------------------
+f_r_limit = 1.55
+cbc_limit = 1600.0
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+minfr_pin_bu_limit = 78.0    # LEU+ limit 80 minus 2.0 model margin (pin head
+                             # in-cell MAE 1.84, bias -1.39, under-predicting).
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING. -------------------------
+cycle_target_efpd = 609.1
+cycle_tolerance_efpd = 40.0
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # the pair resolves its template via the same-pair tier

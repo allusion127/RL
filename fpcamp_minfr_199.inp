@@ -1,0 +1,423 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — min_fr_max_cycle WAVE CAMPAIGN with MASTER verification
+# box 199  |  `python -m lpopt optimize --input fpcamp_minfr_199.inp`
+#
+# GOAL: for the first time in this program, SEARCH FOR low F_r instead of
+# harvesting it as a by-product.  Every wave campaign to date ran
+# objective = "flat_power" (node_peak primary, map_cov secondary, F_r only a
+# safety gate at 1.70).  The lowest core F_r we hold — 1.4636, record
+# deb058c004333ff4, campaign fpcamp_199 — was found by a FLATNESS search that was
+# not looking for it.  This deck points the acquisition at F_r directly.
+#
+# ------------------------------------------------------------------ INCUMBENT --
+#   record   deb058c004333ff4  (campaign fpcamp_199, E1_E2 / feed 121, ga80,
+#                               e_core 5.00, restart native:MAS_RST.APRQ_11_0635.19)
+#   F_r      1.4636      <== THE NUMBER TO BEAT
+#   cyclen   633.329 EFPD
+#   CBC_max  1326.69 ppm      F_q 1.8193      |AO| 0.0358      node_peak 1.2620
+#
+# ------------------------------------------------------------------- SUCCESS --
+#   PRIMARY   a MASTER-verified, constraint-feasible core with
+#             F_r < 1.4636  AND  cyclen >= 628.0 EFPD.
+#             (628 is this cell's own stored feasible floor — see CYCLE-LENGTH
+#             below.  A lower F_r bought by a shorter cycle is NOT a win and the
+#             deck cannot forbid it by construction; see THE ONE GAP.)
+#   SECONDARY the same at cyclen >= 633.33 EFPD, i.e. strictly dominating the
+#             incumbent on both axes.  This is the result worth delivering.
+#   NULL      no feasible row below 1.4636 in 100 calls.  That is a REAL and
+#             publishable answer: it would say the flatness campaigns already
+#             found this cell's F_r floor, and it is measured, not assumed.
+#
+# ---------------------------------------------------------------------------
+# CASE  E1_E2 / feed 121  (ga80, e_core 5.00, calibration cell `feed=121|ebin=5.0`)
+#
+# WHY THIS CELL — unchanged from fpcamp3_199.inp and re-measured here on the
+# F_r axis specifically (data/store/records.parquet, 742 converged ga80 rows at
+# case_pair=E1_E2, feed=121, e_core in [4.9, 5.1]):
+#
+#   1. It is the cell where the champion (data/models/20260729_054749) is most
+#      accurate.  Median |pred − MASTER| on the delivery band: cyclen 0.39 EFPD,
+#      CBC 2.23 ppm, F_q 0.031, F_r 0.021, node_peak 0.0162, map_cov 0.0030 —
+#      best of every high-coverage cell in the store, and the ONLY feed-121 cell
+#      under 1 EFPD on cyclen.  Today's MASTER work confirmed it directly: a
+#      fixed-pattern control reproduced the stored core to every printed digit,
+#      twice.  F_r agreement 0.021 is the number that matters here: the prize
+#      (incumbent 1.4636 → anything lower) is a ~0.01-0.02 move, i.e. the SAME
+#      order as the model's own error.  This is the only cell where that search
+#      is even resolvable, and it is why the campaign is fixed-cell.
+#   2. It already holds the store's minimum F_r for ga80 (1.4636), so there is a
+#      hard published incumbent rather than an empty cell.
+#   3. Assets are EXACT and native: cores/E1_E2/*/MAS_INP_cy12.inp (32 package
+#      cores at feed 121) + bases/E1_E2/MAS_RST.APRQ_11_0635.19.  The incumbent's
+#      own restart_provenance is `native:MAS_RST.APRQ_11_0635.19`, i.e. the
+#      resolver has already been proven to land on the exact asset for this cell.
+#      (min_fr_max_cycle does NOT set strict_restart — see NOTE (S) below.)
+#   4. F_r has real in-cell spread to search: min 1.4636 / p10 1.5250 / p50 1.8129
+#      / p90 2.3130 over the 742 converged rows.  The constraint-feasible subset
+#      (CBC<=1550, F_q<=2.41, |AO|<=0.30, F_r<=1.55) is n=168 with F_r min 1.4636 /
+#      p10 1.5065 / p50 1.5279 — a dense basin, not a single lucky point.
+#
+# ---------------------------------------------------------------------------
+# THE ONE GAP — READ THIS BEFORE INTERPRETING THE RESULT
+#
+# The brief asked for a cycle-length TARGET/TOLERANCE that stops the search
+# buying F_r by shortening the cycle.  **That control does not exist for this
+# objective.**  Audited, not guessed:
+#
+#   * `cycle_target_efpd` / `cycle_tolerance_efpd` do NOT gate anything here.
+#     `feasibility_limits_for` (search/campaign.py:175-217) leaves cyclen_lo /
+#     cyclen_hi = None for every objective EXCEPT min_fuel_cost (campaign.py:
+#     197-201).  `_is_on_target` (campaign.py:1436-1448) short-circuits to True
+#     for min_fr_max_cycle at line 1442 and never reaches the ±tolerance test.
+#   * cyclen enters the SEARCH only through the exploit scalar
+#     `cyclen_LCB − λ_Fr · F_r_UCB`  (acquisition.py:472-474), so the ONE live
+#     lever on the cycle is `minfr_lambda` — set below, with arithmetic.
+#   * cyclen does NOT enter BEST-TRACKING in any tunable way.
+#     `_campaign_objective` (campaign.py:1418-1422) hard-codes strict
+#     lexicographic `−F_r·1e6 + cyclen`.  1e6 is not a knob.  So `best` at the
+#     end of the run WILL be the lowest-F_r feasible row even if it lost 20 EFPD,
+#     and `_store_elites` (campaign.py:957-994, ranks by `_campaign_objective`
+#     at line 980) will hand the exploit arm those parents.
+#
+# CONSEQUENCE — an acceptance step OUTSIDE this deck is mandatory: read `cyclen`
+# on every row of labels.jsonl and on `best` / `best_overall` in state.json, and
+# judge the SUCCESS criteria at the top by hand.  Do not accept `best` on the
+# strength of its F_r alone.  This is a reporting rule, not a search rule,
+# because the code offers no search rule.
+#
+# ---------------------------------------------------------------------------
+# CYCLE-LENGTH: what is defensible, and the number chosen
+#
+# Measured on this cell's own 742 converged ga80 rows (the same query as above),
+# constraint-feasible subsets, cyclen [EFPD]:
+#
+#   gate on F_r     n     min     p10     p50     p90     max     sd
+#   (none)         379   620.19  630.34  632.95  636.35  641.66  2.72
+#   F_r <= 1.70    292   627.56  630.87  632.95  635.69  638.85  1.85
+#   F_r <= 1.55    168   629.91  631.82  632.92  633.92  637.11  1.07
+#   F_r <= 1.50     10   630.77  630.83  633.18  635.92  635.95  1.80
+#
+# READ THE FLOOR COLUMN.  As the F_r gate TIGHTENS the cyclen floor RISES
+# (620.2 → 627.6 → 629.9 → 630.8) and the spread COLLAPSES (sd 2.72 → 1.07).
+# In this cell, low F_r and long cycle are not in tension — they are the same
+# region.  168/168 of the F_r<=1.55 rows clear 628 EFPD and 167/168 clear 630.
+# The feared trade ("shorten the cycle, buy F_r") has NEVER been observed here.
+# So the exposure the deck cannot gate is small; it is not zero, and λ_Fr sizes it.
+#
+#   Program reference cycle              625 EFPD
+#   This cell's stored feasible band     628 - 639 EFPD  (F_r<=1.55: 629.9-637.1)
+#   Incumbent                            633.33 EFPD
+#   ACCEPTANCE FLOOR adopted here        628.0 EFPD  (the cell's own floor, and
+#                                        +3 EFPD of margin over the 625 reference)
+#
+# λ_Fr = 200 [EFPD per unit F_r] — `minfr_lambda`, set below.  Derivation:
+#   The scalar is  cyclen_LCB − λ_Fr·F_r_UCB (acquisition.py:474), so the search
+#   will pay AT MOST  λ_Fr·ΔF_r  EFPD of cycle for a ΔF_r gain.  The largest
+#   F_r gain physically on the table is ~0.025 (incumbent 1.4636 down to a
+#   hypothetical 1.4386 — larger than any single-campaign move ever recorded in
+#   this cell, where the 2nd-lowest of 742 rows is 1.4800).  Requiring that even
+#   that gain cannot push us below the 628.0 floor from the incumbent's 633.33:
+#         λ_Fr <= (633.33 − 628.0) / 0.025 = 213
+#     ->  λ_Fr = 200  buys at most 5.0 EFPD for a 0.025 F_r gain (floor 628.3),
+#                     at most 2.0 EFPD for a 0.010 F_r gain (floor 631.3).
+#   The DEFAULT λ_Fr = 1000 (config.py:241) would pay 25 EFPD for that same gain
+#   — it would license exactly the trade this campaign must not make.  Worked
+#   example, the failure mode: a predicted (F_r 1.4400, cyclen 615.0) candidate
+#   against the incumbent (1.4636, 633.33).  At λ=1000 it SCORES HIGHER
+#   (−825.0 vs −830.3) and gets the MASTER call.  At λ=200 it does not
+#   (327.0 vs 340.6).  Break-even is λ = 18.33/0.0236 = 777, so 200 carries ~4x
+#   margin.
+#   λ_Fr = 200 still leaves F_r strictly PRIMARY on this cell's real dispersion:
+#   one within-band SD of F_r (0.0159, F_r<=1.55 subset) is worth 3.18 EFPD =
+#   2.98 SD of cyclen (1.07).  F_r therefore outweighs cyclen ~3:1 per SD, and
+#   cyclen acts as what it should be — the tie-break among near-equal-F_r
+#   candidates, biased toward the LONGER cycle.  Sanity check against real rows:
+#   the incumbent scores 633.33 − 200·1.4636 = 340.6, while the longest-cycle
+#   row of the F_r<=1.70 set (638.85 at F_r 1.5450) scores 329.9 — the low-F_r
+#   core still wins by 10.7 units.
+#
+# `cycle_target_efpd = 633.0` / `cycle_tolerance_efpd = 5.0` ARE set below, and
+# are REPORT-ONLY here, deliberately.  `cycle_target_efpd` is still READ on this
+# objective's live path — `_maybe_update_best` (campaign.py:1901-1904) writes
+# `distance = |cyclen − cycle_target_efpd|` into `best`, and `lpopt report`
+# reads both (report/report.py:959-960).  Setting them to 633 ± 5 makes those
+# two readouts mean "EFPD off the incumbent's cycle" and renders the report band
+# as 628-638 == the acceptance floor above, instead of the meaningless default
+# |cyclen − 625|.  They gate NOTHING.  (Note the inconsistency they expose:
+# `_best_dict` (campaign.py:1806-1810) sets distance=None for min_fr_max_cycle
+# while `_maybe_update_best` computes it, so `best` and `best_overall` carry
+# different schemas.  Harmless for reading; do not be surprised by it.)
+#
+# ---------------------------------------------------------------------------
+# NO A/B ARM.  fpcamp3_199.inp carried `flatpower_rule_penalty_rm1i = 0.02` as a
+# one-arm experiment on the ENGINEERING-RULE rm1i metric.  It is DROPPED here,
+# for two independent reasons:
+#   (a) it is INERT on this objective — every `flatpower_*` knob is read only
+#       inside the `elif self.objective == "flat_power":` branch
+#       (campaign.py:475-580) and by `acq.FlatPowerSpec`; `MinFrSpec`
+#       (acquisition.py:397-412) has no rule-penalty field at all.  Leaving it in
+#       the deck would be a lie that loads without error.
+#   (b) even if it were live, the arm was calibrated as a soft preference on the
+#       FLATNESS score.  Carrying an unmeasured treatment into a different
+#       objective on a 100-call budget confounds both the treatment and the
+#       objective, and this campaign's whole point is a clean first read on F_r.
+# The rm1i question stays open and stays with the flat_power campaigns.
+#
+# ---------------------------------------------------------------------------
+# NOTE (D) — DEPRECATION BANNER IS EXPECTED, NOT AN ERROR.
+#   `min_fr_max_cycle` is in `_RETIRED_PRODUCTION_OBJECTIVES` (campaign.py:72),
+#   so CampaignDriver.__init__ logs, at line 426:
+#     [optimize][DEPRECATED] objective='min_fr_max_cycle' is a RETIRED production
+#     mode (flatness-first program §10 STOP) ...
+#   It RUNS — the retirement is a banner, not a block (campaign.py:68-72 says so
+#   explicitly: "They still run — reproducing an existing result and the A/B
+#   baselines need them").  This campaign IS that sanctioned use: a measured
+#   baseline answering "what does the F_r axis look like when you actually aim
+#   at it".  Do not read the banner as a failed launch.
+#
+# NOTE (S) — strict_restart is NOT set on this objective.
+#   campaign.py:909-911 turns strict_restart on for min_fuel_cost / fr_boundary /
+#   flat_power only.  min_fr_max_cycle keeps the GRACEFUL cross-pair restart
+#   fallback, i.e. a mis-resolved restart would silently substitute instead of
+#   aborting the wave.  Harmless here (item 3 above: the exact native restart is
+#   proven for this cell) but it is not a guarantee the code is giving us — spot
+#   check `restart_provenance` on the first wave's labels.jsonl; every row must
+#   read `native:MAS_RST.APRQ_11_0635.19`.
+#
+# NOTE (M) — NO map_calibration PRECONDITION on this objective.
+#   The `ModelMismatchError` abort fpcamp3_199.inp's header warns about lives
+#   entirely inside the flat_power branch (campaign.py:511-520; the attribute is
+#   documented "inert outside flat_power" at campaign.py:385-386).  So does the
+#   `MapHarvestAbort` floor (`_check_map_harvest` returns immediately unless the
+#   objective is flat_power, campaign.py:1935-1936).  This deck therefore needs
+#   NO map_calibration refit step before launch and cannot abort on map harvest.
+#
+# BOX 199: 24 logical cores, all-P server box -> use_all_cores = true,
+#   host_reserve = 0.  workers = 8 == wave_size.  Cost is the same shape as the
+#   flat campaigns (~20-25 min/wave, ~4-5 h for 12 waves + the reserve wave):
+#   the objective changed, the compute did not.
+####################################################################################
+
+[flow]
+title = "min_fr_max_cycle 199 — E1_E2/f121 (e_core 5.00), champion 20260729_054749, MINIMIZE F_r vs incumbent 1.4636"
+output_root = "runs"
+# NEW seed.  fpcamp/fpcamp2/fpcamp3 all ran 830; reusing it would re-draw the
+# same wave-0 pool the flatness campaigns already spent MASTER calls on, and the
+# first wave is where a fresh objective has the most to learn.  4636 = the
+# incumbent F_r, so the seed names what the run is chasing.
+random_seed = 1103
+
+[master]
+# BOX 199 PATH — this deck is launched on 199, not locally.  Do NOT "fix" this
+# to a D: drive; the local machine's copy is a different box.
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8                  # == wave_size; one pinned core per in-flight chain
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # relative to the kit root (cwd at launch)
+harvest_maps = true                  # RECORD-ONLY on this objective.  Unlike
+                                     # flat_power (campaign.py:546-551) this mode
+                                     # does NOT require it and cannot abort on it
+                                     # (NOTE (M)).  Kept true anyway so every row
+                                     # carries node_peak / map_cov and the winner
+                                     # can be compared against the incumbent's
+                                     # node_peak 1.2620 — a low-F_r core that is
+                                     # also peaked is worth knowing about before
+                                     # it goes to delivery.  Costs keep_success
+                                     # (converged work dirs survive to harvest).
+
+[case]
+mode = "fixed"
+pair = "E1_E2"
+feed = 121
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/split_S1b"   # low-F_r-aware champion (promoted 2026-08-10)
+                                            # F_r agreement is 0.021 (see WHY)
+cond_schema = "v6b"
+map_head_mode = "multiscale"                # must move as one set with cond_schema
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"                     # network-independent; 199 has no GPU role
+library_id = "ga80"
+store_dir = "data/store"
+
+[search]
+pool_size = 2500             # ~6 min/wave of CPU scoring at the measured 7 preds/s
+pool_cap = 100000
+elite_frac = 0.65            # fixed-cell exploitation.  On THIS objective the
+                             # elite parents are automatically the lowest-F_r
+                             # feasible rows: `_store_elites` (campaign.py:957-994)
+                             # ranks feasible-first by `_campaign_objective`, which
+                             # is `−F_r·1e6 + cyclen` here (campaign.py:1418-1422).
+                             # No knob selects that — see the [produce] note.
+guided_frac = 0.10           # beam rollouts are the expensive arm -> keep small
+diversity_frac = 0.25        # feeds the control arm with novel boards
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+# LIVE on this objective (unlike flat_power, which ignores it): `_near_miss_parents`
+# (campaign.py:996-1039) admits this campaign's own verified rows with F_r <= this
+# bound into the elite-parent set with an n_moves=1 tight-move bias.  1.52 is the
+# median of this cell's stored constraint-feasible F_r distribution (p10 1.5065 /
+# p50 1.5279 over n=168), so the tight arm concentrates on the better half of
+# whatever the campaign verifies, rather than on everything under the 1.55 gate.
+near_miss_f_r = 1.52
+near_miss_top_k = 8          # INERT here — read only by `_flat_near_miss_parents`
+                             # (flat_power).  Left at the default for symmetry.
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 50                   # (feed 121, e_core 5.0 +- 0.1) holds 742 converged
+                             # ga80 store labels — far above the floor
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+# MINIMIZE F_r (primary), cyclen the subordinate tie-break.  Exploit scalar is
+# `cyclen_LCB − λ_Fr·F_r_UCB` minus a 1e4-tier penalty for any predicted
+# violation of the FOUR gated axes (acquisition.py:447-492).  F_r has a DUAL
+# role in this mode: it is both the objective AND a hard gate at `f_r_limit`
+# (acquisition.py:386-394, campaign.py:195-196).
+objective = "min_fr_max_cycle"
+budget = 100                 # 12 waves x 8 + 4 reserve = 100 MASTER calls
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25                # LIVE: cyclen enters at μ−0.25σ (LCB) and F_r at
+                             # μ+0.25σ (UCB) — conservative on both legs
+                             # (acquisition.py:469-473)
+
+# --- THE cycle-protection lever (see CYCLE-LENGTH in the header) --------------
+minfr_lambda = 200.0         # EFPD per unit F_r.  Default is 1000 (config.py:241)
+                             # and would pay 25 EFPD for a 0.025 F_r gain.  200
+                             # caps that at 5.0 EFPD -> floor 628.3 from the
+                             # incumbent's 633.33.  This is the ONLY live control
+                             # the objective offers over the cycle.
+
+# --- feasibility: all four axes GATE in this mode -----------------------------
+f_r_limit = 1.55             # LIVE and HARD here (unlike flat_power, where F_r is
+                             # only a 1.70 safety gate).  1.55 is the licensing
+                             # limit (delivery.py:43 LICENSING_FR_LIMIT) and the
+                             # value cli.py:839 prints in this mode's result line.
+                             # NOT tightened toward the incumbent on purpose: at
+                             # 1.55 the cell offers 168 verified-feasible elite
+                             # parents; at 1.4636 it would offer exactly ONE, the
+                             # constraint tier would sink nearly every candidate,
+                             # and the search would rank by "least infeasible"
+                             # with no feasible basin to exploit.  The incumbent
+                             # is the SUCCESS BAR, not the feasibility bar.
+cbc_limit = 1550.0           # inert in practice at this cell (feasible-set max
+                             # 1449 at p90) but gated for correctness
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+# --- REPORT-ONLY cycle readouts (they gate NOTHING — see header) --------------
+cycle_target_efpd = 633.0    # the incumbent's cyclen, so `distance` in best /
+                             # state.json reads as "EFPD off the incumbent"
+cycle_tolerance_efpd = 5.0   # renders the `lpopt report` band as 628-638, the
+                             # acceptance floor.  `_is_on_target` never reads it
+                             # on this objective (campaign.py:1442-1444).
+
+# NOT SET, because this objective does not read them — a deck that sets an inert
+# knob teaches the next reader something false:
+#   flatpower_*        (fr_limit / pin_bu_limit / w_cov / per_cell_scale /
+#                       peak_scale / cov_scale / min_map_harvest / the four
+#                       rule_penalty_* arms)  — flat_power branch only
+#                       (campaign.py:475-580)
+#   fuelcost_*         — min_fuel_cost only (campaign.py:449-461).  NOTE: this is
+#                       the ONLY objective with a real two-sided cyclen gate
+#                       (`fuelcost_cyclen_lo`/`_hi`, campaign.py:197-201).  If a
+#                       HARD cycle floor is ever required on an F_r search, that
+#                       gate is the code that would have to be ported —
+#                       min_fr_max_cycle has no equivalent.
+#   fr_boundary_*      — fr_boundary only (campaign.py:462-474)
+#   mcmf_lambda        — max_cycle_min_fr only (campaign.py:434)
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+# NOTE: the launcher passes --no-early-stop.  `_is_on_target` returns True for
+# ANY constraint-feasible row in this mode (campaign.py:1442-1444), so the
+# early-stop rule's "have a keeper" condition is satisfied by the first feasible
+# label and the run could stop on 3 flat waves while F_r is still moving in the
+# 3rd decimal.  These values are kept for a resumed/edited run that re-enables it.
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+# Only the asset-resolution knobs matter to `optimize` (promoted restarts +
+# template fallbacks).  template_fallbacks is EMPTY on purpose: E1_E2/f121 has an
+# exact package deck, and a ga80 glob fallback could silently win resolution.
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+# `elite_objective` is DELIBERATELY NOT SET.  It is a ProduceConfig field
+# (config.py:649) read ONLY by ProduceDriver — `_elite_objective` /
+# `_elites_for` (produce.py:547-567, 946), i.e. the `lpopt produce` command.
+# `lpopt optimize` never reads it: CampaignDriver builds its parents in
+# `_store_elites` (campaign.py:957-994) from `_campaign_objective`, which on this
+# objective is `−F_r·1e6 + cyclen` — already exactly the right ranking, with no
+# knob involved.  Setting it here would change nothing and imply otherwise.
+# For the record, `ELITE_OBJECTIVES` (produce.py:83) is ("cyclen", "flat",
+# "flat_feasible") — there is NO F_r-ranked option; the closest is
+# "flat_feasible", which is a NODE_PEAK ordering, not an F_r one.  If this
+# campaign is ever repeated through `lpopt produce`, that gap is a code change,
+# not a deck change.
+
+[constraints]
+# SDM / MTC PRE-DELIVERY GATE (decision D9).  Runs AFTER the delivery ranking,
+# on the top-K feasible cores; its MASTER calls are reported SEPARATELY from the
+# 100-call search budget.  Carried over unchanged from fpcamp3_199.inp — this
+# block is a property of the licensing chain, not of the search objective.
+#
+# REPORT-ONLY on purpose: enable = true with NO limit set measures and records
+# the number and marks nobody a violator.  The APR1400 DCD Table 4.3 values are
+# the physically standard suggestion and are the project's OPEN question, so they
+# stay commented out until confirmed — uncomment to switch the axis to GATED:
+#     mtc_max_pcm_per_c = 9.0
+#     mtc_min_pcm_per_c = -54.0
+#     sdm_required_pcm  = 10870.0
+mtc_enable = true            # ~1 extra MASTER call per candidate (3 total)
+sdm_enable = false           # lpopt has no full-core rod asset -> the SDM branch
+                             # can only report INCONCLUSIVE; enabling it would
+                             # spend calls for no number.  Flip to true only once
+                             # a full-core %ROD_CFG/%ROD_MAP seed exists.
+post_verify_top_k = 5

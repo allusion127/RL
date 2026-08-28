@@ -1,0 +1,192 @@
+{
+ "cell": "5.5-5.75_f141",
+ "objective": "max cyclen + min f_r s.t. F_q/CBC/AO",
+ "results": [
+  {
+   "pair": "H1_H2",
+   "status": "error",
+   "pred_cyclen": 734.1731566538112,
+   "pred_f_r": 1.9559613229820372
+  },
+  {
+   "pair": "G3_G4",
+   "status": "converged",
+   "pred_cyclen": 733.9289084724569,
+   "pred_f_r": 1.8516377937360018,
+   "cyclen": 739.81,
+   "f_r": 1.8261,
+   "f_q": 2.4558,
+   "cbc_max": 1546.28,
+   "ao_abs": 0.0643,
+   "feasible": false
+  },
+  {
+   "pair": "H3_H4",
+   "status": "converged",
+   "pred_cyclen": 732.1984017161028,
+   "pred_f_r": 1.8082051688908487,
+   "cyclen": 729.981,
+   "f_r": 1.7943,
+   "f_q": 2.2509,
+   "cbc_max": 1482.17,
+   "ao_abs": 0.0414,
+   "feasible": true
+  },
+  {
+   "pair": "H1_H2",
+   "status": "converged",
+   "pred_cyclen": 731.6425446626909,
+   "pred_f_r": 1.9047540951872264,
+   "cyclen": 740.238,
+   "f_r": 1.944,
+   "f_q": 2.6225,
+   "cbc_max": 1529.28,
+   "ao_abs": 0.0733,
+   "feasible": false
+  },
+  {
+   "pair": "H1_H2",
+   "status": "converged",
+   "pred_cyclen": 730.9521121722858,
+   "pred_f_r": 1.9292165220855335,
+   "cyclen": 729.033,
+   "f_r": 1.9422,
+   "f_q": 2.4999,
+   "cbc_max": 1541.72,
+   "ao_abs": 0.0531,
+   "feasible": false
+  },
+  {
+   "pair": "H1_H2",
+   "status": "converged",
+   "pred_cyclen": 730.0407548274659,
+   "pred_f_r": 1.8930556794618612,
+   "cyclen": 737.836,
+   "f_r": 2.0478,
+   "f_q": 2.6565,
+   "cbc_max": 1540.13,
+   "ao_abs": 0.0456,
+   "feasible": false
+  },
+  {
+   "pair": "G3_G4",
+   "status": "converged",
+   "pred_cyclen": 729.4407156569141,
+   "pred_f_r": 1.9285371427090998,
+   "cyclen": 734.094,
+   "f_r": 1.911,
+   "f_q": 2.6253,
+   "cbc_max": 1505.27,
+   "ao_abs": 0.0721,
+   "feasible": false
+  },
+  {
+   "pair": "H1_H2",
+   "status": "converged",
+   "pred_cyclen": 729.4324451218047,
+   "pred_f_r": 1.8808146693323426,
+   "cyclen": 741.73,
+   "f_r": 1.8518,
+   "f_q": 2.321,
+   "cbc_max": 1529.38,
+   "ao_abs": 0.0633,
+   "feasible": true
+  },
+  {
+   "pair": "G3_G4",
+   "status": "converged",
+   "pred_cyclen": 729.3937374128534,
+   "pred_f_r": 1.84864723590978,
+   "cyclen": 726.813,
+   "f_r": 1.8663,
+   "f_q": 2.3856,
+   "cbc_max": 1511.18,
+   "ao_abs": 0.0366,
+   "feasible": true
+  },
+  {
+   "pair": "H3_H4",
+   "status": "converged",
+   "pred_cyclen": 728.6940396784241,
+   "pred_f_r": 1.8641648554661023,
+   "cyclen": 737.212,
+   "f_r": 1.8771,
+   "f_q": 2.4411,
+   "cbc_max": 1531.17,
+   "ao_abs": 0.0402,
+   "feasible": false
+  },
+  {
+   "pair": "H3_H4",
+   "status": "converged",
+   "pred_cyclen": 728.5236165664783,
+   "pred_f_r": 1.7714250974434775,
+   "cyclen": 738.796,
+   "f_r": 1.6264,
+   "f_q": 2.0575,
+   "cbc_max": 1515.97,
+   "ao_abs": 0.0495,
+   "feasible": true
+  },
+  {
+   "pair": "H3_H4",
+   "status": "converged",
+   "pred_cyclen": 726.5513849554604,
+   "pred_f_r": 1.7805603701607038,
+   "cyclen": 719.777,
+   "f_r": 1.7142,
+   "f_q": 2.1773,
+   "cbc_max": 1475.35,
+   "ao_abs": 0.0559,
+   "feasible": true
+  },
+  {
+   "pair": "H3_H4",
+   "status": "converged",
+   "pred_cyclen": 725.1499291503887,
+   "pred_f_r": 1.8369921756479461,
+   "cyclen": 724.294,
+   "f_r": 1.7927,
+   "f_q": 2.3215,
+   "cbc_max": 1565.48,
+   "ao_abs": 0.0463,
+   "feasible": false
+  },
+  {
+   "pair": "H3_H4",
+   "status": "converged",
+   "pred_cyclen": 723.8675645853978,
+   "pred_f_r": 1.842902894978834,
+   "cyclen": 717.89,
+   "f_r": 1.8213,
+   "f_q": 2.3276,
+   "cbc_max": 1465.52,
+   "ao_abs": 0.0506,
+   "feasible": true
+  },
+  {
+   "pair": "H1_H2",
+   "status": "converged",
+   "pred_cyclen": 725.5482896399672,
+   "pred_f_r": 1.8441055948111476,
+   "cyclen": 725.489,
+   "f_r": 1.7735,
+   "f_q": 2.3521,
+   "cbc_max": 1484.92,
+   "ao_abs": 0.065,
+   "feasible": true
+  },
+  {
+   "pair": "H1_H2",
+   "status": "converged",
+   "pred_cyclen": 724.2907959816109,
+   "pred_f_r": 1.8487936414760713,
+   "cyclen": 723.347,
+   "f_r": 1.985,
+   "f_q": 2.5036,
+   "cbc_max": 1505.95,
+   "ao_abs": 0.0456,
+   "feasible": false
+  }
+ ]
+}

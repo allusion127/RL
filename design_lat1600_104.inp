@@ -1,0 +1,51 @@
+################################################################################
+# lat1600 design-chain deck — BOX 104 ONLY
+# `python -m lpopt design bootstrap --input design_lat1600_104.inp --pair <P> --feed 121`
+#
+# Exists because every fill_*.inp points [master].executable at the FLEET path
+# C:/DeCART_MASTER/... while box 104 (the only box with DeCART2D + the 0_APR1400
+# template tree + the paramA package) has MASTER at D:\DeCART_MASTER\BIN.
+# Used by the lat1600 realization runbook for:
+#   * the 4 pair bootstraps after the ncomp 38 -> 42 library rebuild
+#     (T3_T4 first == the 42-COMP MASTER smoke test, plan 4.3)
+# The realize driver itself (realize_lat1600.py) does NOT read this deck.
+#
+# NOTE `design bootstrap` reads ONLY [design] (package_root, master_exe,
+# bootstrap_max_cycles, enable_pin_burnup) + [master] fallback (cli.py:1242-1269).
+# The registry that _design_ctx loads from [design].store_dir is NOT used by the
+# bootstrap path — bootstrap reads aliases live from package lib/MAS_XSL
+# (bootstrap.py:115-124).  Do not "fix" store_dir to the package: the divergent
+# data/design/registry.json (4 aliases) is a known hazard only for generate/run.
+################################################################################
+
+[flow]
+title = "lat1600 design chain (box 104): bootstrap new/control pairs at ncomp 42"
+output_root = "runs"
+
+[master]
+executable = "D:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8
+use_all_cores = false
+host_reserve = 1
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"
+harvest_maps = true
+
+[model]
+model_dir = "data/models/split_S1b"
+store_dir = "data/store"
+library_id = "paramA"
+device = "cpu"
+
+[design]
+store_dir = "data/design"
+package_root = "data/design/package"
+apr1400_root = "../0_APR1400"
+decart_exe = "D:/DeCART_MASTER/BIN/decart2d1.1m5omp.exe"
+master_exe = "D:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+bootstrap_max_cycles = 16
+enable_pin_burnup = true

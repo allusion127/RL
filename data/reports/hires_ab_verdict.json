@@ -1,0 +1,78 @@
+{
+ "fold": "C",
+ "control": "B1",
+ "incumbent": "B0",
+ "n_arms_scored": 8,
+ "verdicts": {
+  "A1": {
+   "label": "A1",
+   "primary_gain": 0.7046946685066362,
+   "worst_regression": 0.0,
+   "passes_primary": true,
+   "passes_gate": false,
+   "passes_secondary": true,
+   "eligible": false,
+   "notes": []
+  },
+  "A6": {
+   "label": "A6",
+   "primary_gain": 0.7046946685066362,
+   "worst_regression": 0.0,
+   "passes_primary": true,
+   "passes_gate": false,
+   "passes_secondary": true,
+   "eligible": false,
+   "notes": []
+  },
+  "A2": {
+   "label": "A2",
+   "primary_gain": 0.0,
+   "worst_regression": 0.0,
+   "passes_primary": false,
+   "passes_gate": false,
+   "passes_secondary": true,
+   "eligible": false,
+   "notes": []
+  },
+  "A4": {
+   "label": "A4",
+   "primary_gain": 0.7046946685066362,
+   "worst_regression": 0.0,
+   "passes_primary": true,
+   "passes_gate": false,
+   "passes_secondary": true,
+   "eligible": false,
+   "notes": []
+  },
+  "A3": {
+   "label": "A3",
+   "primary_gain": 0.0,
+   "worst_regression": 0.0,
+   "passes_primary": false,
+   "passes_gate": false,
+   "passes_secondary": true,
+   "eligible": false,
+   "notes": []
+  },
+  "A5": {
+   "label": "A5",
+   "primary_gain": 0.14124623737104214,
+   "worst_regression": 0.0,
+   "passes_primary": false,
+   "passes_gate": false,
+   "passes_secondary": true,
+   "eligible": false,
+   "notes": []
+  }
+ },
+ "missing": [],
+ "capacity_clause": {
+  "arm": "A5",
+  "primary_gain": 0.14124623737104214,
+  "threshold": 0.02,
+  "null_rejected": true,
+  "conclusion": "순수 용량 확대가 실효 분해능을 개선했다 — 사전등록 귀무가설 기각"
+ },
+ "verdict": "no_winner",
+ "reason": "사전등록 승격 조건을 만족한 arm이 없다 (1차 ≥0.15 개선 + 게이트 PASS + 2차 무하락)"
+}

@@ -1,0 +1,388 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — HIGH-Gd BORON-OPENED CELL, F_r ASSAULT, PIVOT TO f125
+# P6253Z1G06N24_P6253Z2G10N24 / feed 125 / paramA (e_core 5.694, n_gd 24)
+# champion s1g  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_HGD569_f125_199.inp \
+#        --run-dir runs/fpcamp_minfr_hgd569_f125 --no-early-stop`
+#
+# Written 2026-08-17, AFTER the f109 sibling campaign closed (STRETCH met,
+# F_r 2.0481 -> 1.6743, results: fpcamp_HGD569_f109_results_20260817.md).
+# Full pre-registration: data/reports/fpcamp_HGD569_f125_prereg_20260817.md
+# The header below is the short form; the prereg is authoritative where they
+# differ, and nothing in either was written after seeing an f125 result.
+#
+################################################################################
+# WHY f125, GIVEN f109 ALREADY RAN
+################################################################################
+#
+# Same pair, same n_gd(24)/e_core(5.694) cell, one lever changed: feed
+# 109 -> 125 (n_fresh 27 -> 31, feed = 1 + 4N). Two things move together and
+# only one of them can be assessed by re-running f109 harder:
+#
+#   1. F_r STARTING POINT.  The f125 anchor sample (16 rows, mesh-v3) has its
+#      OWN F_r floor at 1.8375 — already lower than f109's anchor floor
+#      (2.0481) was.  But f109's DEDICATED campaign then found 1.6743, which
+#      is LOWER than f125's raw anchor floor.  So the honest frontier f125 has
+#      to clear is not "beat 1.8375" (that's the easy, anchor-relative bar) —
+#      it is "beat 1.6743", the freshest MASTER-verified state of the art for
+#      THIS PAIR, set five hours ago on the sibling feed.
+#   2. PIN BURNUP.  This is the real reason to pay for a second 60-call
+#      campaign instead of calling f109 closed.  `estimate_discharge_burnup`
+#      (lpopt/design/bootstrap.py:99-112) scales residence as `241/feed`:
+#      109 -> 2.211, 125 -> 1.928, a 12.8% cut.  f109's winner predicted pin
+#      BU 81.13 (the closest either min_fr precedent has come to the 78 gate).
+#      A naive linear scaling of THAT SAME core's burnup by the residence
+#      ratio (0.872) lands at ~70.7 — comfortably under 78.  That scaling is
+#      NOT a validated pin-BU prediction (peak pin burnup depends on local
+#      power peaking, which the search is simultaneously changing, not only
+#      on core-average residence) — it is the physical rationale for why f125
+#      is the deliverability lever, and R-PIN below exists to measure it
+#      rather than assume it.
+#
+# CBC is NOT free here the way it was at f109.  The f125 anchor CBC floor is
+# **1561.31 ppm** — only 38.69 ppm under the 1600 gate (vs f109's 194.84 ppm
+# margin).  Minimising F_r under a much thinner boron cushion is a real,
+# registered risk this deck carries that f109 did not.
+#
+################################################################################
+# THE MARKS — PINNED BEFORE LAUNCH.  Read data/reports/fpcamp_HGD569_f125_prereg
+# _20260817.md for the full table.
+################################################################################
+#
+# IN-CELL TRUTH (this pair, feed 125, store campaign tag `mv3_e569_f125`: 24
+# rows, of which **16 converged and carry a FOM**; queried directly from
+# data/store/records.parquet, case_pair == this pair, feed == 125):
+#     CBC_max   min **1561.31**   p50 1670.85   max 1728.04   -> 4/16 pass 1600
+#     F_r       min **1.8375**    p50 2.2252    max 3.1030    -> 0/16 pass 1.55
+#     F_q       min **2.2810**    p50 2.9918    max 4.0658    -> 2/16 pass 2.41
+#     |AO|      max 0.0630                                     -> 16/16 pass 0.30
+#     cyclen    711.927 - 737.465 EFPD (p50 723.082)
+#     e_core    5.662805 - 5.727485 (p50 5.701052; anchor readout 5.6985)
+#     max_assembly_burnup 66.482 / 72.033 / 74.414 (min/p50/max)
+#     max_pin_burnup      NOT MEASURED on a single row (same as f109 — produce
+#                         path only, `enable_pin_burnup` unreachable from
+#                         `lpopt optimize`)
+#     n_pass_cbc = 4/16, n_pass_both = 0/16 (joint_tier "none", same as f109)
+#
+# CROSS-FEED MARKS (this pair, feed 109, labelled and never conflated with the
+# above):
+#     anchor floor (16 rows, f109)        F_r 2.0481
+#     f109 DEDICATED CAMPAIGN WINNER      F_r **1.6743**, CBC 1540.99,
+#                                         pred. pin BU **81.13** (closest either
+#                                         min_fr precedent has come to 78)
+#
+# THE DISTANCE TO CLOSE, two framings, both registered:
+#   * anchor-relative (the easy bar): 1.8375 -> 1.55 is -0.2875 in-cell.
+#   * SOTA-relative (the honest bar): 1.8375 -> 1.6743 is -0.1632 just to
+#     MATCH what f109 already achieved; beating it requires more.
+#   * PRECEDENT-BASED EXPECTATION: f109's own campaign moved its floor by
+#     -0.3738 (2.0481 -> 1.6743) in 60 calls at THIS SAME pair, five hours
+#     ago, on the sibling feed — the freshest and most directly relevant
+#     precedent available (more relevant than T6_T4/f121's -0.32, which f109
+#     itself was scored against).  Applying -0.3738 to f125's own anchor floor
+#     (1.8375) lands at **1.4637 — INSIDE the 1.55 gate.**  That is the
+#     registered optimistic case; it is not the same as expecting it, since
+#     f125's own search dynamics (thinner CBC margin, no store-refresh elite
+#     seeding — see below) are not identical to f109's.
+#
+################################################################################
+# REGISTERED READOUTS — fixed before launch, all reported whatever they say
+################################################################################
+#
+#  R1  BEST F_r vs the in-cell f125 anchor floor 1.8375 (like-for-like) and,
+#      separately and labelled cross-feed, vs f109's dedicated-campaign winner
+#      1.6743 (the true state of the art for this pair, not just its anchor).
+#  R2  DID ANY CORE PASS ALL FOUR (F_r<=1.55 & CBC<=1600 & F_q<=2.41 &
+#      |AO|<=0.30)?  PRIMARY success bar, unmet anywhere in the project so far
+#      (0/178 anchors, 0/40 converged f109 campaign rows).
+#  R3  CBC UNDER F_r PRESSURE, HIGH STAKES HERE.  Margin at the anchor floor is
+#      only 38.69 ppm (vs f109's 194.84).  Report the full (F_r, CBC) Pareto
+#      front and flag explicitly if any feasible-on-F_r-alone candidate
+#      crosses 1600 — a real possibility this deck exists partly to test.
+#  R4  F_q AXIS.  In-cell F_q floor is 2.2810 and already PASSES 2.41 (2/16
+#      anchors pass) — unlike f109 (0/16).  Expect F_q to not bind; report
+#      whether that holds under search pressure.
+#  R-PIN  THE HEADLINE READOUT FOR THIS DECK.  Predicted pin BU (surrogate
+#      column 6, `pred_mean`, joined via `waves/wave_NN/selection.json` same
+#      as the f109 methodology) of the best F_r cores.  Registered question:
+#      does it fall BELOW f109's winner (81.13), and — the actual deliverable-
+#      grade bar — does it fall to <=78 (this campaign's own gate)?  A core
+#      that clears F_r<=1.55 AND predicted pin<=78 simultaneously would be the
+#      FIRST 5-constraint-passing core the whole high-enrichment programme has
+#      produced.  That is what "pin axis is the deliverability test" means:
+#      F_r may or may not reach 1.55 here, but if predicted pin BU drops under
+#      78 even without F_r reaching the gate, that is itself the load-bearing
+#      finding — the residence-time argument (§ above) validated or refuted.
+#
+################################################################################
+# SUCCESS / NULL — fixed in advance
+################################################################################
+#   PRIMARY   a MASTER-verified core passing ALL FOUR gates at this cell/feed.
+#             No such core exists anywhere in the project to date.
+#   SECONDARY F_r < 1.8375 (beat this cell's OWN f125 anchor floor) with
+#             CBC still <= 1600.  First F_r improvement ever measured at f125.
+#   STRETCH   F_r <= 1.6743 — MATCH OR BEAT f109's dedicated-campaign winner,
+#             the true cross-feed state of the art, not just its anchor.
+#   REACH     F_r <= 1.55 (the licensing gate itself) — registered as
+#             plausible-but-not-expected via the precedent-based projection
+#             above (1.4637), not assumed.
+#   PARTIAL   F_r falls below 1.8375 but not below ~1.6743, OR CBC crosses
+#             1600 while F_r falls (the thin-margin risk, R3).  Either is
+#             publishable: it prices the F_r/CBC trade at a cell where that
+#             trade now has real stakes.
+#   NULL      the floor does not move meaningfully below 1.8375 in 60 calls.
+#             Registered reading: feed alone (without a lattice change) does
+#             not move this pair's F_r floor further than the f109 campaign
+#             already found — i.e. 1.6743 (or thereabouts) is a PAIR property,
+#             not a feed-109-specific one, and the residence-time argument for
+#             pin BU stands or falls independently of F_r.
+#
+################################################################################
+# BUDGET 60 (SAME AS f109) — with one new caveat
+################################################################################
+# f109's own frontier was STILL DESCENDING at wave 7 (best core found on call
+# 57/60, the very last reserve call) — unlike both prior min_fr precedents
+# (N1_N2/f113, E1_E2/f109) whose frontiers had stalled by wave 3-5. That means
+# the "budget 60 is enough" assumption this deck inherits from f109's own
+# pre-registration is WEAKER here than it was for f109 itself: if f125 also
+# fails to stall by wave 7, that is now the SECOND cell to do so and an
+# extension is, as before, a new decision with a new deck — not a silent
+# top-up. 60 = 7 waves x 8 + 4 reserve, unchanged.
+#
+################################################################################
+# THE PREDICTED PIN-BURNUP GATE — carried over unchanged from f109
+################################################################################
+#   minfr_pin_bu_limit = 78.0, NOT 80.0 (2.0 model margin; s1g pin head
+#   in-cell MAE 1.84, bias -1.39, under-predicts).  Screens the PREDICTION
+#   only (surrogate target index 6); does not change the MEASURED feasibility
+#   set (`is_feasible` passes a missing pin BU by design — every row here will
+#   have one missing, same as f109).  Crossover formula unchanged:
+#       F_r_crossover = 1.55 + 0.01*(pin_pred - 78)
+#   f109 found the search stayed F_r-dominant throughout (85-95% of the
+#   penalty at every Pareto point; winner's own crossover pin=81.13 ->
+#   F_r~1.58, well below its achieved 1.6743).  If the residence-time
+#   argument above is right, f125's predicted pin values should sit LOWER
+#   than f109's at the same F_r, which — via the same crossover formula —
+#   would push the crossover point DOWN too (a lower pin_pred makes term_pin
+#   smaller at any given F_r, so F_r stays dominant even more comfortably than
+#   at f109).  R-PIN is where this gets checked against data instead of
+#   assumed.
+#
+################################################################################
+# ELITE SEEDING — WEAKER THAN IT COULD BE, disclosed rather than fixed
+################################################################################
+# `_case_store_rows` filters by `case_pair` ONLY, so f109's 56 newly-converged
+# rows (including the 1.6743 winner) WOULD enrich this campaign's elite pool
+# if the store on 199 carried them. IT DOES NOT: 199's store is the same
+# 74,357-row, pre-f109-merge copy shipped for the f109 launch (verified via
+# `Get-Item records.parquet | Length` == 22,131,144 bytes on 199, matching the
+# pre-merge size, not the local 74,417-row post-merge canonical). Per the
+# house rule ("edits ONLY: feed 109->125..."), the store is NOT being reshipped
+# for this run — elite seeding here uses exactly the same 32-row, all-infeasible
+# backfill pool f109 used (16 f109-native + 16 f125 feed-morphed rows,
+# elite_top_k = 32, n_pass_both = 0 at both feeds). This is a genuine, disclosed
+# limitation: this campaign does NOT get to warm-start from its own sibling's
+# improved result. If f125 still beats 1.8375 by a wide margin under this
+# weaker seed, that is a stronger result than f109's own (which also started
+# from all-infeasible backfill, so the comparison is fair on that axis at
+# least — neither campaign's elites were feasible).
+#
+################################################################################
+# ASSET RESOLUTION — level 3 (pair_ecore), CONFIRMED for f125 by direct probe
+################################################################################
+# Checked directly on 199 before launch (not assumed): `data/design/package/
+# bases/P0_P1/MAS_RST.APRQ_11_0705.02` exists; `data/design/package/cores/` and
+# `synth_decks/` carry NO entry for this pair at any feed. So this run resolves
+# at level 3 off bases/P0_P1, exactly as f109 did (`pair_ecore:
+# MAS_RST.APRQ_11_0705.02`) — the f125 ANCHOR rows resolved one rung better
+# only because `produce` (not `optimize`) had promoted a cache entry that
+# lived in a different package copy at anchor time; `lpopt optimize` never
+# calls `promote()`, so level 3 is expected here too, not a regression.
+# Budget ~1.4-1.7 MASTER calls per usable label early, per f109's own
+# observed rate (1.500, same package/pair state).
+#
+################################################################################
+# MODEL CAVEAT — s1g HAS NEVER SEEN THIS CELL (same as f109)
+################################################################################
+# s1g's per-cell calibration is fitted on ga80; this paramA cell has no
+# per-cell entry at either feed. Wave-0 predictions are out-of-distribution;
+# the online wave gate does real work from wave 1, same caveat as f109 (whose
+# finetune gate rejected all 8 waves — improvement there came from the base
+# champion plus BO refinement, not in-campaign updates; watch whether f125
+# repeats that pattern).
+#
+################################################################################
+# FLEET RULES.  199 only (verified idle at arming: master 0, python 0, 54.1 GB
+# free). 198 / 181 / 238 untouched. Canonical store READ-ONLY (and, per above,
+# deliberately NOT refreshed for this run). Fresh run dir. Ship-don't-remote-
+# edit: every file scp'd in whole.
+# NOTE (D) — the `[optimize][DEPRECATED]` banner for min_fr_max_cycle is
+# EXPECTED (campaign.py:72), not a failed launch.
+# NOTE (R) — `lpopt report`'s "Best verified loading patterns" table ranks by
+# CYCLE DISTANCE regardless of objective and will NOT show the F_r winner.
+# Read `state.json -> best`. Known defect, unchanged from f109.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle HIGH-Gd BORON-OPENED, PIVOT f125 — P6253Z1G06N24_P6253Z2G10N24/f125 (paramA, n_gd 24, e_core 5.694), champion s1g, CBC gate 1600, pin-BU gate 78"
+output_root = "runs"
+random_seed = 5695
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+workers = 8
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"   # the paramA package (NOT FEASIBLE_PACKAGE)
+harvest_maps = true                    # record-only on this objective; kept so
+                                       # every row carries node_peak / map_cov
+
+[design]
+# paramA routing (anchors_meshv3_198.inp idiom).  `build_case_resolver` sends a
+# library="paramA" case to THIS package plus the registry alias bridge and the
+# package's own %GEN_DIM dims; without it the case would be routed at the ga80
+# FEASIBLE_PACKAGE and come back unresolved.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[case]
+mode = "fixed"
+pair = "P6253Z1G06N24_P6253Z2G10N24"   # n_gd 24, e_core 5.694 — same cell as
+                                       # the f109 sibling campaign
+feed = 125                             # n_fresh 31 (feed = 1 + 4N).  The ONLY
+                                       # substantive change from the f109 deck.
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1g"   # 8th champion.  NOT calibrated for this cell —
+                                # see the MODEL CAVEAT block in the header.
+cond_schema = "v6b"
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "paramA"           # featurize reads the paramA fuel rows; the six
+                                # P6253* type_ids are present in
+                                # data/store/fuel_types.parquet (verified)
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # 32 parents fill, ALL infeasible backfill — see
+                             # the ELITE SEEDING block.  Same 32-row pool f109
+                             # used (store not refreshed for this run).
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+near_miss_f_r = 1.75          # LIVE: arms the tight (n_moves=1) arm once a
+                             # verified row lands below 1.75 — i.e. once it has
+                             # genuinely beaten THIS cell's own f125 anchor
+                             # floor (1.8375) by a margin proportionally
+                             # similar to f109's own near_miss/floor gap
+                             # (0.0981/2.0481 there; 0.0875/1.8375 here).
+                             # Still above f109's achieved winner (1.6743), so
+                             # arming does not require matching that record.
+near_miss_top_k = 8          # INERT here (flat_power only); left at the default
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the (feed 125, e_core 5.7 +- 0.1) bin holds only
+                             # this pair's own rows; the campaign's OWN cell is
+                             # unconditionally in-region (TrustRegion.__init__),
+                             # so n_min cannot starve the fixed case — it only
+                             # decides which OTHER bins count as support
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1                  # at f113 this arm produced 37 of 41 feasible cores
+                             # once the elites had seeded a basin
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 60                  # 7 waves x 8 + 4 reserve — SAME as f109.  See the
+                             # BUDGET block: f109's own frontier had NOT stalled
+                             # by wave 7, weakening (not voiding) the "60 is
+                             # enough" assumption inherited here.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 7
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 1000.0        # the code's own "F_r strictly dominates" default,
+                             # carried from f109/f113/E1E2.  lambda = 0 would
+                             # DELETE the F_r term (acquisition.py:
+                             # scalar = cyclen_lcb - lam_fr*fr_ucb) and silently
+                             # invert this into cycle-length maximisation.
+
+# --- feasibility: F_r / CBC / F_q / |AO| GATE, and pin BU too ----------------
+f_r_limit = 1.55             # licensing limit AND the primary success bar
+cbc_limit = 1600.0           # programme decision 2026-08-11.  THIN margin here
+                             # — anchor floor is 1561.31, only 38.69 ppm under.
+                             # See R3: CBC breach under F_r pressure is a real
+                             # registered risk at this feed, unlike f109.
+f_q_limit = 2.41             # anchor floor already passes here (2.2810, 2/16
+                             # anchors pass) — expected non-binding, see R4.
+ao_abs_limit = 0.30          # slack here: in-cell |AO| max is 0.0630
+
+minfr_pin_bu_limit = 78.0    # UNCHANGED from f109.  LEU+ limit 80 minus 2.0
+                             # model margin (s1g pin head in-cell MAE 1.84,
+                             # bias -1.39 under-predicting).  See R-PIN — this
+                             # is the headline readout for this deck.
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING. --------------------------
+cycle_target_efpd = 723.1    # this cell's own measured f125 cyclen p50 (16
+                             # rows), so `distance` reads as "EFPD off the
+                             # sampler median".  NOT a target the search
+                             # pursues.
+cycle_tolerance_efpd = 40.0  # band 683.1-763.1 spans the observed range
+                             # (711.9-737.5) with room, same width as f109.
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # MUST stay empty on paramA: a ga80 reload deck
+                             # would win resolution and then fail the paramA
+                             # %GEN_DIM sanity gate (resolver.py header)

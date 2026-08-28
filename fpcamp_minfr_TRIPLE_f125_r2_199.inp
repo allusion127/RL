@@ -1,0 +1,290 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — 3-FRESH-TYPE (GRADED) CAMPAIGN, ROUND 2
+# P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24  (alias S3_T1_S5) / feed 125 / paramA
+# champion s1i (cond_schema v8)  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_TRIPLE_f125_r2_199.inp \
+#        --run-dir runs/fpcamp_minfr_triple_f125_r2 --no-early-stop`
+#
+# Written 2026-08-20, successor to `fpcamp_minfr_TRIPLE_f125_199.inp` (round 1,
+# CLOSED 2026-08-17: joint-clean F_r 1.5993, CBC 1597.33 — 2.7 ppm off the 1600
+# gate, 4/5 gates clean, measured pin BU 74.38 PASS). Round 1's frontier had NOT
+# stalled at its budget (best landed call 57/60); budget was the binding
+# resource, not the search. This round spends a fresh 60-call budget at the
+# SAME cell/case/feed/objective/gate set to see whether the frontier keeps
+# moving toward the licensing bar F_r <= 1.55.
+#
+# Full pre-registration: data/reports/tripletype_f125_r2_prereg_20260820.md
+# Round-1 results:        data/reports/tripletype_f125_results_20260817.md
+# Round-1 prereg:          data/reports/tripletype_f125_prereg_20260817.md
+# Pin definition (official margin): data/reports/pinbu_definition_20260820.md
+#
+################################################################################
+# WHAT CHANGED FROM ROUND 1 — and nothing else did
+################################################################################
+#   [flow]   random_seed       5695 -> 5697 (fresh; unused anywhere in the repo)
+#   [model]  model_dir         data/models/s1h -> data/models/s1i (v8, 10th
+#                               champion; the FIRST checkpoint trained on any
+#                               3-type row — 39 of round 1's 49 converged triples
+#                               were in its train fold, ab2_addendum_S1I §4/§5.2)
+#   [model]  cond_schema       v7 -> v8 (20 globals; v7's 18 with type_frac_4/5
+#                               inserted before e_type_std/n_fresh_types — both
+#                               new globals are STILL zero for this 3-type case,
+#                               ab2_addendum_S1I §3.2, so they contribute nothing
+#                               here; the only live change is the encoding of the
+#                               fields v7 already had, plus the 60 extra rows)
+#   [search] elite_seed_cases  ["P6253Z1G06N24_P6253Z2G10N24"]  ->
+#                               ["P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24",
+#                                "P6253Z1G06N24_P6253Z2G10N24"]
+#                               ROUND 1's OWN case is now a donor too: the 49
+#                               converged round-1 triples enter `elite_top_k=32`
+#                               ranking DIRECTLY (same alphabet, no morph
+#                               needed) instead of only through the 2-type
+#                               pair's morphed rows. The pair donor is
+#                               unchanged and still carries BOTH 2-type f125
+#                               campaigns' converged output (hgd569_f125 +
+#                               hgd569_f125_seedctl, 121 converged rows total).
+#   run dir / tag               runs/fpcamp_minfr_triple_f125 -> _r2
+#
+# Everything else is byte-identical to the round-1 deck: require_all_fresh_types
+# stays TRUE, minfr_lambda stays 1000.0 (F_r strictly dominates), NO cycle band
+# gates anything (report-only), the five feasibility gates are unchanged
+# (F_r<=1.55, CBC<=1600, F_q<=2.41, |AO|<=0.30, predicted pin<=78 — the official
+# licensing axis per pinbu_definition_20260820.md is measured pin axial peak
+# <=80; 78 is that minus the 2.0 model margin), budget 60 (7 waves x 8 + 4
+# reserve), near_miss_f_r stays 1.70, [search]/[acquisition] knobs unchanged.
+#
+################################################################################
+# WHY ROUND 2 — the gap left open
+################################################################################
+#   round-1 joint-clean winner   F_r 1.5993  CBC 1597.33  F_q 1.9968  |AO| 0.0261
+#                                 cyclen 730.5  measured pin BU 74.38 (PASS)
+#   full-feasible bar             F_r <= 1.55  (does not exist anywhere yet)
+#   remaining F_r gap             +0.0493
+#   CBC margin at the frontier    2.67 ppm (1600 - 1597.33) — NEAR-BINDING
+#
+# Round 1's own §9 named the outcome directly: "budget 60 is undersized for
+# this cell in its 3-type form; an extension is a new decision with a new
+# deck, not a silent top-up." This deck is that new decision — fresh seed,
+# fresh run dir, the champion that has actually seen 3-type rows, and a
+# stronger elite pool (round-1's own 49 converged triples as direct parents,
+# on top of the pair donor round 1 already had). The registered watch this
+# round adds is CBC: at 2.7 ppm from its own gate at the round-1 frontier, an
+# improved F_r under continued CBC pressure could hit the CBC wall before it
+# reaches 1.55 — see the prereg for the pre-registered reading of that outcome.
+#
+################################################################################
+# MODEL CAVEAT — weaker than round 1's, not absent
+################################################################################
+# Round 1's caveat ("s1h has NEVER seen a 3-type row") does not carry over
+# unchanged: s1i trained on 74,537 rows including 39 of round 1's 49 converged
+# triples (10 went to val, ab2_addendum_S1I §4). So s1i has seen SOME 3-type
+# signal, at THIS exact cell — but 39 rows is 0.06% of its corpus, the two
+# newly-inserted globals (type_frac_4/5) are still identically zero and
+# contribute no gradient (§3.2 there), and s1i's promotion gate was a
+# NON-REGRESSION bar on the 2-type corpus, not a bid to prove it learned this
+# cell (ab2_addendum_S1I §1). Registered plainly: read this arm as "the
+# champion that has glimpsed the case", not "the champion that has mastered
+# it". The wave fine-tune gate DOES have an in-cell holdout this time (round
+# 1's 49 converged rows, unlike round 1's own zero), so it can score
+# skill — still thin (n=49, 10 in the S1i val split), but not blind.
+#
+################################################################################
+# ASSET RESOLUTION — level 3 (pair_ecore), unchanged from round 1
+################################################################################
+# Same case id, same e_core (5.675821), same expected restart
+# (bases/P0_P1/MAS_RST.APRQ_11_0705.02). The launch script gates on its
+# presence exactly as round 1's did.
+#
+################################################################################
+# FLEET RULES.  199 only (busy gate refuses rather than stacks; deck-hash gate
+# refuses on any edit).  198 / 181 / 238 untouched.  Fresh run dir.  Ship-don't-
+# remote-edit: every file scp'd whole.
+# STORE IS REFRESHED for this run (same discipline as round 1) because the
+# donor rows — now including round 1's own 49 converged triples — are the
+# entire point of the elite seeding above; the launch script gates on the
+# canonical store's sha256.
+# NOTE (D) — the `[optimize][DEPRECATED]` banner for min_fr_max_cycle is
+# EXPECTED (campaign.py), not a failed launch.
+# NOTE (R) — `lpopt report`'s "Best verified loading patterns" table ranks by
+# CYCLE DISTANCE regardless of objective and will NOT show the F_r winner.
+# Read `state.json -> best`.  Known defect, unchanged from round 1.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle 3-FRESH-TYPE GRADED — ROUND 2 — S3_T1_S5/f125 (paramA, e_core 5.676 equal-thirds), champion s1i (v8), CBC gate 1600, pin-BU gate 78"
+output_root = "runs"
+random_seed = 5697
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+workers = 8
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"   # the paramA package (NOT FEASIBLE_PACKAGE)
+harvest_maps = true                    # record-only on this objective; kept so
+                                       # every row carries node_peak / map_cov
+
+[design]
+# paramA routing (anchors_meshv3_198.inp idiom).  `build_case_resolver` sends a
+# library="paramA" case to THIS package plus the registry alias bridge and the
+# package's own %GEN_DIM dims.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[case]
+mode = "fixed"
+# UNCHANGED from round 1: the same graded triple, same member order (hot, mid,
+# cold); `case_batches` parses it and `resolved_center` takes the first member.
+pair = "P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24"
+feed = 125                             # n_fresh 31 (feed = 1 + 4N), unchanged
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1i"   # 10th champion — cond_v8, the FIRST checkpoint
+                                # trained on any 3-type row (39 of round 1's 49
+                                # converged triples; see the MODEL CAVEAT block
+                                # above). Gate: data/reports/gate_s1i.json PASS.
+cond_schema = "v8"              # v7's 18 globals + type_frac_4/5 inserted
+                                # before e_type_std/n_fresh_types (both new
+                                # fields identically zero for this 3-type case)
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "paramA"           # featurize reads the paramA fuel rows; all
+                                # three P6253* type_ids are present in
+                                # data/store/fuel_types.parquet (verified)
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # 32 parents — now drawn from BOTH donor cases
+                             # below, ranked best-objective-first.
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+# ROUND 2 CHANGE: two donor cases now, not one.
+#   1) this campaign's OWN case (round 1's 60 rows / 49 converged) — same
+#      alphabet, so these enter elite_top_k DIRECTLY, no graded_morph needed.
+#   2) the 2-type pair (unchanged from round 1) — 121 converged f125 rows
+#      across both 2-type f125 campaigns (hgd569_f125 + hgd569_f125_seedctl),
+#      morphed onto the third type by graded_morph exactly as round 1 did.
+elite_seed_cases = ["P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24",
+                    "P6253Z1G06N24_P6253Z2G10N24"]
+# UNCHANGED from round 1 — the graded-budget guard.  Every one of the 60 calls
+# must buy a genuinely graded core; see round 1's deck header for the measured
+# justification (59.5% of an unguarded wave-0 pool was 2-type at this cell).
+require_all_fresh_types = true
+near_miss_f_r = 1.70         # UNCHANGED from round 1.  Left as-is: not a
+                             # registered change for this round (see the
+                             # prereg).  Round 1's own best (1.5993) already
+                             # sits well inside this band, so the tight
+                             # (n_moves=1) arm is expected to engage from the
+                             # first wave the search reproduces a comparable row.
+near_miss_top_k = 8          # INERT here (flat_power only); left at the default
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the campaign's OWN cell is unconditionally
+                             # in-region (TrustRegion.__init__), so n_min cannot
+                             # starve the fixed case — it only decides which
+                             # OTHER bins count as support
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 60                  # UNCHANGED — 7 waves x 8 + 4 reserve, same as
+                             # round 1, so budget is not a variable between
+                             # the two rounds; this is simply MORE budget spent
+                             # at the same cell, not a bigger single campaign.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 7
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 1000.0        # UNCHANGED — the code's own "F_r strictly
+                             # dominates" default. lambda = 0 would DELETE the
+                             # F_r term (acquisition.py: scalar = cyclen_lcb -
+                             # lam_fr*fr_ucb) and silently invert this into
+                             # cycle-length maximisation.
+
+# --- feasibility: F_r / CBC / F_q / |AO| GATE, and pin BU too ----------------
+f_r_limit = 1.55             # licensing limit AND the primary success bar
+cbc_limit = 1600.0           # UNCHANGED. Round 1's own frontier sat 2.67 ppm
+                             # under this gate (1597.33) — the registered watch
+                             # for this round (see prereg): does CBC become the
+                             # wall before F_r reaches 1.55?
+f_q_limit = 2.41             # non-binding at round 1 (49/49 pass); report
+                             # whether that survives round 2.
+ao_abs_limit = 0.30          # slack at round 1 (max 0.0261)
+
+minfr_pin_bu_limit = 78.0    # UNCHANGED.  Official licensing observable is the
+                             # MEASURED pin axial peak <= 80 GWd/tU
+                             # (pinbu_definition_20260820.md); 78 here screens
+                             # the PREDICTED value only, i.e. the 80 limit minus
+                             # a 2.0 GWd/tU model margin (pin head in-cell MAE
+                             # 1.84). `is_feasible` passes a missing pin BU by
+                             # design. Crossover unchanged:
+                             #   F_r_crossover = 1.55 + 0.01*(pin_pred - 78)
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING. --------------------------
+cycle_target_efpd = 730.5    # round 1's own joint-clean winner's cyclen, so
+                             # `distance` reads as "EFPD off the core this
+                             # round is trying to beat". NOT a search target.
+cycle_tolerance_efpd = 40.0  # band 690.5-770.5; same width as round 1.
+
+# --- wave online-update gate -------------------------------------------------
+# UNCHANGED. This case now HAS in-cell store rows (round 1's own 60), so
+# `_holdout_rows` is non-empty this time (unlike round 1's zero) and the panel
+# can score skill, though thinly (49 converged, 10 in the S1i val split).
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # MUST stay empty on paramA: a ga80 reload deck
+                             # would win resolution and then fail the paramA
+                             # %GEN_DIM sanity gate (resolver.py header)

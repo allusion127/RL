@@ -1,0 +1,210 @@
+################################################################################
+# lpopt deck — min_fr_max_cycle WAVE CAMPAIGN on the NEW flat lat1600 pair
+# box 104 (paramA package lives here)  |  `python -m lpopt optimize --input fpcamp_minfr_lat1600.inp`
+#
+# !!! FILL THE ALIAS BEFORE LAUNCH ------------------------------------------- !!!
+# [case].pair below is "T5_T6" — the EXPECTED registry assignment for the flat
+# pair (Y3=flat anchor -> T5, Y4=flat extreme -> T6, package registry P0..T2 = 33
+# types, next free T3..T6).  The registry assigns aliases at REGISTRATION TIME:
+# after `python realize_lat1600.py` completes, read the REAL aliases from
+# data/design/realize_lat1600_result.json ("pairs".flat) and correct [case].pair
+# and [flow].title if they differ.  Launching with a wrong pair fails asset
+# resolution (no bases/<pair>), it does not silently misroute.
+# !!! ------------------------------------------------------------------------ !!!
+#
+# PROGRAM DECISION (user, 2026-08-11) — this deck embodies both halves:
+#   (a) cbc_limit = 1600.0   (was 1550; all NEW work reads feasibility at 1600)
+#   (b) the case pair is a NEW low-FF lattice pair (open Gd layout 1:1;5:2;5:5,
+#       screened at the 1600 gate: Y3 FF 1.1012 / CBC_pred 1501, Y4 FF 1.1011 /
+#       CBC_pred 1562 — this cell EXISTS because of the 1600 limit; at 1550 the
+#       Y4 half was infeasible by construction).
+#
+# MODELED ON fpcamp_minfr_199.inp (read it for the full objective audit: the
+# ONE GAP on cyclen gating, minfr_lambda arithmetic, NOTE (D)/(S)/(M)).  What
+# changed and why:
+#   * [case] pair       E1_E2 -> the new flat pair (placeholder T5_T6).
+#   * [verify] package  FEASIBLE_PACKAGE (ga80) -> data/design/package (paramA).
+#   * [model] library_id ga80 -> paramA; model_dir stays split_S1b (the low-F_r
+#     champion promoted 2026-08-10).  NOTE the champion has NEVER seen T5/T6
+#     rows: its per-cell error in this cell is UNMEASURED until the elite-pool
+#     bootstrap labels land.  Judge wave-0 skill against those 32 rows.
+#   * [acquisition] cbc_limit 1550 -> 1600 (decision (a)).  Everything else in
+#     the acquisition block carries over: the E1_E2 header's derivation of
+#     minfr_lambda=200 is an EFPD-per-F_r price cap, not a cell property.
+#   * [master] executable D:/ (box 104), fp_104.inp idiom (workers 8, reserve 1).
+#   * random_seed 1600 — names the gate this campaign exists to exploit.
+#
+# PRECONDITIONS (runbook C:\...\scratchpad\lat1600\RUNBOOK.md, steps 1-5):
+#   1. realize_lat1600.py completed: ncomp 42, T5/T6 in lib/MAS_XSL, fuel rows
+#      ingested (data/design/fuel_types_paramA.parquet).
+#   2. `design bootstrap --pair T5_T6 --feed 121` converged -> bases/T5_T6/MAS_RST.*
+#      + cores/T5_T6/bootstrap/MAS_INP_cy02.inp (fallback_level 0 verified).
+#   3. ELITE-POOL BOOTSTRAP — this cell has ZERO store rows; [search].elite_frac
+#      0.65 has nothing to exploit on an empty cell.  Run the 32-chain fixed-LP
+#      transfer sweep FIRST (the J5_J6 precedent, fpcamp5_j5j6_199.inp header):
+#
+#        python fr_transfer.py --target-pair T5_T6 --select mixed --k 32 ^
+#          --package data/design/package --exe D:/DeCART_MASTER/BIN/master4.0m4_r1.exe ^
+#          --run-dir runs/fr_transfer_T5T6 --workers 16
+#
+#      then merge the labels into the store via the merge-kit path (adapt
+#      scratchpad build_j5j6_kit.py: LIBRARY_ID="paramA", campaign
+#      "frtransfer_LAT1600boot") and `python -m lpopt merge-store`.  32 rows =
+#      the same elite-pool depth the J5_J6 campaign started from.
+#   4. After the sweep, REVISIT two report-only knobs against the measured cell:
+#      cycle_target_efpd (set to the sweep's median cyclen) and near_miss_f_r
+#      (set ~ the sweep's F_r p50).  Both gate nothing; both make reports honest.
+#
+# SUCCESS — replicate the E1_E2 structure against THIS cell's own bootstrap:
+#   PRIMARY   a MASTER-verified feasible core (at the 1600 gate) with
+#             F_r below the sweep's minimum, cyclen >= the sweep's p10.
+#   SECONDARY F_r < 1.4636 (the program-wide ga80 incumbent) — the number the
+#             whole lat1600 line exists to beat.  Fusion-law prediction for this
+#             pair (A=1.03, p_hot 1.2080): F_r ~ 1.370.
+#   NULL      no feasible row below the sweep minimum in 100 calls — publishable:
+#             the fuel lever moved the floor, the LP lever adds nothing here.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle lat1600 v2 — T6_T4/f121 (operating-point cell R2, contrast law), champion split_S1b, CBC gate 1600"
+output_root = "runs"
+random_seed = 1104
+
+[master]
+# BOX 104 PATH (fp_104.inp idiom).  To run on a fleet box instead, ship the
+# package first (`python -m lpopt export-produce-kit ...`, ~1.4 GB at 37 types)
+# and flip this to C:/DeCART_MASTER/BIN/master4.0m4_r1.exe.
+executable = "D:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8
+use_all_cores = false
+host_reserve = 1
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"   # the paramA package (NOT FEASIBLE_PACKAGE)
+harvest_maps = true                    # record-only on this objective; kept so every
+                                       # row carries node_peak/map_cov for the
+                                       # flatness-vs-F_r trade readout
+
+[case]
+mode = "fixed"
+pair = "T6_T4"      # R2 of the operating-point re-screen: contrast +0.075, pred elite CBC 1383, cyclen 612-630
+feed = 121
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/split_S1b"    # low-F_r-aware champion (promoted 2026-08-10)
+cond_schema = "v6b"
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "paramA"                  # featurize reads paramA fuel rows -> the
+                                       # T5/T6 rows must exist in the fuel table
+                                       # the model layer reads (runbook step 2c)
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # exploits the 32 bootstrap rows (precondition 3);
+                             # on an EMPTY cell this arm starves — do not launch
+                             # before the fr_transfer sweep is merged
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+near_miss_f_r = 1.50         # ~ expected sweep p50 (fusion-law F_r ~1.37-1.42 band
+                             # + J5_J6 transfer spread); RE-SET from the measured
+                             # sweep before launch (report-honesty, gates nothing)
+near_miss_top_k = 8
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the cell holds only the 32 bootstrap rows at wave 0
+                             # (vs 742 in the E1_E2 deck — 50 would starve the TR)
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 100
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 200.0         # EFPD per unit F_r — same price cap as the E1_E2
+                             # deck (its derivation is cell-independent; default
+                             # 1000 would license buying F_r with 25 EFPD)
+
+# --- feasibility: all four axes gate in this mode -----------------------------
+f_r_limit = 1.55             # licensing limit (delivery.py LICENSING_FR_LIMIT)
+cbc_limit = 1600.0           # <<< THE PROGRAM DECISION (2026-08-11): 1550 -> 1600.
+                             # NOT inert here, unlike the E1_E2 deck: Y4's own
+                             # screen CBC_pred is 1561.5 — this cell's whole
+                             # reason to exist is the 1550..1600 corridor.  Rows
+                             # in that corridor are FEASIBLE for this campaign
+                             # and must be re-screened if compared against any
+                             # pre-2026-08-11 result (which read at 1550).
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+# --- report-only cycle readouts (gate NOTHING — see fpcamp_minfr_199.inp) -----
+cycle_target_efpd = 633.0    # PLACEHOLDER: set to the fr_transfer sweep's median
+                             # cyclen before launch (J5_J6 transfer ran ~+2 EFPD
+                             # vs source; this pair carries more reactivity still)
+cycle_tolerance_efpd = 5.0
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # T5_T6/f121 must resolve on its OWN bootstrap deck;
+                             # a glob fallback could silently win resolution
+
+[constraints]
+# SDM/MTC pre-delivery gate — carried unchanged from fpcamp_minfr_199.inp
+# (a licensing-chain property, not a search property).  Report-only.
+mtc_enable = true
+sdm_enable = false
+post_verify_top_k = 5

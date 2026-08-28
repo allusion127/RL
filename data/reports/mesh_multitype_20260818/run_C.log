@@ -1,0 +1,81 @@
+=== case selection READ from C:\Users\USER\Desktop\CT&RPL\2_Project\KNF_LEU+ 시범연료봉 장전 인허가 과제\2026\2_계산\5_RL\data\reports\mesh_multitype_20260818\case_selection.csv (15 cells) ===
+  triples found: 13/15 cells
+  quads   found: 7/15 cells
+
+model: data/models/s1i, 5 members, cpu, 4 torch threads, quantile heads off
+  cell e5.6_f109  (paramA)
+    k=2 P6253Z2G06N24_P6253Z2G10N24                  f109 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7870 cleanF_r nan | pin nan | 168s
+    k=3 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24    f109 | pool   960 band   842 feas5    0 clean    0 | minF_r 1.7544 cleanF_r nan | pin nan | 132s
+    k=4 P6253Z2G10N20_P5853Z1G08N12_P6253Z2G10N24_P6 f109 | pool   240 band   235 feas5    0 clean    0 | minF_r 1.8069 cleanF_r nan | pin nan | 32s
+  cell e5.6_f113  (paramA)
+    k=2 P6253Z2G06N24_P6253Z2G10N24                  f113 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7433 cleanF_r nan | pin nan | 154s
+    k=3 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24    f113 | pool   960 band   900 feas5    0 clean    0 | minF_r 1.7305 cleanF_r nan | pin nan | 123s
+    k=4 P6253Z2G10N20_P5853Z1G08N12_P6253Z2G10N24_P6 f113 | pool   240 band   240 feas5    0 clean    0 | minF_r 1.8006 cleanF_r nan | pin nan | 31s
+  cell e5.6_f117  (paramA)
+    k=2 P6253Z2G06N24_P6253Z2G10N24                  f117 | pool  1200 band  1200 feas5    0 clean    3 | minF_r 1.7384 cleanF_r 1.8697 | pin 77.97 | 153s
+    k=3 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24    f117 | pool   960 band   889 feas5    0 clean   38 | minF_r 1.7056 cleanF_r 1.7320 | pin 77.96 | 124s
+    k=4 P6253Z2G10N20_P5853Z1G08N12_P6253Z2G10N24_P6 f117 | pool   240 band   239 feas5    0 clean    0 | minF_r 1.7661 cleanF_r nan | pin nan | 31s
+  cell e5.6_f121  (paramA)
+    k=2 P6253Z2G06N24_P6253Z2G10N24                  f121 | pool  1200 band  1200 feas5    0 clean  680 | minF_r 1.7071 cleanF_r 1.7071 | pin 75.53 | 151s
+    k=3 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24    f121 | pool   960 band   942 feas5    0 clean  326 | minF_r 1.6625 cleanF_r 1.6625 | pin 75.54 | 121s
+    k=4 P6253Z2G10N20_P5853Z1G08N12_P6253Z2G10N24_P6 f121 | pool   240 band   240 feas5    0 clean    0 | minF_r 1.7021 cleanF_r nan | pin nan | 31s
+  cell e5.6_f125  (paramA)
+    k=2 P6253Z2G06N24_P6253Z2G10N24                  f125 | pool  1200 band  1200 feas5    0 clean  599 | minF_r 1.6978 cleanF_r 1.6978 | pin 75.30 | 152s
+    k=3 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24    f125 | pool   960 band   900 feas5    0 clean  274 | minF_r 1.6866 cleanF_r 1.6866 | pin 75.35 | 128s
+    k=4 P6253Z2G10N20_P5853Z1G08N12_P6253Z2G10N24_P6 f125 | pool   240 band   238 feas5    0 clean    0 | minF_r 1.6910 cleanF_r nan | pin nan | 31s
+  cell e5.6_f129  (paramA)
+    k=2 P6253Z2G06N24_P6253Z2G10N24                  f129 | pool  1200 band  1200 feas5    0 clean  593 | minF_r 1.7267 cleanF_r 1.7267 | pin 74.86 | 152s
+    k=3 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24    f129 | pool   960 band   940 feas5    0 clean  262 | minF_r 1.7071 cleanF_r 1.7071 | pin 75.19 | 123s
+    k=4 P6253Z2G10N20_P5853Z1G08N12_P6253Z2G10N24_P6 f129 | pool   240 band   240 feas5    0 clean    0 | minF_r 1.7084 cleanF_r nan | pin nan | 31s
+  cell e5.7_f109  (paramA)
+    k=2 P5853Z1G08N12_P6253Z1G06N24                  f109 | pool  1200 band   976 feas5    0 clean    0 | minF_r 1.7944 cleanF_r nan | pin nan | 151s
+    k=3 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24    f109 | pool   960 band   723 feas5    0 clean    0 | minF_r 1.7229 cleanF_r nan | pin nan | 118s
+    k=4 P6253Z1G08N20_P6253Z1G06N24_P6253Z2G08N16_P6 f109 | pool   240 band   187 feas5    0 clean    0 | minF_r 1.7291 cleanF_r nan | pin nan | 32s
+  cell e5.7_f113  (paramA)
+    k=2 P5853Z1G08N12_P6253Z1G06N24                  f113 | pool  1200 band  1044 feas5    0 clean    0 | minF_r 1.7594 cleanF_r nan | pin nan | 152s
+    k=3 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24    f113 | pool   960 band   722 feas5    0 clean    0 | minF_r 1.7101 cleanF_r nan | pin nan | 123s
+    k=4 P6253Z1G08N20_P6253Z1G06N24_P6253Z2G08N16_P6 f113 | pool   240 band   202 feas5    0 clean    0 | minF_r 1.7204 cleanF_r nan | pin nan | 31s
+  cell e5.7_f117  (paramA)
+    k=2 P5853Z1G08N12_P6253Z1G06N24                  f117 | pool  1200 band  1089 feas5    0 clean    0 | minF_r 1.7431 cleanF_r nan | pin nan | 153s
+    k=3 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24    f117 | pool   960 band   381 feas5    0 clean    0 | minF_r 1.6644 cleanF_r nan | pin nan | 122s
+    k=4 P6253Z1G08N20_P6253Z1G06N24_P6253Z2G08N16_P6 f117 | pool   240 band   149 feas5    0 clean    0 | minF_r 1.7090 cleanF_r nan | pin nan | 31s
+  cell e5.7_f121  (paramA)
+    k=2 P5853Z1G08N12_P6253Z1G06N24                  f121 | pool  1200 band  1094 feas5    0 clean    0 | minF_r 1.6993 cleanF_r nan | pin nan | 158s
+    k=3 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24    f121 | pool   960 band   360 feas5    0 clean    0 | minF_r 1.6367 cleanF_r nan | pin nan | 122s
+    k=4 P6253Z1G08N20_P6253Z1G06N24_P6253Z2G08N16_P6 f121 | pool   240 band   105 feas5    0 clean    0 | minF_r 1.6741 cleanF_r nan | pin nan | 30s
+  cell e5.7_f125  (paramA)
+    k=2 P5853Z1G08N12_P6253Z1G06N24                  f125 | pool  1200 band  1121 feas5    0 clean    0 | minF_r 1.6813 cleanF_r nan | pin nan | 148s
+    k=3 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24    f125 | pool   960 band   362 feas5    0 clean    0 | minF_r 1.6412 cleanF_r nan | pin nan | 124s
+    k=4 P6253Z1G08N20_P6253Z1G06N24_P6253Z2G08N16_P6 f125 | pool   240 band   150 feas5    0 clean    0 | minF_r 1.6501 cleanF_r nan | pin nan | 32s
+  cell e5.7_f129  (paramA)
+    k=2 P5853Z1G08N12_P6253Z1G06N24                  f129 | pool  1200 band  1074 feas5    0 clean    0 | minF_r 1.6935 cleanF_r nan | pin nan | 149s
+    k=3 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24    f129 | pool   960 band   407 feas5    0 clean    0 | minF_r 1.6344 cleanF_r nan | pin nan | 120s
+    k=4 P6253Z1G08N20_P6253Z1G06N24_P6253Z2G08N16_P6 f129 | pool   240 band   131 feas5    0 clean    0 | minF_r 1.6649 cleanF_r nan | pin nan | 31s
+  cell e5.8_f109  (paramA)
+    k=2 P6253Z1G06N24_P6253Z1G08N20                  f109 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7830 cleanF_r nan | pin nan | 149s
+    k=3 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24    f109 | pool   960 band   677 feas5    0 clean    0 | minF_r 1.7448 cleanF_r nan | pin nan | 122s
+    k=4 P6257Z2G06N12_P6253Z1G08N20_P6253Z1G06N24_P6 f109 | pool   240 band   147 feas5    0 clean    0 | minF_r 1.8985 cleanF_r nan | pin nan | 31s
+  cell e5.8_f113  (paramA)
+    k=2 P6253Z1G06N24_P6253Z1G08N20                  f113 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.8008 cleanF_r nan | pin nan | 150s
+    k=3 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24    f113 | pool   960 band   649 feas5    0 clean    0 | minF_r 1.7751 cleanF_r nan | pin nan | 117s
+    k=4 P6257Z2G06N12_P6253Z1G08N20_P6253Z1G06N24_P6 f113 | pool   240 band   168 feas5    0 clean    0 | minF_r 1.8261 cleanF_r nan | pin nan | 30s
+  cell e5.8_f117  (paramA)
+    k=2 P6253Z1G06N24_P6253Z1G08N20                  f117 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7945 cleanF_r nan | pin nan | 143s
+    k=3 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24    f117 | pool   960 band   652 feas5    0 clean    0 | minF_r 1.7191 cleanF_r nan | pin nan | 115s
+    k=4 P6257Z2G06N12_P6253Z1G08N20_P6253Z1G06N24_P6 f117 | pool   240 band   171 feas5    0 clean    0 | minF_r 1.7544 cleanF_r nan | pin nan | 29s
+  cell e5.8_f121  (paramA)
+    k=2 P6253Z1G06N24_P6253Z1G08N20                  f121 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7699 cleanF_r nan | pin nan | 137s
+    k=3 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24    f121 | pool   960 band   583 feas5    0 clean    0 | minF_r 1.6581 cleanF_r nan | pin nan | 109s
+    k=4 P6257Z2G06N12_P6253Z1G08N20_P6253Z1G06N24_P6 f121 | pool   240 band   143 feas5    0 clean    0 | minF_r 1.7430 cleanF_r nan | pin nan | 29s
+  cell e5.8_f125  (paramA)
+    k=2 P6253Z1G06N24_P6253Z1G08N20                  f125 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7711 cleanF_r nan | pin nan | 128s
+    k=3 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24    f125 | pool   960 band   662 feas5    0 clean    0 | minF_r 1.6644 cleanF_r nan | pin nan | 102s
+    k=4 P6257Z2G06N12_P6253Z1G08N20_P6253Z1G06N24_P6 f125 | pool   240 band   154 feas5    0 clean    0 | minF_r 1.6999 cleanF_r nan | pin nan | 27s
+  cell e5.8_f129  (paramA)
+    k=2 P6253Z1G06N24_P6253Z1G08N20                  f129 | pool  1200 band  1200 feas5    0 clean    0 | minF_r 1.7487 cleanF_r nan | pin nan | 129s
+    k=3 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24    f129 | pool   960 band   637 feas5    0 clean    0 | minF_r 1.6923 cleanF_r nan | pin nan | 104s
+    k=4 P6257Z2G06N12_P6253Z1G08N20_P6253Z1G06N24_P6 f129 | pool   240 band   148 feas5    0 clean    0 | minF_r 1.7496 cleanF_r nan | pin nan | 26s
+
+wrote C:\Users\USER\Desktop\CT&RPL\2_Project\KNF_LEU+ 시범연료봉 장전 인허가 과제\2026\2_계산\5_RL\data\reports\mesh_multitype_20260818\mesh_multitype_C.csv  (5376s, 18 cells, 0 pareto points)
+delta(3-2) joint-clean F_r floor: n=4 mean -0.0533 median -0.0321 best -0.1377  (negative = grading helps)
+  cells with a gain > 0.005: 4

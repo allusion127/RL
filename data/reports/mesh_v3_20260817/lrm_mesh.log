@@ -1,0 +1,82 @@
+LRM coefficients from dbx_lrm_fit.csv (dbx/make_lrm.py, 6113-core fit)
+  mean    EFPD = alphaB(F) * (-14.854288 +126.132069*e)
+  ceiling EFPD = alphaC(F) * (+3.369285 +122.239281*e)
+  fitted feeds [101, 105, 109, 113, 117, 121], fitted e range <= 5.5
+
+--- measured feed response from the store (within-pair q95 ratio, ref f117) ---
+        mean     std  count
+feed                       
+109   0.9434  0.0047     18
+113   0.9722  0.0042      9
+117   1.0000  0.0000     18
+121   1.0259  0.0041     17
+125   1.0424  0.0048     18
+129   1.0597  0.0067      4
+
+--- alpha extrapolation adjudication (PREREG §1b) ---
+        form  n_param  loo_rms  alpha_125  alpha_129  max_dev_vs_store  mean_dev_vs_store
+    log_feed        2 0.008976   1.047269   1.067768          0.003742           0.002254
+     inv_nb1        2 0.009645   1.048486   1.069955          0.005797           0.003863
+    lin_feed        2 0.010796   1.050717   1.074143          0.009734           0.006897
+inv_nb1_quad        3 0.004983   1.029055   1.034937          0.027121           0.021880
+   quad_feed        3 0.004697   1.027744   1.031479          0.030372           0.024132
+CHOSEN: log_feed  (smallest max deviation vs the store's measured feed ratio; LOO would have chosen quad_feed)
+
+--- alpha extrapolation adjudication (PREREG §1b) ---
+        form  n_param  loo_rms  alpha_125  alpha_129  max_dev_vs_store  mean_dev_vs_store
+    log_feed        2 0.008036   1.055388   1.075746          0.001732           0.001345
+     inv_nb1        2 0.008727   1.056608   1.077931          0.002991           0.001784
+    lin_feed        2 0.009914   1.058842   1.082114          0.006884           0.004209
+inv_nb1_quad        3 0.003516   1.039263   1.046673          0.026094           0.021539
+   quad_feed        3 0.003044   1.038040   1.043483          0.029062           0.023601
+CHOSEN: log_feed  (smallest max deviation vs the store's measured feed ratio; LOO would have chosen quad_feed)
+
+wrote C:\Users\USER\Desktop\CT&RPL\2_Project\KNF_LEU+ 시범연료봉 장전 인허가 과제\2026\2_계산\5_RL\data\reports\mesh_v3_20260817\lrm_backbone.csv  (96 cells, 90 buildable / 6 실현 불가(격자))
+
+실현 가능성 — 메쉬 pair (e_core 정확도 우선):
+realizability
+미발견                48
+실현 확인              40
+실현 불가(격자)           6
+격자-우회(fallback)     2
+
+실현 가능성 — 앵커 pair (자산 우선; Phase C 가 실제로 던지는 pair):
+anchor_realizability
+실현 확인              62
+미발견                18
+격자-우회(fallback)    10
+실현 불가(격자)           6
+
+앵커 실현성 x e_target:
+anchor_realizability  격자-우회(fallback)  미발견  실현 불가(격자)  실현 확인
+e_target                                                    
+5.0                                 0    0          0      6
+5.1                                 0    0          0      6
+5.2                                 0    0          0      6
+5.3                                 0    0          0      6
+5.4                                 0    0          0      6
+5.5                                 0    0          0      6
+5.6                                 0    6          0      0
+5.7                                 0    6          0      0
+5.8                                 2    0          0      4
+5.9                                 0    0          0      6
+6.0                                 0    6          0      0
+6.1                                 2    0          0      4
+6.2                                 2    0          0      4
+6.3                                 2    0          0      4
+6.4                                 2    0          0      4
+6.5                                 0    0          6      0
+
+--- HOLD-OUT: LRM ceiling vs store q95(cyclen)  (PREREG §1d) ---
+          n_cells   e_lo   e_hi  bias_efpd  bias_pct  rms_efpd  rms_pct
+held_out                                                               
+False         135  5.000  5.523     -1.251     -0.21    10.786    1.622
+True           39  5.636  6.342      2.583      0.30    12.598    1.691
+
+VERDICT on '아마 LRM이 꽤나 정확할거야': **확증 (confirmed)**  (bias +0.30%, rms 1.69%, n=39 held-out cells)
+
+enrichment-slope error (feed fixed effects removed): +9.65 EFPD/wt% = +7.90% of b_ceil, 95% CI [+5.49%, +10.38%]
+  feed fixed effects [EFPD]: {109: -17.5, 113: -14.2, 117: -6.1, 121: 3.3, 125: -5.0, 129: -13.8}
+  (positive = the LRM UNDER-predicts the gain from enrichment, i.e. the backbone is conservative at the top of the grid)
+
+wrote C:\Users\USER\Desktop\CT&RPL\2_Project\KNF_LEU+ 시범연료봉 장전 인허가 과제\2026\2_계산\5_RL\data\reports\mesh_v3_20260817\lrm_verdict.json

@@ -1,0 +1,24 @@
+[
+ {
+  "idx": 1,
+  "cell": "e5.0_f113",
+  "tag": "MT1_e50_f113",
+  "case": "E3_E1_E2",
+  "feed": 113,
+  "library_id": "ga80",
+  "donor": "E1_E2",
+  "deck": "fpcamp_mt1_e50_f113_199.inp",
+  "deck_sha256": "F4CFE4DDB73868F105284B1EA986B0B7F7B6192198A2BC830DC5AD07D7E277A9",
+  "bat": "run_fpcamp_mt1_e50_f113_199.bat",
+  "launch": "launch_fpcamp_mt1_e50_f113_199.ps1",
+  "status": "status_fpcamp_mt1_e50_f113_199.ps1",
+  "run_dir": "runs/fpcamp_mt1_e50_f113",
+  "store_sha256": "ECEF9FAE27C9E58DAC9B8ED2095051604BFBBFB9ED52AF2D7AB26C30B8292C9B",
+  "stretch_mark": "1.6233",
+  "predicted_fr2": 1.5600260133289932,
+  "predicted_fr3": 1.516331586958226,
+  "predicted_gain": -0.043694426370767,
+  "measured_2type_clean_f_r": 1.6233,
+  "measured_2type_raw_f_r": 1.6233
+ }
+]

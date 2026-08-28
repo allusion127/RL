@@ -1,0 +1,75 @@
+# autoeng — 자동 엔지니어 target list.
+#
+#   python autoeng.py --config autoeng.toml --dry-run     # plan only
+#   python autoeng.py --config autoeng.toml               # live
+#   python autoeng.py --config autoeng.toml --resume      # after a kill / a gate pause
+#
+# Every key here is validated; a typo is a hard error (the lpopt deck-loader
+# discipline), because a silently-ignored key in an orchestrator is a wrong
+# campaign nobody notices until 100 MASTER calls later.
+
+[autoeng]
+run_id = "autoeng_20260817"
+
+# THE PROVEN RECIPE.  Every knob in the generated per-cell decks that is not in
+# autoeng.CELL_OVERRIDE_KEYS is carried from this deck verbatim.
+# Precedent: data/reports/fpcamp_N1N2_f113_results_20260816.md — 41 feasible
+# cores in 100 calls in a cell that had zero, first feasible at call 23.
+parent_deck = "fpcamp_minfr_N1N2_f113_199.inp"
+
+main_deck      = "lpopt.inp"
+champion_state = "data/curriculum/state.json"     # THE champion pointer
+store_dir      = "data/store"
+package_root   = "../3_GA_Surrogate/FEASIBLE_PACKAGE"   # local copy, for the precheck ladder
+frontier_table = "data/reports/dbx_frontier_table.csv"
+mesh_dir       = "data/reports/scoping_mesh_20260815"
+notebook       = "data/reports/AUTOENG_LOG.md"
+
+probe_budget = 8      # blind-transfer probe, per cell (curriculum sec. 12.3)
+open_budget  = 100    # opening campaign, per cell (the f113 budget)
+
+# Hard cap across the whole run.  Crossing it raises the budget_exceeded gate
+# rather than quietly spending the next cell's calls.
+master_budget_total = 500
+
+# v1 default: autonomous everywhere except these three.
+pause_for_approval = ["new_assembly", "retrain_promote_fail", "budget_exceeded"]
+
+[fleet]
+# Standing allocation.  181 is NEVER used; 198 is production only.  Both are in
+# `forbidden` and every generated command is screened against it before it runs.
+campaign_host   = "USER@HOST_199"
+campaign_kit    = "C:/Users/USER/lpopt_work/kit_frontier"
+campaign_python = "C:/Users/USER/lpopt_work/kit_pc2/venv/Scripts/python.exe"
+train_deck      = "lpopt_gpu1.inp"                # pins GPU 1 on 238
+forbidden       = ["HOST_181", "HOST_198", "40.181", "40.198"]
+
+# --------------------------------------------------------------------------- #
+# TARGETS
+# --------------------------------------------------------------------------- #
+# N1_N2/f109 — the nearest neighbour of the opened f113 cell (feed_step 4).
+# comparison_readout.md sec. 10.3 measured that the f113 labels moved this
+# column's pessimism by -0.0516, of which -0.0444 (86 %) was model-attributed —
+# the largest transfer gain of any column, larger than the labelled column's own.
+[[targets]]
+pair = "N1_N2"
+feed = 109
+library = "ga80"
+note = "f113의 최근접 이웃. 전이 측정에서 모델 기여 86%로 가장 큰 열."
+
+# K5_K6 @ f117 — dbx_frontier_note_20260816.md sec. 4, top campaign candidate:
+# DB F_r 1.5229 @ 648 EFPD with node pin burnup 70.1 GWd/tU (clears the 75 cliff),
+# 87 DB cores in the cell, and ZERO store rows at this feed.
+[[targets]]
+pair = "K5_K6"
+feed = 117
+library = "ga80"
+note = "DB 프론티어 1순위. 핀 연소도 여유 확보, 스토어 커버리지 0."
+
+# L3_L4 @ f121 — the calibration anchor: our store already matches the DB there
+# (1.522 vs 1.5217), so it measures the pipeline rather than discovering.
+[[targets]]
+pair = "L3_L4"
+feed = 121
+library = "ga80"
+note = "교정 앵커. 발견이 아니라 파이프라인 검증용."

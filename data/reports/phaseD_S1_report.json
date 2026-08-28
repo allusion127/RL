@@ -1,0 +1,281 @@
+{
+  "meta": {
+    "calibrated": true,
+    "device": "cpu",
+    "n_members": 5,
+    "n_params": 1595219,
+    "torch": "2.11.0+cu128"
+  },
+  "split_metrics": {
+    "S1": {
+      "n_val": 6185,
+      "per_target": {
+        "ao_abs": {
+          "mae": 0.00825471119442273,
+          "mean_calibrated_sigma": 0.01034605903552235,
+          "member_r2_mean": 0.2989567437158539,
+          "n_cases": 12,
+          "n_val": 6182,
+          "r2": 0.3209853452449134,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 0.0034164219268125557
+            },
+            {
+              "coverage": 0.4,
+              "mae": 0.0036811106879881183
+            },
+            {
+              "coverage": 0.6,
+              "mae": 0.004002214990060482
+            },
+            {
+              "coverage": 0.8,
+              "mae": 0.005244920195538399
+            },
+            {
+              "coverage": 1.0,
+              "mae": 0.00825471119442273
+            }
+          ],
+          "rmse": 0.013142817376384253,
+          "within_case_spearman": 0.7937774921279659,
+          "within_case_spearman_sd": 0.2435491476880539
+        },
+        "cbc_max": {
+          "mae": 199.25257829614668,
+          "mean_calibrated_sigma": 249.653927927785,
+          "member_r2_mean": -19.691498688944527,
+          "n_cases": 1,
+          "n_val": 633,
+          "r2": -18.933223105142915,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 192.44561923487967
+            },
+            {
+              "coverage": 0.4,
+              "mae": 193.3015638187104
+            },
+            {
+              "coverage": 0.6,
+              "mae": 197.58250975590207
+            },
+            {
+              "coverage": 0.8,
+              "mae": 198.75470806267657
+            },
+            {
+              "coverage": 1.0,
+              "mae": 199.25257829614668
+            }
+          ],
+          "rmse": 204.41541171011343,
+          "within_case_spearman": 0.691125410913696,
+          "within_case_spearman_sd": 0.0
+        },
+        "cyclen": {
+          "mae": 6.069408451032945,
+          "mean_calibrated_sigma": 7.611443409034916,
+          "member_r2_mean": 0.06839977720211596,
+          "n_cases": 12,
+          "n_val": 6182,
+          "r2": 0.07981254697420359,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 1.6004179163711676
+            },
+            {
+              "coverage": 0.4,
+              "mae": 1.5937014241744942
+            },
+            {
+              "coverage": 0.6,
+              "mae": 1.5908774491805546
+            },
+            {
+              "coverage": 0.8,
+              "mae": 1.588085746891359
+            },
+            {
+              "coverage": 1.0,
+              "mae": 6.069408451032946
+            }
+          ],
+          "rmse": 14.708664880113394,
+          "within_case_spearman": 0.7691138098476152,
+          "within_case_spearman_sd": 0.3604495439450315
+        },
+        "discharge_burnup": {
+          "mae": 0.26077295480110707,
+          "mean_calibrated_sigma": 0.3270201104577527,
+          "member_r2_mean": 0.6213615396271942,
+          "n_cases": 12,
+          "n_val": 6180,
+          "r2": 0.6321376997770796,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 0.12465354646368393
+            },
+            {
+              "coverage": 0.4,
+              "mae": 0.12628540229520657
+            },
+            {
+              "coverage": 0.6,
+              "mae": 0.1245190846696209
+            },
+            {
+              "coverage": 0.8,
+              "mae": 0.12475541647135308
+            },
+            {
+              "coverage": 1.0,
+              "mae": 0.260772954801107
+            }
+          ],
+          "rmse": 0.5106017650918404,
+          "within_case_spearman": 0.7715214539080346,
+          "within_case_spearman_sd": 0.34534378188127013
+        },
+        "f_q": {
+          "mae": 0.11928115927425674,
+          "mean_calibrated_sigma": 0.14947628982638952,
+          "member_r2_mean": 0.8268762796350956,
+          "n_cases": 12,
+          "n_val": 6182,
+          "r2": 0.8562659877950003,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 0.09125180737667014
+            },
+            {
+              "coverage": 0.4,
+              "mae": 0.09207059016058182
+            },
+            {
+              "coverage": 0.6,
+              "mae": 0.09245209944086635
+            },
+            {
+              "coverage": 0.8,
+              "mae": 0.09652866148118396
+            },
+            {
+              "coverage": 1.0,
+              "mae": 0.11928115927425674
+            }
+          ],
+          "rmse": 0.16721163808048395,
+          "within_case_spearman": 0.8908897512397681,
+          "within_case_spearman_sd": 0.05862951109673177
+        },
+        "f_r": {
+          "mae": 0.08330973517137726,
+          "mean_calibrated_sigma": 0.1043977307360377,
+          "member_r2_mean": 0.8353039064061829,
+          "n_cases": 12,
+          "n_val": 6182,
+          "r2": 0.8624438690454801,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 0.06675470439765835
+            },
+            {
+              "coverage": 0.4,
+              "mae": 0.07086749567578893
+            },
+            {
+              "coverage": 0.6,
+              "mae": 0.07598760381991429
+            },
+            {
+              "coverage": 0.8,
+              "mae": 0.07694550580908364
+            },
+            {
+              "coverage": 1.0,
+              "mae": 0.08330973517137726
+            }
+          ],
+          "rmse": 0.11161075041806329,
+          "within_case_spearman": 0.8977560172380086,
+          "within_case_spearman_sd": 0.05376366278062382
+        },
+        "max_pin_burnup": {
+          "mae": 0.9594191367598929,
+          "mean_calibrated_sigma": 1.2023979796386448,
+          "member_r2_mean": 0.5952432153446392,
+          "n_cases": 12,
+          "n_val": 6180,
+          "r2": 0.6471827322607662,
+          "risk_coverage": [
+            {
+              "coverage": 0.2,
+              "mae": 0.9291779087666905
+            },
+            {
+              "coverage": 0.4,
+              "mae": 0.9293160694100896
+            },
+            {
+              "coverage": 0.6,
+              "mae": 0.9242822016509714
+            },
+            {
+              "coverage": 0.8,
+              "mae": 0.9205486997703007
+            },
+            {
+              "coverage": 1.0,
+              "mae": 0.959419136759893
+            }
+          ],
+          "rmse": 1.1570660765299594,
+          "within_case_spearman": 0.7081924260069757,
+          "within_case_spearman_sd": 0.1843125875651611
+        }
+      },
+      "split": "S1",
+      "status": "ok"
+    }
+  },
+  "verdicts": [
+    {
+      "criterion": "S1 cyclen R\u00b2 \u2265 0.98 & \u2265 trees",
+      "value": "R\u00b2=0.0798, tree -0.246",
+      "verdict": "FAILED"
+    },
+    {
+      "criterion": "S1 cbc_max R\u00b2 \u2265 0.98 & \u2265 trees",
+      "value": "R\u00b2=-18.9332, tree -43.662",
+      "verdict": "FAILED"
+    },
+    {
+      "criterion": "S1 f_r within-case Spearman \u2265 trees",
+      "value": "CNN=0.8978 tree=0.4595",
+      "verdict": "PASS"
+    },
+    {
+      "criterion": "S1 f_q within-case Spearman \u2265 trees",
+      "value": "CNN=0.8909 tree=0.3759",
+      "verdict": "PASS"
+    },
+    {
+      "criterion": "S2 interpolation functional",
+      "value": "n_val=0",
+      "verdict": "FAILED"
+    },
+    {
+      "criterion": "S4 interpolation functional",
+      "value": "n_val=0",
+      "verdict": "FAILED"
+    }
+  ]
+}

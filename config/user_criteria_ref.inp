@@ -1,0 +1,116 @@
+# lpopt FREE-SEARCH reference deck (plan sec. 12.5) — user_criteria mode.
+# Reference search at (core-average enrichment 5.2, feed 121) over the ENTIRE
+# ga80 assembly candidate set: the outer decision variable is the fuel PAIR
+# (+ batch split), chosen from the e_core-reachable universe; the inner search
+# fixes the LP.  Objective hierarchy: cyclen band -> discharge band -> min F_r.
+#
+# Default strategy is LEAN (predict-then-verify): a one-shot surrogate screen of
+# the whole reachable pair universe + deepened pools on the top cells, then ONE
+# batched MASTER verification wave of the global top-K predictions.  Answers in
+# minutes; set search_mode = "active" to fall back to the racing/waves allocation.
+#
+# Run (orchestrator, AFTER curriculum cell 2 completes):
+#   python -m lpopt optimize --input config/user_criteria_ref.inp
+# Dry-run smoke (StubEvaluator, no MASTER):
+#   python -m lpopt optimize --input config/user_criteria_ref.inp --dry-run --budget 24
+
+[flow]
+title = "user_criteria ref (e_core 5.2, feed 121)"
+output_root = "../runs"
+random_seed = 0
+
+[master]
+executable = "D:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8
+timeout = 3600
+max_cycles = 16            # user_criteria bumps deep-fallback cells to >= 16 (item 4)
+consecutive = 2
+
+[verify]
+package_root = "../../3_GA_Surrogate/FEASIBLE_PACKAGE"
+
+[remote]
+host = "HOST_238"
+user = "USER"
+port = 8022
+workdir = "~/lpopt_ws"
+env = "~/lpopt_ws/venv"
+gpu = 1
+tmux_prefix = "lpopt"
+
+[case]
+mode = "user_criteria"     # pair is the OUTER decision variable -> no [case].pair
+feed = 121
+
+[model]
+backend = "posval_cnn"
+model_dir = "../data/models/20260719_002850"   # v3 cond, 7-target incl. discharge_burnup
+device = "cpu"
+library_id = "ga80"
+store_dir = "../data/store"
+
+[criteria]
+# -- search strategy: "lean" (predict-then-verify, default) | "active" (racing) --
+search_mode = "lean"
+# -- lean (predict-then-verify) knobs --
+lean_deep_cells = 6       # top screen cells given a deepened surrogate pool
+lean_pool_per_cell = 400  # deepen pool size / cell (surrogate-only)
+lean_top_k = 12            # verified predicted candidates (ONE batched wave)
+lean_per_pair_cap = 3      # max verified entries per pair-cell (spread the bet)
+lean_hamming_min = 4       # pairwise Hamming diversity floor among the top-K
+lean_second_round = false  # one more top-K round only if none met the bands (OFF)
+# -- e_core band (pair/split reachability + per-candidate screen) --
+e_core_target = 5.2
+e_core_tol = 0.05
+split_range = [0.2, 0.8]
+allow_mono = true
+# -- target bands (both model-predicted) --
+cyclen_target = 652.0
+cyclen_tol = 10.0
+discharge_target = 53.5   # set to activate the discharge criterion band (MWd/kgU)
+discharge_tol = 3.0
+# -- the 7 constraint axes (None -> report-only; unset = report-only) --
+f_r_limit = 1.55
+f_q_limit = 2.41
+cbc_limit = 1550.0
+asi_abs_limit = 0.30
+# pin_bu_limit  = 62.0     # default report-only (plan 12.5)
+# mtc_limit, sdm_limit -> carried for the SDM/MTC post-verification stage only
+risk_z = 0.25
+# -- outer racing allocation over the pair universe (plan sec. 6.2) --
+outer_max_cells = 8
+outer_screen_budget = 24
+outer_target_cells = 3
+outer_exploit_floor = 5
+outer_verify_per_wave = 2
+outer_race_z = 1.0
+outer_softmax_temp = 1.0
+screen_pool_per_cell = 12
+# -- report / post-verification --
+post_verify_topk = 3       # SDM/MTC post-verify the final top-K (needs [master])
+# -- post-hoc discharge energy-balance estimate (APR1400) --
+power_mw = 3983.0
+hm_mtu = 104.8
+
+[acquisition]
+# total MASTER-call budget for the outer search (racing 24 + exploit remainder).
+budget = 100
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+tau0 = 0.30
+hamming_min = 4
+risk_z = 0.25
+
+[sdm_mtc]
+# SDM/MTC post-verification limits (APR1400 DCD Table 4.3) — used by post_verify_topk.
+top_k = 3
+mtc_max_pcm_per_c = 9.0
+sdm_required_pcm = 10870.0
+
+[search.local_search]
+top_m = 16
+neighbors = 24
+depth = 2
+max_predictions = 3000

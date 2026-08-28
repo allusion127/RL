@@ -1,0 +1,2826 @@
+# fuel_types_dbx_extracted.yaml
+#
+# Assembly-lattice specs extracted from the READ-ONLY feasible-core database
+#   data/reports/scoping_mesh_20260815/feasible_database.xlsx   (sheets P_<pair>)
+# by the dbx extraction pass of 2026-08-16.  NOTHING here has been written into
+# data/store/fuel_types.parquet — this file is the candidate merge payload only
+# (merge recipe: see `merge_note` at the bottom of this file).
+#
+# Every P_<pair> sheet carries, per assembly type:
+#   * a general block   (avg enrichment / role / pin zoning / Gd design)
+#   * a 1/8 pin map     (DeCART dec_FA_<type>.inp) with a code legend, OR '(덱 없음)'
+#   * a k-inf(BU) and pin-peaking FF(BU) depletion table on a shared 62-point grid
+# The 1/8 map is lower-triangular with 8-fold symmetry: cell (i,j<=i) has
+# multiplicity 4 on the diagonal and 8 off it -> 8*4 + 28*8 = 256 lattice cells
+# (16x16 CE assembly: 236 fuel rods + 20 guide-tube cells).  Rod-count-weighted
+# (main, zone, Gd) enrichment reproduces the sheet's stated assembly average to
+# <3e-4 w/o on all 36 decked types, so the map is used to RECOVER the average
+# where the sheet leaves it blank (A8, A2).
+
+meta:
+  extracted: 2026-08-16
+  source_workbook: data/reports/scoping_mesh_20260815/feasible_database.xlsx
+  source_sheets: P_<pair>  (20 sheets)
+  library_id: ga80          # same letter roster as store library 'ga80'
+  n_sheets_parsed: 20
+  n_sheets_failed: 0
+  n_types: 40
+  n_types_new_vs_store: 4   # E5, E6, J7, J8
+  n_types_with_decart_deck: 36
+  db_rows_unlocked_by_new_types: 472
+  read_only_inputs: [feasible_database.xlsx, data/store/fuel_types.parquet]
+
+# All 20 sheets share this burnup grid (verified identical element-wise).
+burnup_grid_gwd_per_tu: [0, 0.2, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47.5, 50, 52.5, 55, 57.5, 60, 62.5, 65, 67.5, 70, 72.5, 75, 77.5, 80]
+
+parse_report:   # honest per-sheet status; no field was inferred where absent
+  P_A8_A2:
+    types: [A8, A2]
+    general_block: partial
+    general_block_blank_fields: [du, ff_window_max, gd_pattern, n_gd, role, u_avg_enrichment]
+    pin_maps_present: [A8, A2]
+    kinf_table_points: 62
+    feed_distribution_rows: 1
+    parse_problems: []
+  P_E1_E2:
+    types: [E1, E2]
+    general_block: complete
+    pin_maps_present: [E1, E2]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_E3_E4:
+    types: [E3, E4]
+    general_block: complete
+    pin_maps_present: [E3, E4]
+    kinf_table_points: 62
+    feed_distribution_rows: 1
+    parse_problems: []
+  P_E5_E6:
+    types: [E5, E6]
+    general_block: partial
+    general_block_blank_fields: [enr_main, enr_zone, ff_window_max, gd_u_enr, gd_wt]
+    pin_maps_present: []
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_G3_G4:
+    types: [G3, G4]
+    general_block: complete
+    pin_maps_present: [G3, G4]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_H1_H2:
+    types: [H1, H2]
+    general_block: complete
+    pin_maps_present: [H1, H2]
+    kinf_table_points: 62
+    feed_distribution_rows: 1
+    parse_problems: []
+  P_H3_H4:
+    types: [H3, H4]
+    general_block: complete
+    pin_maps_present: [H3, H4]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_J1_J2:
+    types: [J1, J2]
+    general_block: complete
+    pin_maps_present: [J1, J2]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_J3_J4:
+    types: [J3, J4]
+    general_block: complete
+    pin_maps_present: [J3, J4]
+    kinf_table_points: 62
+    feed_distribution_rows: 3
+    parse_problems: []
+  P_J5_J6:
+    types: [J5, J6]
+    general_block: complete
+    pin_maps_present: [J5, J6]
+    kinf_table_points: 62
+    feed_distribution_rows: 3
+    parse_problems: []
+  P_J7_J8:
+    types: [J7, J8]
+    general_block: partial
+    general_block_blank_fields: [enr_main, enr_zone, ff_window_max, gd_u_enr, gd_wt]
+    pin_maps_present: []
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_K1_K2:
+    types: [K1, K2]
+    general_block: complete
+    pin_maps_present: [K1, K2]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_K3_K4:
+    types: [K3, K4]
+    general_block: complete
+    pin_maps_present: [K3, K4]
+    kinf_table_points: 62
+    feed_distribution_rows: 1
+    parse_problems: []
+  P_K5_K6:
+    types: [K5, K6]
+    general_block: complete
+    pin_maps_present: [K5, K6]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_L1_L2:
+    types: [L1, L2]
+    general_block: complete
+    pin_maps_present: [L1, L2]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_L3_L4:
+    types: [L3, L4]
+    general_block: complete
+    pin_maps_present: [L3, L4]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_L5_L6:
+    types: [L5, L6]
+    general_block: complete
+    pin_maps_present: [L5, L6]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_N1_N2:
+    types: [N1, N2]
+    general_block: complete
+    pin_maps_present: [N1, N2]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_N3_N4:
+    types: [N3, N4]
+    general_block: complete
+    pin_maps_present: [N3, N4]
+    kinf_table_points: 62
+    feed_distribution_rows: 6
+    parse_problems: []
+  P_N5_N6:
+    types: [N5, N6]
+    general_block: complete
+    pin_maps_present: [N5, N6]
+    kinf_table_points: 62
+    feed_distribution_rows: 1
+    parse_problems: []
+
+types:
+  A2:
+    pair: A8_A2
+    enrichment_segment: 5.0
+    role: null          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 4.961
+    u_avg_source: pinmap_rod_count_weighted
+    u_avg_from_pinmap: 4.96102   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.4
+    enr_zone: 4.7
+    du: 0.7
+    n_main_pin: 112
+    zone_pin_count: 100
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4
+    gd_pattern: null
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_A2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 3, 2, 2, 3]
+      - [1, 1, 1, 1, 1, 1, 1]
+      - [2, 2, 2, 2, 2, 2, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.40 w/o"
+      2: "zoning 저농축 4.70 w/o"
+      3: "Gd봉 U4.00 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.06384
+    kinf10: 1.07109
+    kinf20: 1.10402
+    kinf30: 1.0575
+    bu_k1: 38.4871
+    kinf_eol50: 0.92685
+    kinf_dip: 1.0584
+    bu_dip_gwd: 1
+    kinf_peak: 1.10597
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 4063.87156
+    rho_boc_minus_peak_pcm: -3580.73183
+    depletion_slope_pcm_per_gwd: -651.29244
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1739
+    ff_boc: 1.1739
+    ff_window_max: null
+    kinf_curve: [1.06384, 1.06129, 1.0591, 1.0584, 1.05975, 1.06128, 1.06247, 1.0636, 1.06475, 1.06608, 1.06753, 1.06921, 1.07109, 1.07321, 1.07553, 1.07814, 1.08097, 1.08416, 1.08779, 1.0918, 1.09615, 1.10046, 1.10402, 1.10597, 1.10547, 1.10284, 1.09815, 1.09217, 1.08553, 1.07857, 1.07153, 1.06445, 1.0575, 1.05055, 1.04365, 1.03684, 1.03005, 1.02325, 1.01655, 1.00988, 1.00321, 0.99662, 0.99006, 0.98355, 0.97707, 0.97061, 0.96424, 0.95788, 0.94224, 0.92685, 0.91177, 0.89702, 0.88264, 0.86866, 0.85512, 0.84204, 0.82948, 0.81744, 0.80598, 0.79508, 0.78482, 0.77517]
+    ff_curve: [1.1739, 1.1721, 1.1698, 1.166, 1.1583, 1.15, 1.1421, 1.1366, 1.1311, 1.1256, 1.1202, 1.1148, 1.1095, 1.1042, 1.0988, 1.0936, 1.0881, 1.083, 1.0799, 1.0771, 1.074, 1.074, 1.0759, 1.078, 1.0801, 1.0814, 1.082, 1.0818, 1.0812, 1.0804, 1.0796, 1.0786, 1.0776, 1.0766, 1.0755, 1.0745, 1.0734, 1.0724, 1.0712, 1.0701, 1.0689, 1.0678, 1.0666, 1.0655, 1.0643, 1.0631, 1.0619, 1.0606, 1.0575, 1.0544, 1.0513, 1.0481, 1.045, 1.042, 1.0391, 1.0362, 1.0336, 1.0311, 1.0289, 1.0268, 1.0248, 1.0239]
+    store_ga80_status: present
+    qc_flags: []
+
+  A8:
+    pair: A8_A2
+    enrichment_segment: 5.0
+    role: null          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0466
+    u_avg_source: pinmap_rod_count_weighted
+    u_avg_from_pinmap: 5.04661   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.5
+    enr_zone: 4.9
+    du: 0.6
+    n_main_pin: 116
+    zone_pin_count: 100
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 7          # Gd2O3 wt%
+    gd_u_enr: 3.15
+    gd_pattern: null
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_A8.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 1]
+      - [3, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 1, 1, 1, 1]
+      - [2, 2, 2, 2, 2, 2, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.50 w/o"
+      2: "zoning 저농축 4.90 w/o"
+      3: "Gd봉 U3.15 w/o + Gd2O3 7.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.13467
+    kinf10: 1.13108
+    kinf20: 1.13628
+    kinf30: 1.06516
+    bu_k1: 39.64024
+    kinf_eol50: 0.93421
+    kinf_dip: 1.12713
+    bu_dip_gwd: 2
+    kinf_peak: 1.14648
+    bu_peak_gwd: 17
+    reactivity_swing_pcm: 1497.40913
+    rho_boc_minus_peak_pcm: -907.84947
+    depletion_slope_pcm_per_gwd: -638.63125
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1538
+    ff_boc: 1.1538
+    ff_window_max: null
+    kinf_curve: [1.13467, 1.13179, 1.12892, 1.12727, 1.12713, 1.12728, 1.12729, 1.12731, 1.1275, 1.12795, 1.12869, 1.12972, 1.13108, 1.13293, 1.13514, 1.13787, 1.14085, 1.14371, 1.14586, 1.14648, 1.14505, 1.14161, 1.13628, 1.12982, 1.12272, 1.11542, 1.10801, 1.10077, 1.09359, 1.08636, 1.07924, 1.07219, 1.06516, 1.05819, 1.05128, 1.04443, 1.03763, 1.03087, 1.02414, 1.01746, 1.01082, 1.0042, 0.99764, 0.9911, 0.98461, 0.97815, 0.97173, 0.96536, 0.94967, 0.93421, 0.91911, 0.90428, 0.88983, 0.87575, 0.86213, 0.84898, 0.83635, 0.82421, 0.81259, 0.8016, 0.79118, 0.78139]
+    ff_curve: [1.1538, 1.1523, 1.1505, 1.1493, 1.1464, 1.143, 1.139, 1.1348, 1.1303, 1.1255, 1.1205, 1.1153, 1.11, 1.1043, 1.0991, 1.0965, 1.0934, 1.0894, 1.0845, 1.082, 1.0858, 1.0883, 1.0896, 1.0898, 1.0892, 1.0884, 1.0874, 1.0862, 1.0851, 1.0839, 1.0828, 1.0815, 1.0803, 1.0791, 1.0779, 1.0766, 1.0754, 1.0741, 1.0728, 1.0715, 1.0702, 1.0688, 1.0675, 1.0661, 1.0648, 1.0633, 1.0619, 1.0605, 1.0569, 1.0533, 1.0497, 1.0461, 1.0426, 1.0391, 1.0358, 1.0326, 1.0297, 1.0269, 1.0244, 1.0221, 1.02, 1.0202]
+    store_ga80_status: present
+    qc_flags: []
+
+  E1:
+    pair: E1_E2
+    enrichment_segment: 5.0
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0424
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.04237   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.55
+    du: 0.8
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 7          # Gd2O3 wt%
+    gd_u_enr: 3.8
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_E1.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 1]
+      - [3, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 1, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.55 w/o"
+      3: "Gd봉 U3.80 w/o + Gd2O3 7.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.13153
+    kinf10: 1.13035
+    kinf20: 1.13556
+    kinf30: 1.06463
+    bu_k1: 39.57903
+    kinf_eol50: 0.93383
+    kinf_dip: 1.12447
+    bu_dip_gwd: 1
+    kinf_peak: 1.14606
+    bu_peak_gwd: 17
+    reactivity_swing_pcm: 1675.31861
+    rho_boc_minus_peak_pcm: -1120.44924
+    depletion_slope_pcm_per_gwd: -638.4497
+    kconv_is_monotone: 0
+    ff_pin_max: 1.143
+    ff_boc: 1.143
+    ff_window_max: 1.0825
+    kinf_curve: [1.13153, 1.12871, 1.12595, 1.12447, 1.12468, 1.12513, 1.1254, 1.12567, 1.12605, 1.12667, 1.12758, 1.12878, 1.13035, 1.13227, 1.1346, 1.13737, 1.14044, 1.14339, 1.14554, 1.14606, 1.14454, 1.1409, 1.13556, 1.12901, 1.12192, 1.11462, 1.10732, 1.10008, 1.09286, 1.0857, 1.07863, 1.07157, 1.06463, 1.0577, 1.05083, 1.04397, 1.03717, 1.03042, 1.0237, 1.01703, 1.01037, 1.00381, 0.99723, 0.9907, 0.98419, 0.97776, 0.97133, 0.96494, 0.9493, 0.93383, 0.91871, 0.90386, 0.88941, 0.87532, 0.86169, 0.84858, 0.83588, 0.82376, 0.81221, 0.80124, 0.79084, 0.78107]
+    ff_curve: [1.143, 1.1415, 1.1396, 1.1365, 1.1301, 1.1237, 1.1174, 1.1111, 1.1045, 1.0982, 1.0917, 1.0869, 1.0825, 1.078, 1.0735, 1.07, 1.0688, 1.0678, 1.0675, 1.0713, 1.0746, 1.0767, 1.0777, 1.0777, 1.0772, 1.0762, 1.075, 1.0741, 1.073, 1.0718, 1.0706, 1.0696, 1.0684, 1.0672, 1.0661, 1.0648, 1.0636, 1.0623, 1.061, 1.0599, 1.0585, 1.0572, 1.0559, 1.0546, 1.0534, 1.0521, 1.0507, 1.0494, 1.0459, 1.0426, 1.0393, 1.0361, 1.0328, 1.0298, 1.027, 1.0242, 1.0217, 1.0194, 1.0174, 1.0156, 1.0143, 1.0138]
+    store_ga80_status: present
+    qc_flags: []
+
+  E2:
+    pair: E1_E2
+    enrichment_segment: 5.0
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0466
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.04661   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.55
+    du: 0.8
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.1
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_E2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.55 w/o"
+      3: "Gd봉 U4.10 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.06748
+    kinf10: 1.07486
+    kinf20: 1.10625
+    kinf30: 1.06232
+    bu_k1: 39.25836
+    kinf_eol50: 0.932
+    kinf_dip: 1.06213
+    bu_dip_gwd: 1
+    kinf_peak: 1.1084
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3930.29643
+    rho_boc_minus_peak_pcm: -3458.43296
+    depletion_slope_pcm_per_gwd: -649.55358
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1487
+    ff_boc: 1.1487
+    ff_window_max: 1.0989
+    kinf_curve: [1.06748, 1.06501, 1.06285, 1.06213, 1.06348, 1.06505, 1.0663, 1.06742, 1.06861, 1.06992, 1.07133, 1.07298, 1.07486, 1.07684, 1.07909, 1.08152, 1.08421, 1.08718, 1.09048, 1.0943, 1.09845, 1.10269, 1.10625, 1.10831, 1.1084, 1.10624, 1.10208, 1.09647, 1.09016, 1.08329, 1.07634, 1.0693, 1.06232, 1.05535, 1.04852, 1.04169, 1.03492, 1.02815, 1.02146, 1.01487, 1.00825, 1.0017, 0.99512, 0.98865, 0.98217, 0.97576, 0.96937, 0.96301, 0.94739, 0.932, 0.91692, 0.90208, 0.88767, 0.87358, 0.85994, 0.84673, 0.83401, 0.82181, 0.81015, 0.79911, 0.7886, 0.77875]
+    ff_curve: [1.1487, 1.147, 1.1449, 1.1414, 1.134, 1.1291, 1.1251, 1.1209, 1.1164, 1.1121, 1.1078, 1.1033, 1.0989, 1.0944, 1.0899, 1.0854, 1.0807, 1.0762, 1.0716, 1.0696, 1.0699, 1.0703, 1.0707, 1.0712, 1.0715, 1.0714, 1.071, 1.0704, 1.0696, 1.0686, 1.0676, 1.0666, 1.0657, 1.0646, 1.0636, 1.0626, 1.0613, 1.0603, 1.0592, 1.0582, 1.0569, 1.0558, 1.0546, 1.0535, 1.0523, 1.0512, 1.05, 1.0488, 1.0459, 1.0429, 1.04, 1.0371, 1.0342, 1.0316, 1.0292, 1.0269, 1.0245, 1.0231, 1.0223, 1.0214, 1.0206, 1.0198]
+    store_ga80_status: present
+    qc_flags: []
+
+  E3:
+    pair: E3_E4
+    enrichment_segment: 5.0
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0246
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.02458   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.75
+    du: 0.6
+    n_main_pin: 120
+    zone_pin_count: 100
+    # --- burnable absorber ------------------------------------------
+    n_gd: 16
+    gd_wt: 8          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PA
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_E3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 3, 2, 2, 3]
+      - [1, 1, 1, 1, 1, 1, 1]
+      - [2, 2, 2, 2, 2, 2, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.75 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 8.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.14958
+    kinf10: 1.13829
+    kinf20: 1.13541
+    kinf30: 1.06471
+    bu_k1: 39.54545
+    kinf_eol50: 0.93339
+    kinf_dip: 1.13798
+    bu_dip_gwd: 9
+    kinf_peak: 1.145
+    bu_peak_gwd: 17
+    reactivity_swing_pcm: 538.76205
+    rho_boc_minus_peak_pcm: 347.95317
+    depletion_slope_pcm_per_gwd: -639.95051
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1026
+    ff_boc: 1.1026
+    ff_window_max: 1.08
+    kinf_curve: [1.14958, 1.14658, 1.14353, 1.14162, 1.14103, 1.14068, 1.14006, 1.13938, 1.13877, 1.1383, 1.13803, 1.13798, 1.13829, 1.13876, 1.13953, 1.14061, 1.14209, 1.1436, 1.14486, 1.145, 1.1436, 1.14031, 1.13541, 1.12915, 1.12222, 1.11489, 1.10754, 1.10025, 1.09302, 1.08589, 1.0788, 1.07173, 1.06471, 1.05776, 1.05086, 1.04396, 1.03709, 1.03032, 1.02358, 1.01687, 1.01019, 1.0036, 0.997, 0.99044, 0.98389, 0.97745, 0.97099, 0.96457, 0.94892, 0.93339, 0.91819, 0.90331, 0.8888, 0.87473, 0.86105, 0.84787, 0.8352, 0.8231, 0.81155, 0.80058, 0.79024, 0.78051]
+    ff_curve: [1.1026, 1.1024, 1.1024, 1.1022, 1.101, 1.0993, 1.0974, 1.095, 1.0922, 1.0894, 1.0864, 1.0831, 1.08, 1.0777, 1.0756, 1.0734, 1.0713, 1.0692, 1.0672, 1.0653, 1.0635, 1.062, 1.0608, 1.0599, 1.0591, 1.0583, 1.0575, 1.057, 1.0562, 1.0554, 1.0547, 1.054, 1.0533, 1.0525, 1.0518, 1.0509, 1.05, 1.0493, 1.0484, 1.0476, 1.0466, 1.0458, 1.0449, 1.044, 1.043, 1.0422, 1.0412, 1.0403, 1.0379, 1.0356, 1.0332, 1.0308, 1.0285, 1.0263, 1.0241, 1.0222, 1.0203, 1.0186, 1.0171, 1.0157, 1.0171, 1.0185]
+    store_ga80_status: present
+    qc_flags: []
+
+  E4:
+    pair: E3_E4
+    enrichment_segment: 5.0
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.05
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.05   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.75
+    du: 0.6
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.7
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_E4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.75 w/o"
+      3: "Gd봉 U3.70 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.0671
+    kinf10: 1.07545
+    kinf20: 1.10801
+    kinf30: 1.06278
+    bu_k1: 39.32979
+    kinf_eol50: 0.93244
+    kinf_dip: 1.06187
+    bu_dip_gwd: 1
+    kinf_peak: 1.10994
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 4078.52631
+    rho_boc_minus_peak_pcm: -3616.96944
+    depletion_slope_pcm_per_gwd: -642.23954
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1365
+    ff_boc: 1.1365
+    ff_window_max: 1.101
+    kinf_curve: [1.0671, 1.06465, 1.06254, 1.06187, 1.0633, 1.06497, 1.06633, 1.06754, 1.06882, 1.07023, 1.07174, 1.07349, 1.07545, 1.07754, 1.07991, 1.08249, 1.08531, 1.08842, 1.09187, 1.09585, 1.10015, 1.10446, 1.10801, 1.10994, 1.1098, 1.1074, 1.10308, 1.09732, 1.09091, 1.08395, 1.07691, 1.0698, 1.06278, 1.05582, 1.04899, 1.04216, 1.0354, 1.02862, 1.02193, 1.01534, 1.00873, 1.00217, 0.99559, 0.98912, 0.98264, 0.97622, 0.96984, 0.96348, 0.94788, 0.93244, 0.91737, 0.90253, 0.88808, 0.87399, 0.86034, 0.84711, 0.83436, 0.82214, 0.81042, 0.79935, 0.7888, 0.77892]
+    ff_curve: [1.1365, 1.135, 1.1335, 1.1306, 1.1246, 1.1212, 1.119, 1.1164, 1.1133, 1.11, 1.1069, 1.104, 1.101, 1.0979, 1.0948, 1.0917, 1.0886, 1.0855, 1.0825, 1.0795, 1.0763, 1.0732, 1.0699, 1.0667, 1.0637, 1.0613, 1.0596, 1.0585, 1.0576, 1.0566, 1.0557, 1.055, 1.0542, 1.0533, 1.0526, 1.0517, 1.0507, 1.0499, 1.049, 1.0481, 1.0471, 1.0462, 1.0452, 1.0443, 1.0433, 1.0424, 1.0414, 1.0404, 1.038, 1.0355, 1.0331, 1.0307, 1.0284, 1.0262, 1.0253, 1.0246, 1.0239, 1.0232, 1.0224, 1.0216, 1.0207, 1.0198]
+    store_ga80_status: present
+    qc_flags: []
+
+  E5:
+    pair: E5_E6
+    enrichment_segment: 5.0
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0119
+    u_avg_source: sheet
+    # --- pin zoning -------------------------------------------------
+    enr_main: null
+    enr_zone: null
+    du: 0.6
+    n_main_pin: null
+    zone_pin_count: null
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: null          # Gd2O3 wt%
+    gd_u_enr: null
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: null
+    n_guide_tube: null
+    decart_deck: null
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.1411
+    kinf10: 1.10625
+    kinf20: 1.12195
+    kinf30: 1.06222
+    bu_k1: 39.20427
+    kinf_eol50: 0.93138
+    kinf_dip: 1.10529
+    bu_dip_gwd: 2
+    kinf_peak: 1.10547
+    bu_peak_gwd: 3
+    reactivity_swing_pcm: 14.73158
+    rho_boc_minus_peak_pcm: 2824.52326
+    depletion_slope_pcm_per_gwd: -421.29308
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1332
+    ff_boc: 1.1332
+    ff_window_max: null
+    kinf_curve: [1.1411, 1.10966, 1.10681, 1.1053, 1.10529, 1.10547, 1.10536, 1.10516, 1.10502, 1.10502, 1.10521, 1.10562, 1.10625, 1.10712, 1.10825, 1.10964, 1.11132, 1.11334, 1.11572, 1.11836, 1.12069, 1.12207, 1.12195, 1.11987, 1.11597, 1.11064, 1.10432, 1.09748, 1.09042, 1.08333, 1.07624, 1.06921, 1.06222, 1.05528, 1.04839, 1.04154, 1.03474, 1.02798, 1.02127, 1.01459, 1.00795, 1.00134, 0.99478, 0.98825, 0.98176, 0.97531, 0.9689, 0.96253, 0.94682, 0.93138, 0.91623, 0.90142, 0.88697, 0.87291, 0.85928, 0.84613, 0.83347, 0.82136, 0.80981, 0.79886, 0.78851, 0.77879]
+    ff_curve: [1.1332, 1.1293, 1.1276, 1.1249, 1.1196, 1.1141, 1.1086, 1.1032, 1.0977, 1.0923, 1.0871, 1.0841, 1.0811, 1.0781, 1.075, 1.0719, 1.0687, 1.0656, 1.0624, 1.0607, 1.0586, 1.0559, 1.0576, 1.0606, 1.0632, 1.0648, 1.0652, 1.065, 1.0643, 1.0635, 1.0627, 1.0618, 1.0608, 1.0599, 1.0589, 1.0579, 1.0569, 1.0559, 1.0549, 1.0538, 1.0528, 1.0517, 1.0506, 1.0495, 1.0484, 1.0473, 1.0462, 1.0451, 1.0422, 1.0394, 1.0366, 1.0339, 1.0312, 1.0286, 1.0262, 1.0239, 1.0218, 1.0198, 1.0182, 1.0167, 1.0168, 1.0185]
+    store_ga80_status: absent
+    qc_flags: [no_decart_deck__pin_zoning_and_gd_design_unknown, kconv_hump_latched_on_shallow_ripple__true_peak_later]
+
+  E6:
+    pair: E5_E6
+    enrichment_segment: 5.0
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 4.9907
+    u_avg_source: sheet
+    # --- pin zoning -------------------------------------------------
+    enr_main: null
+    enr_zone: null
+    du: 0.6
+    n_main_pin: null
+    zone_pin_count: null
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: null          # Gd2O3 wt%
+    gd_u_enr: null
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: null
+    n_guide_tube: null
+    decart_deck: null
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.09623
+    kinf10: 1.08392
+    kinf20: 1.11992
+    kinf30: 1.05972
+    bu_k1: 38.8437
+    kinf_eol50: 0.92914
+    kinf_dip: 1.06489
+    bu_dip_gwd: 1
+    kinf_peak: 1.11992
+    bu_peak_gwd: 20
+    reactivity_swing_pcm: 4614.32058
+    rho_boc_minus_peak_pcm: -1929.64037
+    depletion_slope_pcm_per_gwd: -650.29211
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1466
+    ff_boc: 1.1466
+    ff_window_max: null
+    kinf_curve: [1.09623, 1.06745, 1.06533, 1.06489, 1.06686, 1.06903, 1.0709, 1.07269, 1.07456, 1.07659, 1.07882, 1.08125, 1.08392, 1.08682, 1.08997, 1.09341, 1.09717, 1.10131, 1.10589, 1.11082, 1.11551, 1.11881, 1.11992, 1.11842, 1.11441, 1.10867, 1.10203, 1.09503, 1.08792, 1.08081, 1.07373, 1.0667, 1.05972, 1.0528, 1.04592, 1.03909, 1.0323, 1.02556, 1.01885, 1.01219, 1.00556, 0.99897, 0.99242, 0.9859, 0.97943, 0.97299, 0.96659, 0.96023, 0.94455, 0.92914, 0.91403, 0.89924, 0.88482, 0.87079, 0.8572, 0.84408, 0.83145, 0.81937, 0.80785, 0.79692, 0.7866, 0.7769]
+    ff_curve: [1.1466, 1.1411, 1.1386, 1.1347, 1.1269, 1.1196, 1.1155, 1.1112, 1.1068, 1.1024, 1.0978, 1.0932, 1.0886, 1.0839, 1.0792, 1.0745, 1.0698, 1.065, 1.0641, 1.0646, 1.0652, 1.0659, 1.0663, 1.0665, 1.0663, 1.0658, 1.0651, 1.0643, 1.0634, 1.0625, 1.0616, 1.0607, 1.0597, 1.0588, 1.0578, 1.0568, 1.0558, 1.0548, 1.0537, 1.0527, 1.0517, 1.0506, 1.0495, 1.0485, 1.0474, 1.0463, 1.0452, 1.0441, 1.0414, 1.0386, 1.036, 1.0333, 1.0308, 1.0283, 1.026, 1.0239, 1.0219, 1.0203, 1.0197, 1.019, 1.0183, 1.0193]
+    store_ga80_status: absent
+    qc_flags: [no_decart_deck__pin_zoning_and_gd_design_unknown]
+
+  G3:
+    pair: G3_G4
+    enrichment_segment: 5.5
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.5424
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.54237   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.9
+    enr_zone: 5.2
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.5
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_G3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.90 w/o"
+      2: "zoning 저농축 5.20 w/o"
+      3: "Gd봉 U3.50 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.13485
+    kinf10: 1.11816
+    kinf20: 1.12403
+    kinf30: 1.08968
+    bu_k1: 43.78537
+    kinf_eol50: 0.9617
+    kinf_dip: 1.11764
+    bu_dip_gwd: 13
+    kinf_peak: 1.12608
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 670.61191
+    rho_boc_minus_peak_pcm: 686.26506
+    depletion_slope_pcm_per_gwd: -594.98396
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1175
+    ff_boc: 1.1175
+    ff_window_max: 1.0946
+    kinf_curve: [1.13485, 1.13209, 1.12917, 1.12696, 1.12564, 1.12483, 1.12378, 1.12261, 1.12146, 1.1204, 1.11951, 1.11873, 1.11816, 1.11779, 1.11766, 1.11764, 1.11777, 1.11815, 1.11876, 1.11963, 1.12084, 1.1223, 1.12403, 1.12539, 1.12608, 1.12544, 1.12332, 1.11971, 1.11486, 1.10926, 1.10298, 1.09643, 1.08968, 1.08292, 1.07617, 1.06948, 1.06286, 1.05628, 1.04974, 1.04324, 1.03678, 1.03034, 1.02396, 1.01757, 1.01125, 1.00494, 0.99865, 0.9924, 0.97691, 0.9617, 0.94663, 0.93176, 0.91712, 0.90279, 0.88876, 0.87507, 0.86173, 0.8488, 0.83634, 0.82433, 0.81282, 0.80182]
+    ff_curve: [1.1175, 1.1168, 1.1161, 1.115, 1.1136, 1.1121, 1.1102, 1.1082, 1.1057, 1.1032, 1.1004, 1.0976, 1.0946, 1.0915, 1.0882, 1.0866, 1.0851, 1.0836, 1.0821, 1.0806, 1.0791, 1.0777, 1.0761, 1.0746, 1.0728, 1.071, 1.0692, 1.0678, 1.0665, 1.0653, 1.0643, 1.0635, 1.0627, 1.0618, 1.061, 1.0601, 1.0591, 1.0582, 1.0573, 1.0564, 1.0554, 1.0544, 1.0534, 1.0524, 1.0514, 1.0504, 1.0494, 1.0483, 1.0457, 1.043, 1.0403, 1.0376, 1.0348, 1.0322, 1.0296, 1.0274, 1.0265, 1.0255, 1.0245, 1.0235, 1.0224, 1.0214]
+    store_ga80_status: present
+    qc_flags: []
+
+  G4:
+    pair: G3_G4
+    enrichment_segment: 5.5
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.5017
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.50169   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.9
+    enr_zone: 5.2
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.5
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_G4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.90 w/o"
+      2: "zoning 저농축 5.20 w/o"
+      3: "Gd봉 U3.50 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.09665
+    kinf10: 1.09343
+    kinf20: 1.11503
+    kinf30: 1.08635
+    bu_k1: 43.28594
+    kinf_eol50: 0.95859
+    kinf_dip: 1.09023
+    bu_dip_gwd: 2
+    kinf_peak: 1.12057
+    bu_peak_gwd: 23
+    reactivity_swing_pcm: 2483.46736
+    rho_boc_minus_peak_pcm: -1946.4988
+    depletion_slope_pcm_per_gwd: -605.10665
+    kconv_is_monotone: 0
+    ff_pin_max: 1.141
+    ff_boc: 1.141
+    ff_window_max: 1.1038
+    kinf_curve: [1.09665, 1.09417, 1.09173, 1.09024, 1.09023, 1.0907, 1.09095, 1.09107, 1.09124, 1.09154, 1.09199, 1.09259, 1.09343, 1.09445, 1.09574, 1.09718, 1.09889, 1.10087, 1.10307, 1.10559, 1.1085, 1.11165, 1.11503, 1.11797, 1.12008, 1.12057, 1.11931, 1.11623, 1.11164, 1.10616, 1.09985, 1.09319, 1.08635, 1.07961, 1.0729, 1.06622, 1.05962, 1.05307, 1.04652, 1.04006, 1.03359, 1.02715, 1.02076, 1.01442, 1.00809, 1.00179, 0.99553, 0.98928, 0.97384, 0.95859, 0.94352, 0.92876, 0.9142, 0.89989, 0.88588, 0.87221, 0.85889, 0.84599, 0.83356, 0.82159, 0.81007, 0.79912]
+    ff_curve: [1.141, 1.1396, 1.1377, 1.1346, 1.1315, 1.1283, 1.1251, 1.1217, 1.1182, 1.1147, 1.1111, 1.1075, 1.1038, 1.1001, 1.0962, 1.0924, 1.0885, 1.0847, 1.0807, 1.0773, 1.0777, 1.0782, 1.0788, 1.0795, 1.0801, 1.0805, 1.0807, 1.0806, 1.0802, 1.0793, 1.0784, 1.0774, 1.0765, 1.0754, 1.0744, 1.0733, 1.0721, 1.071, 1.0699, 1.0688, 1.0675, 1.0664, 1.0651, 1.064, 1.0627, 1.0615, 1.0603, 1.059, 1.0559, 1.0527, 1.0495, 1.0463, 1.043, 1.0399, 1.0368, 1.0341, 1.0314, 1.0288, 1.0268, 1.0259, 1.025, 1.024]
+    store_ga80_status: present
+    qc_flags: []
+
+  H1:
+    pair: H1_H2
+    enrichment_segment: 5.5
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.5102
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.51017   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.8
+    enr_zone: 5.1
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.2
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_H1.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.80 w/o"
+      2: "zoning 저농축 5.10 w/o"
+      3: "Gd봉 U4.20 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.13159
+    kinf10: 1.1168
+    kinf20: 1.12235
+    kinf30: 1.0877
+    bu_k1: 43.46667
+    kinf_eol50: 0.95967
+    kinf_dip: 1.11642
+    bu_dip_gwd: 13
+    kinf_peak: 1.12433
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 630.16616
+    rho_boc_minus_peak_pcm: 570.62884
+    depletion_slope_pcm_per_gwd: -597.89288
+    kconv_is_monotone: 0
+    ff_pin_max: 1.115
+    ff_boc: 1.115
+    ff_window_max: 1.088
+    kinf_curve: [1.13159, 1.12886, 1.126, 1.12393, 1.12287, 1.12228, 1.12143, 1.12045, 1.11949, 1.11859, 1.11787, 1.11722, 1.1168, 1.11652, 1.11643, 1.11642, 1.11652, 1.11679, 1.11729, 1.11808, 1.11921, 1.12063, 1.12235, 1.12369, 1.12433, 1.12365, 1.12153, 1.11786, 1.11293, 1.10728, 1.10096, 1.09441, 1.0877, 1.08098, 1.07424, 1.06756, 1.06095, 1.05436, 1.04782, 1.0413, 1.03483, 1.02839, 1.02198, 1.01558, 1.00925, 1.00294, 0.99664, 0.99037, 0.97491, 0.95967, 0.94455, 0.92968, 0.91506, 0.90073, 0.88672, 0.87304, 0.85972, 0.84682, 0.83439, 0.82242, 0.81097, 0.80003]
+    ff_curve: [1.115, 1.1143, 1.1134, 1.1123, 1.1095, 1.1065, 1.1042, 1.1021, 1.0995, 1.0969, 1.094, 1.0909, 1.088, 1.0847, 1.0828, 1.0812, 1.0794, 1.0777, 1.0761, 1.0744, 1.0728, 1.0712, 1.0695, 1.0678, 1.0658, 1.064, 1.0621, 1.0607, 1.0595, 1.0584, 1.0574, 1.0567, 1.0559, 1.0551, 1.0544, 1.0535, 1.0526, 1.0518, 1.051, 1.0502, 1.0493, 1.0484, 1.0475, 1.0466, 1.0457, 1.0447, 1.0438, 1.0429, 1.0404, 1.038, 1.0355, 1.0331, 1.0306, 1.0283, 1.0259, 1.0243, 1.0236, 1.0228, 1.022, 1.0212, 1.0203, 1.0194]
+    store_ga80_status: present
+    qc_flags: []
+
+  H2:
+    pair: H1_H2
+    enrichment_segment: 5.5
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4831
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.48305   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.8
+    enr_zone: 5.1
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.2
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_H2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.80 w/o"
+      2: "zoning 저농축 5.10 w/o"
+      3: "Gd봉 U4.20 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.09346
+    kinf10: 1.09243
+    kinf20: 1.11361
+    kinf30: 1.08507
+    bu_k1: 43.06051
+    kinf_eol50: 0.95715
+    kinf_dip: 1.08731
+    bu_dip_gwd: 1
+    kinf_peak: 1.11898
+    bu_peak_gwd: 23
+    reactivity_swing_pcm: 2602.98914
+    rho_boc_minus_peak_pcm: -2085.71731
+    depletion_slope_pcm_per_gwd: -606.95203
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1392
+    ff_boc: 1.1392
+    ff_window_max: 1.0983
+    kinf_curve: [1.09346, 1.09102, 1.08865, 1.08731, 1.08761, 1.08833, 1.08882, 1.08917, 1.08955, 1.09003, 1.09068, 1.09142, 1.09243, 1.09355, 1.09492, 1.09643, 1.09811, 1.09998, 1.10202, 1.10442, 1.10719, 1.11029, 1.11361, 1.11651, 1.11855, 1.11898, 1.11767, 1.11455, 1.10998, 1.10456, 1.09837, 1.09182, 1.08507, 1.07836, 1.07164, 1.06494, 1.05832, 1.05175, 1.0452, 1.03871, 1.03224, 1.02579, 1.01938, 1.01302, 1.00669, 1.00038, 0.9941, 0.98785, 0.97241, 0.95715, 0.94202, 0.92721, 0.91265, 0.89832, 0.88432, 0.87065, 0.85735, 0.84447, 0.83207, 0.82014, 0.80868, 0.79778]
+    ff_curve: [1.1392, 1.1376, 1.1358, 1.1326, 1.1278, 1.1243, 1.1208, 1.1173, 1.1135, 1.1098, 1.106, 1.102, 1.0983, 1.0943, 1.0903, 1.0864, 1.0823, 1.0783, 1.0743, 1.0703, 1.0694, 1.0696, 1.0699, 1.0703, 1.0706, 1.0709, 1.0709, 1.0709, 1.0705, 1.0697, 1.0689, 1.0682, 1.0674, 1.0664, 1.0656, 1.0647, 1.0636, 1.0627, 1.0617, 1.0608, 1.0597, 1.0587, 1.0576, 1.0566, 1.0555, 1.0545, 1.0534, 1.0523, 1.0495, 1.0467, 1.0439, 1.0411, 1.0382, 1.0355, 1.0328, 1.0307, 1.0284, 1.0261, 1.0238, 1.0232, 1.0224, 1.0216]
+    store_ga80_status: present
+    qc_flags: []
+
+  H3:
+    pair: H3_H4
+    enrichment_segment: 5.5
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4949
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.49492   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.75
+    enr_zone: 5.15
+    du: 0.6
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_H3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.75 w/o"
+      2: "zoning 저농축 5.15 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.13085
+    kinf10: 1.11631
+    kinf20: 1.12185
+    kinf30: 1.08701
+    bu_k1: 43.34127
+    kinf_eol50: 0.95887
+    kinf_dip: 1.11596
+    bu_dip_gwd: 12
+    kinf_peak: 1.12384
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 628.30874
+    rho_boc_minus_peak_pcm: 551.58002
+    depletion_slope_pcm_per_gwd: -599.58688
+    kconv_is_monotone: 0
+    ff_pin_max: 1.119
+    ff_boc: 1.119
+    ff_window_max: 1.0954
+    kinf_curve: [1.13085, 1.12811, 1.12526, 1.12321, 1.1222, 1.12164, 1.12082, 1.11986, 1.11892, 1.11804, 1.11734, 1.11672, 1.11631, 1.11604, 1.11596, 1.11596, 1.11606, 1.11631, 1.11679, 1.11757, 1.11868, 1.12011, 1.12185, 1.12321, 1.12384, 1.12313, 1.12099, 1.11728, 1.11231, 1.10663, 1.10029, 1.09373, 1.08701, 1.08028, 1.07354, 1.06684, 1.06023, 1.05363, 1.04709, 1.04056, 1.03408, 1.02763, 1.02122, 1.01481, 1.00847, 1.00215, 0.99585, 0.98958, 0.97412, 0.95887, 0.94371, 0.92883, 0.9142, 0.89985, 0.88584, 0.87217, 0.85885, 0.84596, 0.83353, 0.82158, 0.81016, 0.79924]
+    ff_curve: [1.119, 1.1187, 1.1184, 1.1181, 1.1167, 1.1148, 1.1127, 1.1103, 1.1076, 1.1047, 1.1017, 1.0985, 1.0954, 1.0919, 1.0884, 1.0848, 1.0811, 1.0772, 1.0735, 1.0704, 1.0687, 1.0675, 1.0675, 1.0673, 1.0664, 1.0649, 1.0627, 1.0606, 1.0584, 1.0564, 1.0545, 1.0531, 1.0524, 1.0516, 1.0509, 1.0502, 1.0493, 1.0486, 1.0478, 1.0471, 1.0463, 1.0454, 1.0445, 1.0438, 1.0429, 1.042, 1.0411, 1.0403, 1.038, 1.0357, 1.0334, 1.0311, 1.0288, 1.0266, 1.0244, 1.0227, 1.022, 1.0214, 1.0207, 1.02, 1.0192, 1.0184]
+    store_ga80_status: present
+    qc_flags: []
+
+  H4:
+    pair: H3_H4
+    enrichment_segment: 5.5
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4703
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.47034   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.75
+    enr_zone: 5.15
+    du: 0.6
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_H4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 3, 2, 2, 3]
+      - [1, 1, 1, 1, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.75 w/o"
+      2: "zoning 저농축 5.15 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.09255
+    kinf10: 1.09171
+    kinf20: 1.11373
+    kinf30: 1.08417
+    bu_k1: 42.92235
+    kinf_eol50: 0.95627
+    kinf_dip: 1.08635
+    bu_dip_gwd: 1
+    kinf_peak: 1.11897
+    bu_peak_gwd: 23
+    reactivity_swing_pcm: 2683.46382
+    rho_boc_minus_peak_pcm: -2161.09097
+    depletion_slope_pcm_per_gwd: -609.05403
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1669
+    ff_boc: 1.1669
+    ff_window_max: 1.1014
+    kinf_curve: [1.09255, 1.09008, 1.0877, 1.08635, 1.08665, 1.08737, 1.08787, 1.08824, 1.08865, 1.08916, 1.08986, 1.09065, 1.09171, 1.0929, 1.09431, 1.09588, 1.09764, 1.09963, 1.10177, 1.10429, 1.10717, 1.11034, 1.11373, 1.11665, 1.11863, 1.11897, 1.11752, 1.11423, 1.10947, 1.10387, 1.09754, 1.09094, 1.08417, 1.07747, 1.07077, 1.06409, 1.05747, 1.05091, 1.04435, 1.03786, 1.03138, 1.02493, 1.01852, 1.01215, 1.00582, 0.99951, 0.99323, 0.98697, 0.97156, 0.95627, 0.94115, 0.92634, 0.91173, 0.89743, 0.88343, 0.86978, 0.85652, 0.84368, 0.83133, 0.81941, 0.80802, 0.79715]
+    ff_curve: [1.1669, 1.1653, 1.1634, 1.1602, 1.1538, 1.1471, 1.1405, 1.134, 1.1273, 1.1209, 1.1144, 1.1078, 1.1014, 1.0949, 1.0914, 1.0891, 1.0867, 1.084, 1.0814, 1.0787, 1.0759, 1.0731, 1.07, 1.0667, 1.0645, 1.0661, 1.0673, 1.0682, 1.0684, 1.0682, 1.0675, 1.0669, 1.0662, 1.0654, 1.0646, 1.0637, 1.0627, 1.0619, 1.0609, 1.0601, 1.059, 1.058, 1.0571, 1.0561, 1.0551, 1.054, 1.053, 1.052, 1.0494, 1.0467, 1.0439, 1.0412, 1.0385, 1.0358, 1.0332, 1.0307, 1.0283, 1.0261, 1.0239, 1.022, 1.0203, 1.0188]
+    store_ga80_status: present
+    qc_flags: []
+
+  J1:
+    pair: J1_J2
+    enrichment_segment: 5.1
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.1288
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.12881   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.75
+    du: 0.6
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_J1.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.75 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.1102
+    kinf10: 1.10154
+    kinf20: 1.11394
+    kinf30: 1.06828
+    bu_k1: 40.16283
+    kinf_eol50: 0.93793
+    kinf_dip: 1.10135
+    bu_dip_gwd: 9
+    kinf_peak: 1.11486
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 1100.29632
+    rho_boc_minus_peak_pcm: -376.49946
+    depletion_slope_pcm_per_gwd: -634.13226
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1119
+    ff_boc: 1.1119
+    ff_window_max: 1.0851
+    kinf_curve: [1.1102, 1.10741, 1.10472, 1.10312, 1.10292, 1.10295, 1.10267, 1.10225, 1.10186, 1.10154, 1.10138, 1.10135, 1.10154, 1.10186, 1.10236, 1.10299, 1.10379, 1.10478, 1.10599, 1.10763, 1.10972, 1.11192, 1.11394, 1.11486, 1.11417, 1.1117, 1.1076, 1.10204, 1.09579, 1.08909, 1.08219, 1.07521, 1.06828, 1.06133, 1.05443, 1.04761, 1.04085, 1.0341, 1.02743, 1.02078, 1.01417, 1.0076, 1.00106, 0.99455, 0.98809, 0.98168, 0.97529, 0.96894, 0.95334, 0.93793, 0.92272, 0.90785, 0.8933, 0.8791, 0.86536, 0.85202, 0.83914, 0.82678, 0.81498, 0.80372, 0.79308, 0.78303]
+    ff_curve: [1.1119, 1.1111, 1.1101, 1.1088, 1.1073, 1.1055, 1.1032, 1.1008, 1.0979, 1.0949, 1.0918, 1.0884, 1.0851, 1.0814, 1.0777, 1.0739, 1.0719, 1.07, 1.0682, 1.0664, 1.0646, 1.0628, 1.0609, 1.059, 1.0569, 1.0551, 1.0535, 1.0526, 1.0517, 1.0508, 1.0499, 1.0492, 1.0485, 1.0478, 1.047, 1.0462, 1.0453, 1.0446, 1.0437, 1.043, 1.0421, 1.0412, 1.0403, 1.0395, 1.0386, 1.0377, 1.0368, 1.036, 1.0336, 1.0314, 1.0291, 1.0269, 1.0248, 1.0227, 1.0211, 1.0206, 1.0199, 1.0192, 1.0185, 1.0178, 1.0169, 1.0162]
+    store_ga80_status: present
+    qc_flags: []
+
+  J2:
+    pair: J1_J2
+    enrichment_segment: 5.1
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.111
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.11102   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.75
+    du: 0.6
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_J2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.75 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.0717
+    kinf10: 1.07769
+    kinf20: 1.10701
+    kinf30: 1.06595
+    bu_k1: 39.82875
+    kinf_eol50: 0.93585
+    kinf_dip: 1.06623
+    bu_dip_gwd: 1
+    kinf_peak: 1.10997
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3695.8696
+    rho_boc_minus_peak_pcm: -3217.16985
+    depletion_slope_pcm_per_gwd: -642.2159
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1424
+    ff_boc: 1.1424
+    ff_window_max: 1.091
+    kinf_curve: [1.0717, 1.06921, 1.06703, 1.06623, 1.06743, 1.06884, 1.07001, 1.07102, 1.07206, 1.07319, 1.07451, 1.07597, 1.07769, 1.07954, 1.08162, 1.08389, 1.08637, 1.08901, 1.09194, 1.09537, 1.09926, 1.10328, 1.10701, 1.10949, 1.10997, 1.10838, 1.10475, 1.09952, 1.09338, 1.08675, 1.07987, 1.07288, 1.06595, 1.05901, 1.05217, 1.04534, 1.03859, 1.03185, 1.0252, 1.01858, 1.01196, 1.00542, 0.99888, 0.99239, 0.98594, 0.97954, 0.97317, 0.96683, 0.95127, 0.93585, 0.92067, 0.90585, 0.89136, 0.87722, 0.86348, 0.85016, 0.83732, 0.82498, 0.81317, 0.80194, 0.7913, 0.78126]
+    ff_curve: [1.1424, 1.1408, 1.1386, 1.1351, 1.1279, 1.1204, 1.1159, 1.112, 1.1077, 1.1036, 1.0995, 1.0951, 1.091, 1.0866, 1.0824, 1.078, 1.0737, 1.0691, 1.0647, 1.0622, 1.0615, 1.0618, 1.0623, 1.0627, 1.0631, 1.0631, 1.0629, 1.0626, 1.062, 1.0611, 1.0603, 1.0595, 1.0587, 1.0579, 1.057, 1.0561, 1.0551, 1.0543, 1.0533, 1.0525, 1.0515, 1.0505, 1.0495, 1.0485, 1.0475, 1.0465, 1.0455, 1.0445, 1.0419, 1.0393, 1.0368, 1.0343, 1.0318, 1.0294, 1.0272, 1.0251, 1.0231, 1.0213, 1.0201, 1.0195, 1.0189, 1.0186]
+    store_ga80_status: present
+    qc_flags: []
+
+  J3:
+    pair: J3_J4
+    enrichment_segment: 5.1
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0847
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.08475   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.55
+    du: 0.8
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 9          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_J3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.55 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 9.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.11104
+    kinf10: 1.10883
+    kinf20: 1.12548
+    kinf30: 1.06569
+    bu_k1: 39.78899
+    kinf_eol50: 0.93542
+    kinf_dip: 1.10446
+    bu_dip_gwd: 1
+    kinf_peak: 1.12554
+    bu_peak_gwd: 19
+    reactivity_swing_pcm: 1695.74163
+    rho_boc_minus_peak_pcm: -1159.51768
+    depletion_slope_pcm_per_gwd: -632.88128
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1201
+    ff_boc: 1.1201
+    ff_window_max: 1.0849
+    kinf_curve: [1.11104, 1.10832, 1.10576, 1.10446, 1.10489, 1.10551, 1.10585, 1.10605, 1.10632, 1.10669, 1.10721, 1.10792, 1.10883, 1.10991, 1.11122, 1.11272, 1.11447, 1.11648, 1.11887, 1.12151, 1.12399, 1.12554, 1.12548, 1.1235, 1.11958, 1.11416, 1.10783, 1.10105, 1.09398, 1.08687, 1.07972, 1.07268, 1.06569, 1.05881, 1.05194, 1.04517, 1.03839, 1.03168, 1.025, 1.01835, 1.01173, 1.00516, 0.99862, 0.99211, 0.98564, 0.97922, 0.97282, 0.96646, 0.95084, 0.93542, 0.9203, 0.90547, 0.89101, 0.87696, 0.86329, 0.85006, 0.83732, 0.82508, 0.81338, 0.80229, 0.79177, 0.78185]
+    ff_curve: [1.1201, 1.1192, 1.1182, 1.1165, 1.1129, 1.1092, 1.1055, 1.1018, 1.0979, 1.0942, 1.0904, 1.087, 1.0849, 1.0828, 1.0806, 1.0786, 1.0764, 1.0743, 1.0723, 1.0702, 1.0681, 1.066, 1.0639, 1.062, 1.0603, 1.0589, 1.0577, 1.057, 1.0561, 1.0551, 1.0542, 1.0534, 1.0526, 1.0517, 1.0508, 1.0498, 1.0489, 1.0479, 1.047, 1.0461, 1.045, 1.0441, 1.043, 1.0421, 1.0411, 1.04, 1.039, 1.038, 1.0354, 1.0329, 1.0304, 1.0279, 1.0255, 1.0233, 1.0223, 1.0215, 1.0207, 1.0198, 1.0189, 1.018, 1.0171, 1.0162]
+    store_ga80_status: present
+    qc_flags: []
+
+  J4:
+    pair: J3_J4
+    enrichment_segment: 5.1
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0669
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.06695   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.35
+    enr_zone: 4.55
+    du: 0.8
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 9          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_J4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.35 w/o"
+      2: "zoning 저농축 4.55 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 9.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.07275
+    kinf10: 1.08653
+    kinf20: 1.12124
+    kinf30: 1.06355
+    bu_k1: 39.47095
+    kinf_eol50: 0.93342
+    kinf_dip: 1.06789
+    bu_dip_gwd: 1
+    kinf_peak: 1.12124
+    bu_peak_gwd: 20
+    reactivity_swing_pcm: 4455.63207
+    rho_boc_minus_peak_pcm: -4031.39245
+    depletion_slope_pcm_per_gwd: -641.2052
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1452
+    ff_boc: 1.1452
+    ff_window_max: 1.0935
+    kinf_curve: [1.07275, 1.07036, 1.06836, 1.06789, 1.06984, 1.07197, 1.07386, 1.07563, 1.07747, 1.07944, 1.0816, 1.08394, 1.08653, 1.08928, 1.09225, 1.09554, 1.09914, 1.10311, 1.10758, 1.11228, 1.11672, 1.11998, 1.12124, 1.12019, 1.11682, 1.11167, 1.10539, 1.09863, 1.09159, 1.08454, 1.07747, 1.07048, 1.06355, 1.05668, 1.04985, 1.04305, 1.03628, 1.02958, 1.02289, 1.01627, 1.00965, 1.00308, 0.99654, 0.99005, 0.98358, 0.97717, 0.97078, 0.96443, 0.9488, 0.93342, 0.91828, 0.90348, 0.88902, 0.87492, 0.86126, 0.84804, 0.83529, 0.82307, 0.8114, 0.8003, 0.7898, 0.77991]
+    ff_curve: [1.1452, 1.1435, 1.1413, 1.1374, 1.1304, 1.126, 1.1216, 1.1171, 1.1123, 1.1077, 1.1031, 1.0983, 1.0935, 1.0887, 1.0839, 1.0791, 1.0741, 1.0693, 1.0679, 1.0682, 1.0686, 1.069, 1.0694, 1.0694, 1.0691, 1.0685, 1.0677, 1.067, 1.066, 1.065, 1.064, 1.0631, 1.0622, 1.0612, 1.0602, 1.0592, 1.058, 1.057, 1.0559, 1.0549, 1.0537, 1.0526, 1.0515, 1.0504, 1.0493, 1.0482, 1.0471, 1.0459, 1.043, 1.0402, 1.0374, 1.0346, 1.0318, 1.0293, 1.0269, 1.0246, 1.0225, 1.0214, 1.0207, 1.0199, 1.0191, 1.0183]
+    store_ga80_status: present
+    qc_flags: []
+
+  J5:
+    pair: J5_J6
+    enrichment_segment: 5.1
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.1356
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.13559   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.4
+    enr_zone: 4.7
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.1
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_J5.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 1]
+      - [3, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 3, 2, 2, 3]
+      - [1, 1, 1, 1, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.40 w/o"
+      2: "zoning 저농축 4.70 w/o"
+      3: "Gd봉 U4.10 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.1157
+    kinf10: 1.10218
+    kinf20: 1.11219
+    kinf30: 1.0684
+    bu_k1: 40.23385
+    kinf_eol50: 0.93842
+    kinf_dip: 1.10211
+    bu_dip_gwd: 11
+    kinf_peak: 1.11336
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 916.83665
+    rho_boc_minus_peak_pcm: 188.37914
+    depletion_slope_pcm_per_gwd: -630.64052
+    kconv_is_monotone: 0
+    ff_pin_max: 1.135
+    ff_boc: 1.135
+    ff_window_max: 1.0873
+    kinf_curve: [1.1157, 1.11282, 1.10994, 1.10806, 1.10734, 1.10683, 1.10607, 1.10516, 1.10429, 1.10351, 1.1029, 1.10243, 1.10218, 1.10211, 1.1022, 1.10249, 1.10296, 1.10375, 1.10477, 1.10621, 1.10807, 1.11011, 1.11219, 1.11336, 1.11309, 1.11113, 1.10743, 1.10216, 1.09593, 1.08918, 1.08223, 1.07528, 1.0684, 1.06153, 1.05472, 1.04795, 1.04122, 1.0345, 1.02784, 1.02121, 1.0146, 1.00803, 1.00152, 0.99502, 0.98857, 0.98217, 0.97578, 0.96944, 0.95382, 0.93842, 0.92328, 0.90846, 0.89396, 0.8798, 0.86602, 0.85271, 0.8399, 0.82754, 0.81572, 0.80441, 0.79378, 0.78371]
+    ff_curve: [1.135, 1.1338, 1.1323, 1.1298, 1.1248, 1.1197, 1.1146, 1.1095, 1.1043, 1.0993, 1.0942, 1.0901, 1.0873, 1.0846, 1.0815, 1.0788, 1.0757, 1.0727, 1.0697, 1.0666, 1.0636, 1.0607, 1.0581, 1.0572, 1.0599, 1.0628, 1.0653, 1.067, 1.0675, 1.0674, 1.0666, 1.0659, 1.0651, 1.0641, 1.0632, 1.0622, 1.0611, 1.0601, 1.059, 1.0581, 1.0569, 1.0558, 1.0547, 1.0536, 1.0525, 1.0514, 1.0503, 1.0491, 1.0462, 1.0433, 1.0403, 1.0375, 1.0346, 1.0319, 1.0293, 1.0268, 1.0245, 1.0223, 1.0204, 1.0187, 1.0173, 1.0163]
+    store_ga80_status: present
+    qc_flags: []
+
+  J6:
+    pair: J5_J6
+    enrichment_segment: 5.1
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.1136
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.11356   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.4
+    enr_zone: 4.7
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.1
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_J6.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.40 w/o"
+      2: "zoning 저농축 4.70 w/o"
+      3: "Gd봉 U4.10 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.07205
+    kinf10: 1.07774
+    kinf20: 1.10745
+    kinf30: 1.0661
+    bu_k1: 39.85321
+    kinf_eol50: 0.93604
+    kinf_dip: 1.06654
+    bu_dip_gwd: 1
+    kinf_peak: 1.1103
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3695.38614
+    rho_boc_minus_peak_pcm: -3213.48338
+    depletion_slope_pcm_per_gwd: -641.89329
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1453
+    ff_boc: 1.1453
+    ff_window_max: 1.0961
+    kinf_curve: [1.07205, 1.06956, 1.06736, 1.06654, 1.06769, 1.06906, 1.07019, 1.07117, 1.07218, 1.07329, 1.0746, 1.07604, 1.07774, 1.0796, 1.08166, 1.08393, 1.08644, 1.08916, 1.0922, 1.09572, 1.09968, 1.10373, 1.10745, 1.10987, 1.1103, 1.10863, 1.10494, 1.09967, 1.09352, 1.0869, 1.08003, 1.07304, 1.0661, 1.05915, 1.05231, 1.04548, 1.03873, 1.032, 1.02534, 1.01873, 1.01211, 1.00558, 0.99904, 0.99255, 0.9861, 0.97971, 0.97335, 0.96701, 0.95143, 0.93604, 0.92088, 0.90608, 0.89158, 0.87744, 0.86371, 0.85041, 0.83756, 0.82523, 0.81344, 0.80221, 0.79156, 0.78151]
+    ff_curve: [1.1453, 1.1436, 1.1415, 1.138, 1.1309, 1.1251, 1.1212, 1.1172, 1.113, 1.1088, 1.1046, 1.1003, 1.0961, 1.0917, 1.0873, 1.083, 1.0785, 1.0741, 1.0697, 1.0671, 1.0672, 1.0676, 1.0681, 1.0686, 1.0689, 1.0689, 1.0687, 1.0683, 1.0676, 1.0666, 1.0657, 1.0648, 1.0639, 1.0629, 1.062, 1.061, 1.0599, 1.0589, 1.0579, 1.0569, 1.0557, 1.0546, 1.0536, 1.0525, 1.0514, 1.0503, 1.0492, 1.048, 1.0452, 1.0424, 1.0396, 1.0368, 1.034, 1.0315, 1.029, 1.0268, 1.0245, 1.0225, 1.0218, 1.0211, 1.0203, 1.0195]
+    store_ga80_status: present
+    qc_flags: []
+
+  J7:
+    pair: J7_J8
+    enrichment_segment: 5.1
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.1034
+    u_avg_source: sheet
+    # --- pin zoning -------------------------------------------------
+    enr_main: null
+    enr_zone: null
+    du: 0.6
+    n_main_pin: null
+    zone_pin_count: null
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: null          # Gd2O3 wt%
+    gd_u_enr: null
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: null
+    n_guide_tube: null
+    decart_deck: null
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.14651
+    kinf10: 1.10994
+    kinf20: 1.12463
+    kinf30: 1.06717
+    bu_k1: 40.00769
+    kinf_eol50: 0.93679
+    kinf_dip: 1.10922
+    bu_dip_gwd: 7
+    kinf_peak: 1.12463
+    bu_peak_gwd: 20
+    reactivity_swing_pcm: 1235.30808
+    rho_boc_minus_peak_pcm: 1696.9139
+    depletion_slope_pcm_per_gwd: -636.91331
+    kconv_is_monotone: 0
+    ff_pin_max: 1.132
+    ff_boc: 1.132
+    ff_window_max: null
+    kinf_curve: [1.14651, 1.11506, 1.11215, 1.11051, 1.11028, 1.1103, 1.11004, 1.10969, 1.10939, 1.10922, 1.10925, 1.10948, 1.10994, 1.11062, 1.11155, 1.11274, 1.1142, 1.11597, 1.1181, 1.12054, 1.12284, 1.12438, 1.12463, 1.12307, 1.11969, 1.11479, 1.10878, 1.10212, 1.09518, 1.08815, 1.08112, 1.07412, 1.06717, 1.06027, 1.05341, 1.04661, 1.03984, 1.03311, 1.02643, 1.01978, 1.01317, 1.00659, 1.00005, 0.99355, 0.98708, 0.98066, 0.97426, 0.96791, 0.95222, 0.93679, 0.92165, 0.9068, 0.8923, 0.87817, 0.86445, 0.85116, 0.83837, 0.82608, 0.81434, 0.80317, 0.7926, 0.78263]
+    ff_curve: [1.132, 1.1282, 1.1265, 1.1239, 1.1187, 1.1134, 1.1081, 1.1028, 1.0975, 1.0929, 1.0899, 1.0866, 1.0831, 1.0796, 1.0761, 1.073, 1.07, 1.0669, 1.0647, 1.0632, 1.0613, 1.0588, 1.0577, 1.0606, 1.0633, 1.0652, 1.0659, 1.0659, 1.0653, 1.0646, 1.0637, 1.0628, 1.0619, 1.061, 1.06, 1.059, 1.0581, 1.057, 1.056, 1.055, 1.0539, 1.0529, 1.0518, 1.0507, 1.0496, 1.0485, 1.0474, 1.0463, 1.0435, 1.0406, 1.0378, 1.035, 1.0323, 1.0296, 1.0271, 1.0247, 1.0225, 1.0205, 1.0187, 1.0171, 1.0158, 1.0173]
+    store_ga80_status: absent
+    qc_flags: [no_decart_deck__pin_zoning_and_gd_design_unknown]
+
+  J8:
+    pair: J7_J8
+    enrichment_segment: 5.1
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.0805
+    u_avg_source: sheet
+    # --- pin zoning -------------------------------------------------
+    enr_main: null
+    enr_zone: null
+    du: 0.6
+    n_main_pin: null
+    zone_pin_count: null
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: null          # Gd2O3 wt%
+    gd_u_enr: null
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: null
+    n_guide_tube: null
+    decart_deck: null
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.10191
+    kinf10: 1.08739
+    kinf20: 1.12221
+    kinf30: 1.06459
+    bu_k1: 39.6319
+    kinf_eol50: 0.93446
+    kinf_dip: 1.0703
+    bu_dip_gwd: 1
+    kinf_peak: 1.12221
+    bu_peak_gwd: 20
+    reactivity_swing_pcm: 4321.86671
+    rho_boc_minus_peak_pcm: -1641.63189
+    depletion_slope_pcm_per_gwd: -639.95076
+    kconv_is_monotone: 0
+    ff_pin_max: 1.145
+    ff_boc: 1.145
+    ff_window_max: null
+    kinf_curve: [1.10191, 1.07306, 1.07088, 1.0703, 1.07201, 1.07397, 1.07564, 1.07724, 1.07891, 1.08072, 1.08274, 1.08495, 1.08739, 1.09007, 1.09298, 1.09616, 1.09965, 1.10349, 1.10774, 1.11238, 1.117, 1.12057, 1.12221, 1.1214, 1.11809, 1.11285, 1.10649, 1.09964, 1.09261, 1.08556, 1.07852, 1.07153, 1.06459, 1.0577, 1.05086, 1.04406, 1.03731, 1.03059, 1.02392, 1.01729, 1.01069, 1.00412, 0.9976, 0.99111, 0.98465, 0.97824, 0.97186, 0.96551, 0.94986, 0.93446, 0.91934, 0.90453, 0.89006, 0.87596, 0.86227, 0.84902, 0.83625, 0.824, 0.81229, 0.80115, 0.79061, 0.78067]
+    ff_curve: [1.145, 1.1396, 1.1372, 1.1335, 1.1259, 1.1197, 1.1157, 1.1115, 1.1073, 1.1029, 1.0985, 1.0941, 1.0896, 1.085, 1.0805, 1.076, 1.0714, 1.0672, 1.0657, 1.0654, 1.066, 1.0667, 1.0672, 1.0674, 1.0673, 1.0669, 1.0663, 1.0655, 1.0646, 1.0637, 1.0628, 1.0619, 1.061, 1.06, 1.059, 1.0581, 1.0571, 1.056, 1.055, 1.054, 1.0529, 1.0519, 1.0508, 1.0498, 1.0487, 1.0476, 1.0465, 1.0454, 1.0426, 1.0399, 1.0372, 1.0345, 1.0319, 1.0294, 1.027, 1.0248, 1.0227, 1.0209, 1.0202, 1.0196, 1.0188, 1.0181]
+    store_ga80_status: absent
+    qc_flags: [no_decart_deck__pin_zoning_and_gd_design_unknown]
+
+  K1:
+    pair: K1_K2
+    enrichment_segment: 5.2
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.2441
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.24407   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.5
+    enr_zone: 4.8
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_K1.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.50 w/o"
+      2: "zoning 저농축 4.80 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.11657
+    kinf10: 1.1061
+    kinf20: 1.11651
+    kinf30: 1.07418
+    bu_k1: 41.14821
+    kinf_eol50: 0.94455
+    kinf_dip: 1.1061
+    bu_dip_gwd: 9
+    kinf_peak: 1.11768
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 936.69173
+    rho_boc_minus_peak_pcm: -88.94459
+    depletion_slope_pcm_per_gwd: -620.25989
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1158
+    ff_boc: 1.1158
+    ff_window_max: 1.0838
+    kinf_curve: [1.11657, 1.1138, 1.11106, 1.10933, 1.10887, 1.10871, 1.10828, 1.1077, 1.10713, 1.10664, 1.10633, 1.1061, 1.1061, 1.10626, 1.10657, 1.107, 1.10758, 1.10836, 1.10934, 1.11071, 1.11253, 1.11449, 1.11651, 1.11768, 1.11749, 1.11564, 1.11215, 1.10713, 1.1012, 1.09474, 1.08795, 1.08107, 1.07418, 1.0673, 1.06046, 1.05368, 1.04698, 1.04027, 1.03366, 1.02703, 1.02047, 1.01394, 1.00744, 1.00095, 0.99454, 0.98817, 0.9818, 0.97547, 0.95992, 0.94455, 0.92936, 0.91449, 0.8999, 0.88567, 0.87183, 0.85836, 0.84534, 0.8328, 0.82079, 0.8093, 0.79839, 0.78806]
+    ff_curve: [1.1158, 1.115, 1.1141, 1.1128, 1.1097, 1.1064, 1.1032, 1.1001, 1.0968, 1.0935, 1.0902, 1.0868, 1.0838, 1.0819, 1.0801, 1.0783, 1.0764, 1.0745, 1.0726, 1.0709, 1.069, 1.0672, 1.0653, 1.0635, 1.0614, 1.0594, 1.0578, 1.0566, 1.0557, 1.0546, 1.0537, 1.053, 1.0522, 1.0514, 1.0506, 1.0498, 1.0489, 1.0481, 1.0472, 1.0464, 1.0455, 1.0445, 1.0436, 1.0427, 1.0418, 1.0408, 1.0399, 1.039, 1.0366, 1.0341, 1.0317, 1.0294, 1.027, 1.0248, 1.0229, 1.0223, 1.0216, 1.0208, 1.0201, 1.0192, 1.0183, 1.0175]
+    store_ga80_status: present
+    qc_flags: []
+
+  K2:
+    pair: K1_K2
+    enrichment_segment: 5.2
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.2237
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.22373   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.5
+    enr_zone: 4.8
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_K2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.50 w/o"
+      2: "zoning 저농축 4.80 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.07807
+    kinf10: 1.0821
+    kinf20: 1.10906
+    kinf30: 1.07181
+    bu_k1: 40.79444
+    kinf_eol50: 0.94234
+    kinf_dip: 1.07241
+    bu_dip_gwd: 1
+    kinf_peak: 1.11286
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3389.35562
+    rho_boc_minus_peak_pcm: -2899.79259
+    depletion_slope_pcm_per_gwd: -628.97746
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1429
+    ff_boc: 1.1429
+    ff_window_max: 1.0954
+    kinf_curve: [1.07807, 1.0756, 1.07337, 1.07241, 1.07338, 1.07459, 1.07558, 1.07641, 1.07727, 1.07821, 1.07936, 1.08059, 1.0821, 1.08376, 1.0856, 1.08766, 1.08987, 1.09229, 1.09494, 1.09806, 1.1016, 1.10536, 1.10906, 1.11181, 1.11286, 1.11193, 1.10901, 1.10437, 1.09862, 1.09228, 1.08558, 1.07869, 1.07181, 1.06492, 1.05811, 1.05132, 1.04462, 1.03793, 1.03131, 1.02472, 1.01816, 1.01164, 1.00514, 0.99867, 0.99227, 0.9859, 0.97956, 0.97324, 0.95771, 0.94234, 0.92716, 0.91234, 0.89781, 0.8836, 0.86977, 0.85632, 0.84333, 0.83082, 0.81882, 0.80736, 0.79645, 0.78614]
+    ff_curve: [1.1429, 1.1413, 1.1393, 1.1358, 1.1288, 1.1238, 1.12, 1.1161, 1.1119, 1.1079, 1.1037, 1.0995, 1.0954, 1.0911, 1.0867, 1.0825, 1.0782, 1.0739, 1.0695, 1.0657, 1.0658, 1.0661, 1.0665, 1.0668, 1.0672, 1.0672, 1.0671, 1.0668, 1.0662, 1.0653, 1.0644, 1.0636, 1.0628, 1.0619, 1.061, 1.0601, 1.059, 1.0581, 1.0571, 1.0562, 1.0551, 1.0541, 1.0531, 1.052, 1.051, 1.0499, 1.0489, 1.0478, 1.0451, 1.0423, 1.0396, 1.037, 1.0342, 1.0317, 1.0293, 1.0272, 1.025, 1.0229, 1.0218, 1.0211, 1.0204, 1.0196]
+    store_ga80_status: present
+    qc_flags: []
+
+  K3:
+    pair: K3_K4
+    enrichment_segment: 5.2
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.1898
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.18983   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.45
+    enr_zone: 4.75
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.2
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_K3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.45 w/o"
+      2: "zoning 저농축 4.75 w/o"
+      3: "Gd봉 U4.20 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.11365
+    kinf10: 1.1039
+    kinf20: 1.11547
+    kinf30: 1.07141
+    bu_k1: 40.68308
+    kinf_eol50: 0.94143
+    kinf_dip: 1.10381
+    bu_dip_gwd: 9
+    kinf_peak: 1.11651
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 1030.49711
+    rho_boc_minus_peak_pcm: -230.01422
+    depletion_slope_pcm_per_gwd: -626.88985
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1165
+    ff_boc: 1.1165
+    ff_window_max: 1.0841
+    kinf_curve: [1.11365, 1.11087, 1.10815, 1.10647, 1.10611, 1.10602, 1.10564, 1.10512, 1.10462, 1.10421, 1.10396, 1.10381, 1.1039, 1.10414, 1.10455, 1.10509, 1.1058, 1.10671, 1.10784, 1.10938, 1.11136, 1.11345, 1.11547, 1.11651, 1.11606, 1.11388, 1.11007, 1.10477, 1.09867, 1.0921, 1.08526, 1.07832, 1.07141, 1.06449, 1.05763, 1.05083, 1.04409, 1.03737, 1.03072, 1.02409, 1.0175, 1.01095, 1.00444, 0.99794, 0.99151, 0.98512, 0.97874, 0.97241, 0.95682, 0.94143, 0.92624, 0.91138, 0.89681, 0.8826, 0.86881, 0.85541, 0.84246, 0.83001, 0.81811, 0.80672, 0.79594, 0.78574]
+    ff_curve: [1.1165, 1.1157, 1.1147, 1.1134, 1.1103, 1.107, 1.1038, 1.1006, 1.0972, 1.0939, 1.0906, 1.0872, 1.0841, 1.0823, 1.0804, 1.0786, 1.0767, 1.0748, 1.0729, 1.0712, 1.0693, 1.0675, 1.0656, 1.0637, 1.0616, 1.0597, 1.0581, 1.057, 1.056, 1.055, 1.0541, 1.0534, 1.0526, 1.0518, 1.051, 1.0501, 1.0492, 1.0483, 1.0474, 1.0466, 1.0457, 1.0447, 1.0438, 1.0429, 1.0419, 1.0409, 1.04, 1.0391, 1.0366, 1.0342, 1.0317, 1.0293, 1.0269, 1.0248, 1.0231, 1.0224, 1.0216, 1.0208, 1.02, 1.0191, 1.0182, 1.0174]
+    store_ga80_status: present
+    qc_flags: []
+
+  K4:
+    pair: K3_K4
+    enrichment_segment: 5.2
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.1686
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.16864   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.45
+    enr_zone: 4.75
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.2
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_K4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.45 w/o"
+      2: "zoning 저농축 4.75 w/o"
+      3: "Gd봉 U4.20 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.07507
+    kinf10: 1.07993
+    kinf20: 1.10826
+    kinf30: 1.06898
+    bu_k1: 40.32562
+    kinf_eol50: 0.9392
+    kinf_dip: 1.06949
+    bu_dip_gwd: 1
+    kinf_peak: 1.11161
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3542.90241
+    rho_boc_minus_peak_pcm: -3057.59074
+    depletion_slope_pcm_per_gwd: -635.4385
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1441
+    ff_boc: 1.1441
+    ff_window_max: 1.0957
+    kinf_curve: [1.07507, 1.0726, 1.07039, 1.06949, 1.07055, 1.07184, 1.0729, 1.07381, 1.07474, 1.07576, 1.07698, 1.07832, 1.07993, 1.08168, 1.08363, 1.08579, 1.08815, 1.09072, 1.09356, 1.09688, 1.10063, 1.10454, 1.10826, 1.11086, 1.11161, 1.11032, 1.10701, 1.10205, 1.0961, 1.08961, 1.08283, 1.07589, 1.06898, 1.06206, 1.05523, 1.04842, 1.04169, 1.03498, 1.02834, 1.02174, 1.01515, 1.00863, 1.00211, 0.99563, 0.9892, 0.98282, 0.97647, 0.97014, 0.95459, 0.9392, 0.92403, 0.90922, 0.89471, 0.88053, 0.86674, 0.85337, 0.84045, 0.82802, 0.81613, 0.80477, 0.79399, 0.78382]
+    ff_curve: [1.1441, 1.1424, 1.1404, 1.1369, 1.1298, 1.1245, 1.1206, 1.1167, 1.1124, 1.1083, 1.1042, 1.0999, 1.0957, 1.0914, 1.087, 1.0827, 1.0783, 1.074, 1.0696, 1.0664, 1.0665, 1.0668, 1.0673, 1.0677, 1.068, 1.0681, 1.0679, 1.0675, 1.0669, 1.066, 1.0651, 1.0642, 1.0634, 1.0624, 1.0615, 1.0606, 1.0595, 1.0585, 1.0575, 1.0566, 1.0554, 1.0544, 1.0533, 1.0523, 1.0512, 1.0501, 1.049, 1.0479, 1.0452, 1.0423, 1.0396, 1.0369, 1.0341, 1.0316, 1.0292, 1.027, 1.0248, 1.0226, 1.0218, 1.0211, 1.0204, 1.0196]
+    store_ga80_status: present
+    qc_flags: []
+
+  K5:
+    pair: K5_K6
+    enrichment_segment: 5.2
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.239
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.23898   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.55
+    enr_zone: 4.85
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.7
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_K5.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.55 w/o"
+      2: "zoning 저농축 4.85 w/o"
+      3: "Gd봉 U3.70 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.11766
+    kinf10: 1.10596
+    kinf20: 1.11728
+    kinf30: 1.07427
+    bu_k1: 41.14019
+    kinf_eol50: 0.94444
+    kinf_dip: 1.10596
+    bu_dip_gwd: 10
+    kinf_peak: 1.1184
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 1005.73555
+    rho_boc_minus_peak_pcm: -59.20043
+    depletion_slope_pcm_per_gwd: -621.55808
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1181
+    ff_boc: 1.1181
+    ff_window_max: 1.0881
+    kinf_curve: [1.11766, 1.11487, 1.11208, 1.11026, 1.10963, 1.10932, 1.10874, 1.10803, 1.10734, 1.10675, 1.10634, 1.10604, 1.10596, 1.10611, 1.10644, 1.10692, 1.10759, 1.10853, 1.10969, 1.11122, 1.1132, 1.11525, 1.11728, 1.1184, 1.11811, 1.11611, 1.11245, 1.10731, 1.10134, 1.09487, 1.08809, 1.0812, 1.07427, 1.06734, 1.06048, 1.05368, 1.04695, 1.04023, 1.0336, 1.02698, 1.02042, 1.01388, 1.00739, 1.0009, 0.99448, 0.9881, 0.98174, 0.97541, 0.9598, 0.94444, 0.92928, 0.91441, 0.89981, 0.88557, 0.87174, 0.85829, 0.84528, 0.83275, 0.82077, 0.80929, 0.79839, 0.78808]
+    ff_curve: [1.1181, 1.1174, 1.1165, 1.1153, 1.1124, 1.1093, 1.1063, 1.1033, 1.1001, 1.097, 1.0938, 1.0905, 1.0881, 1.0864, 1.0847, 1.083, 1.0812, 1.0795, 1.0778, 1.0762, 1.0745, 1.0728, 1.0711, 1.0693, 1.0672, 1.0654, 1.0637, 1.0625, 1.0615, 1.0604, 1.0595, 1.0587, 1.0579, 1.0569, 1.0561, 1.0552, 1.0542, 1.0533, 1.0523, 1.0514, 1.0504, 1.0494, 1.0484, 1.0474, 1.0464, 1.0453, 1.0443, 1.0433, 1.0406, 1.038, 1.0354, 1.0328, 1.0302, 1.0278, 1.0255, 1.0247, 1.0238, 1.0228, 1.0219, 1.0209, 1.0198, 1.0189]
+    store_ga80_status: present
+    qc_flags: []
+
+  K6:
+    pair: K5_K6
+    enrichment_segment: 5.2
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.2076
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.20763   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.55
+    enr_zone: 4.85
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.7
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_K6.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.55 w/o"
+      2: "zoning 저농축 4.85 w/o"
+      3: "Gd봉 U3.70 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.07903
+    kinf10: 1.08169
+    kinf20: 1.10969
+    kinf30: 1.07132
+    bu_k1: 40.71053
+    kinf_eol50: 0.94176
+    kinf_dip: 1.07319
+    bu_dip_gwd: 1
+    kinf_peak: 1.11329
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3356.28976
+    rho_boc_minus_peak_pcm: -2851.9738
+    depletion_slope_pcm_per_gwd: -630.99707
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1449
+    ff_boc: 1.1449
+    ff_window_max: 1.1001
+    kinf_curve: [1.07903, 1.07653, 1.07425, 1.07319, 1.07396, 1.075, 1.07583, 1.07651, 1.07723, 1.07807, 1.0791, 1.08027, 1.08169, 1.08333, 1.08516, 1.08723, 1.08954, 1.09214, 1.09503, 1.09838, 1.10212, 1.10599, 1.10969, 1.11237, 1.11329, 1.1122, 1.10912, 1.10435, 1.09851, 1.09209, 1.08528, 1.07829, 1.07132, 1.06439, 1.05758, 1.05079, 1.04408, 1.03739, 1.03076, 1.02418, 1.01761, 1.01109, 1.00459, 0.99813, 0.99172, 0.98534, 0.979, 0.97268, 0.95712, 0.94176, 0.92662, 0.91184, 0.89731, 0.88311, 0.8693, 0.85588, 0.8429, 0.83041, 0.81845, 0.80701, 0.79611, 0.78583]
+    ff_curve: [1.1449, 1.1434, 1.1413, 1.138, 1.1312, 1.1274, 1.1238, 1.1201, 1.1161, 1.1122, 1.1083, 1.1042, 1.1001, 1.096, 1.0918, 1.0877, 1.0834, 1.0792, 1.0749, 1.0727, 1.0731, 1.0736, 1.0742, 1.0749, 1.0754, 1.0755, 1.0753, 1.0749, 1.0743, 1.0732, 1.0722, 1.0713, 1.0703, 1.0692, 1.0682, 1.0671, 1.0659, 1.0648, 1.0637, 1.0626, 1.0614, 1.0602, 1.059, 1.0579, 1.0567, 1.0555, 1.0543, 1.053, 1.05, 1.0469, 1.0438, 1.0408, 1.0377, 1.0348, 1.0321, 1.0296, 1.027, 1.0249, 1.024, 1.0231, 1.0222, 1.0213]
+    store_ga80_status: present
+    qc_flags: []
+
+  L1:
+    pair: L1_L2
+    enrichment_segment: 5.3
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.2898
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.28983   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.55
+    enr_zone: 4.85
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_L1.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.55 w/o"
+      2: "zoning 저농축 4.85 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.11919
+    kinf10: 1.10796
+    kinf20: 1.11749
+    kinf30: 1.07655
+    bu_k1: 41.54844
+    kinf_eol50: 0.94718
+    kinf_dip: 1.10796
+    bu_dip_gwd: 10
+    kinf_peak: 1.11875
+    bu_peak_gwd: 21
+    reactivity_swing_pcm: 870.49106
+    rho_boc_minus_peak_pcm: 35.14114
+    depletion_slope_pcm_per_gwd: -614.75162
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1156
+    ff_boc: 1.1156
+    ff_window_max: 1.0841
+    kinf_curve: [1.11919, 1.11642, 1.11367, 1.11187, 1.11131, 1.11108, 1.11057, 1.10992, 1.10929, 1.10872, 1.10834, 1.10803, 1.10796, 1.10804, 1.10827, 1.10863, 1.10912, 1.1098, 1.11069, 1.11194, 1.11363, 1.11549, 1.11749, 1.11875, 1.11875, 1.11713, 1.11391, 1.10911, 1.10332, 1.09697, 1.09025, 1.08341, 1.07655, 1.06969, 1.06287, 1.05611, 1.04943, 1.04273, 1.03614, 1.02952, 1.02299, 1.01646, 1.00998, 1.00351, 0.99711, 0.99075, 0.98439, 0.97807, 0.96254, 0.94718, 0.93199, 0.91712, 0.90252, 0.88827, 0.87439, 0.86088, 0.8478, 0.8352, 0.8231, 0.81152, 0.8005, 0.79006]
+    ff_curve: [1.1156, 1.1148, 1.1139, 1.1126, 1.1096, 1.1064, 1.1032, 1.1001, 1.0968, 1.0936, 1.0904, 1.087, 1.0841, 1.0823, 1.0805, 1.0787, 1.0768, 1.0749, 1.0731, 1.0713, 1.0696, 1.0678, 1.0659, 1.0641, 1.062, 1.0601, 1.0584, 1.0572, 1.0562, 1.0551, 1.0542, 1.0535, 1.0527, 1.0519, 1.0511, 1.0503, 1.0494, 1.0486, 1.0477, 1.047, 1.046, 1.0451, 1.0441, 1.0433, 1.0423, 1.0414, 1.0404, 1.0395, 1.0371, 1.0347, 1.0323, 1.0299, 1.0275, 1.0253, 1.0232, 1.0226, 1.0219, 1.0211, 1.0203, 1.0195, 1.0186, 1.0177]
+    store_ga80_status: present
+    qc_flags: []
+
+  L2:
+    pair: L1_L2
+    enrichment_segment: 5.3
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.2686
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.26864   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.55
+    enr_zone: 4.85
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_L2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.55 w/o"
+      2: "zoning 저농축 4.85 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.08074
+    kinf10: 1.08391
+    kinf20: 1.10982
+    kinf30: 1.07414
+    bu_k1: 41.18623
+    kinf_eol50: 0.94493
+    kinf_dip: 1.075
+    bu_dip_gwd: 1
+    kinf_peak: 1.11392
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3250.20209
+    rho_boc_minus_peak_pcm: -2756.13924
+    depletion_slope_pcm_per_gwd: -623.64717
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1422
+    ff_boc: 1.1422
+    ff_window_max: 1.0958
+    kinf_curve: [1.08074, 1.07828, 1.07603, 1.075, 1.07585, 1.07699, 1.07789, 1.07864, 1.07942, 1.08027, 1.08134, 1.08248, 1.08391, 1.08547, 1.08722, 1.0892, 1.0913, 1.09362, 1.09615, 1.09912, 1.10252, 1.10616, 1.10982, 1.11266, 1.11392, 1.11327, 1.11065, 1.10627, 1.10069, 1.09448, 1.08785, 1.08102, 1.07414, 1.06729, 1.06049, 1.05372, 1.04703, 1.04036, 1.03376, 1.02718, 1.02063, 1.01412, 1.00764, 1.00119, 0.9948, 0.98844, 0.98211, 0.9758, 0.96029, 0.94493, 0.92976, 0.91493, 0.90039, 0.88615, 0.87228, 0.85879, 0.84575, 0.83316, 0.82108, 0.80953, 0.79853, 0.78811]
+    ff_curve: [1.1422, 1.1406, 1.1386, 1.1352, 1.1283, 1.1238, 1.12, 1.1162, 1.1121, 1.1081, 1.104, 1.0998, 1.0958, 1.0915, 1.0872, 1.0831, 1.0787, 1.0745, 1.0702, 1.0662, 1.0662, 1.0665, 1.0669, 1.0672, 1.0675, 1.0676, 1.0675, 1.0673, 1.0667, 1.0659, 1.065, 1.0642, 1.0634, 1.0625, 1.0616, 1.0607, 1.0596, 1.0587, 1.0577, 1.0568, 1.0557, 1.0547, 1.0537, 1.0527, 1.0516, 1.0505, 1.0495, 1.0484, 1.0457, 1.0429, 1.0402, 1.0376, 1.0348, 1.0322, 1.0298, 1.0278, 1.0255, 1.0234, 1.0221, 1.0214, 1.0207, 1.0199]
+    store_ga80_status: present
+    qc_flags: []
+
+  L3:
+    pair: L3_L4
+    enrichment_segment: 5.3
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.3356
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.33559   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.6
+    enr_zone: 4.9
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_L3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.60 w/o"
+      2: "zoning 저농축 4.90 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.12178
+    kinf10: 1.10981
+    kinf20: 1.11847
+    kinf30: 1.0789
+    bu_k1: 41.94828
+    kinf_eol50: 0.94981
+    kinf_dip: 1.10981
+    bu_dip_gwd: 10
+    kinf_peak: 1.11996
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 816.61038
+    rho_boc_minus_peak_pcm: 144.86424
+    depletion_slope_pcm_per_gwd: -618.23754
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1154
+    ff_boc: 1.1154
+    ff_window_max: 1.0844
+    kinf_curve: [1.12178, 1.11902, 1.11624, 1.11439, 1.11373, 1.11342, 1.11285, 1.11213, 1.11143, 1.11079, 1.11034, 1.10996, 1.10981, 1.10982, 1.10998, 1.11026, 1.11066, 1.11125, 1.11205, 1.11318, 1.11475, 1.11651, 1.11847, 1.11979, 1.11996, 1.11857, 1.11559, 1.11103, 1.1054, 1.09918, 1.09252, 1.08574, 1.0789, 1.07207, 1.06527, 1.05852, 1.05186, 1.04518, 1.0386, 1.032, 1.02549, 1.01898, 1.01251, 1.00605, 0.99967, 0.99331, 0.98697, 0.98066, 0.96514, 0.94981, 0.93462, 0.91975, 0.90514, 0.89087, 0.87696, 0.86341, 0.85027, 0.83759, 0.82542, 0.81375, 0.80264, 0.79209]
+    ff_curve: [1.1154, 1.1146, 1.1137, 1.1125, 1.1095, 1.1063, 1.1032, 1.1002, 1.0969, 1.0938, 1.0905, 1.0872, 1.0844, 1.0826, 1.0808, 1.0791, 1.0772, 1.0754, 1.0736, 1.0718, 1.0701, 1.0683, 1.0665, 1.0647, 1.0626, 1.0607, 1.0589, 1.0577, 1.0567, 1.0556, 1.0547, 1.0539, 1.0532, 1.0524, 1.0516, 1.0508, 1.0499, 1.0491, 1.0482, 1.0475, 1.0465, 1.0456, 1.0447, 1.0438, 1.0429, 1.0419, 1.041, 1.0401, 1.0377, 1.0353, 1.0328, 1.0305, 1.028, 1.0258, 1.0236, 1.0229, 1.0221, 1.0214, 1.0206, 1.0198, 1.0189, 1.018]
+    store_ga80_status: present
+    qc_flags: []
+
+  L4:
+    pair: L3_L4
+    enrichment_segment: 5.3
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.3136
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.31356   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.6
+    enr_zone: 4.9
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_L4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.60 w/o"
+      2: "zoning 저농축 4.90 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.08338
+    kinf10: 1.0857
+    kinf20: 1.11057
+    kinf30: 1.07646
+    bu_k1: 41.57771
+    kinf_eol50: 0.9475
+    kinf_dip: 1.07756
+    bu_dip_gwd: 1
+    kinf_peak: 1.11493
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3110.52743
+    rho_boc_minus_peak_pcm: -2611.98662
+    depletion_slope_pcm_per_gwd: -618.25885
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1415
+    ff_boc: 1.1415
+    ff_window_max: 1.0962
+    kinf_curve: [1.08338, 1.08093, 1.07866, 1.07756, 1.0783, 1.07935, 1.08018, 1.08084, 1.08154, 1.08232, 1.0833, 1.08436, 1.0857, 1.08717, 1.08884, 1.09072, 1.09272, 1.09494, 1.09735, 1.10019, 1.10344, 1.10698, 1.11057, 1.11346, 1.11493, 1.11453, 1.1122, 1.10809, 1.1027, 1.09664, 1.09009, 1.08331, 1.07646, 1.06963, 1.06285, 1.05609, 1.04942, 1.04277, 1.03618, 1.02961, 1.02309, 1.01659, 1.01012, 1.00368, 0.99731, 0.99096, 0.98464, 0.97834, 0.96284, 0.9475, 0.93234, 0.9175, 0.90296, 0.8887, 0.8748, 0.86126, 0.84816, 0.8355, 0.82335, 0.81171, 0.80061, 0.79009]
+    ff_curve: [1.1415, 1.1399, 1.1379, 1.1346, 1.1278, 1.1238, 1.1201, 1.1163, 1.1123, 1.1083, 1.1043, 1.1001, 1.0962, 1.092, 1.0877, 1.0836, 1.0793, 1.0751, 1.0709, 1.0667, 1.0666, 1.0669, 1.0673, 1.0676, 1.0679, 1.068, 1.068, 1.0678, 1.0673, 1.0664, 1.0656, 1.0648, 1.064, 1.0631, 1.0622, 1.0613, 1.0602, 1.0593, 1.0584, 1.0575, 1.0564, 1.0553, 1.0543, 1.0533, 1.0522, 1.0512, 1.0501, 1.049, 1.0463, 1.0436, 1.0408, 1.0381, 1.0354, 1.0328, 1.0304, 1.0283, 1.026, 1.0239, 1.0223, 1.0217, 1.021, 1.0202]
+    store_ga80_status: present
+    qc_flags: []
+
+  L5:
+    pair: L5_L6
+    enrichment_segment: 5.3
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.3136
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.31356   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.65
+    enr_zone: 4.95
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.5
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_L5.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.65 w/o"
+      2: "zoning 저농축 4.95 w/o"
+      3: "Gd봉 U3.50 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.12238
+    kinf10: 1.10902
+    kinf20: 1.11916
+    kinf30: 1.07821
+    bu_k1: 41.80438
+    kinf_eol50: 0.94882
+    kinf_dip: 1.10902
+    bu_dip_gwd: 10
+    kinf_peak: 1.12043
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 918.25127
+    rho_boc_minus_peak_pcm: 155.06364
+    depletion_slope_pcm_per_gwd: -621.46081
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1185
+    ff_boc: 1.1185
+    ff_window_max: 1.0899
+    kinf_curve: [1.12238, 1.11959, 1.11676, 1.11481, 1.11395, 1.11347, 1.11273, 1.11186, 1.11102, 1.11027, 1.10972, 1.10926, 1.10902, 1.10903, 1.10923, 1.1096, 1.11013, 1.11096, 1.11201, 1.1134, 1.11521, 1.11713, 1.11916, 1.12042, 1.12043, 1.11879, 1.11551, 1.11071, 1.10495, 1.09866, 1.09195, 1.08512, 1.07821, 1.07131, 1.06448, 1.05771, 1.05101, 1.04432, 1.03772, 1.03112, 1.02459, 1.01807, 1.0116, 1.00514, 0.99875, 0.99239, 0.98604, 0.97973, 0.96415, 0.94882, 0.93368, 0.9188, 0.90418, 0.88991, 0.87601, 0.86249, 0.84939, 0.83675, 0.82464, 0.81301, 0.80195, 0.79146]
+    ff_curve: [1.1185, 1.1178, 1.117, 1.1158, 1.113, 1.1101, 1.1072, 1.1043, 1.1013, 1.0983, 1.0952, 1.0921, 1.0899, 1.0884, 1.0867, 1.0852, 1.0835, 1.0818, 1.0802, 1.0786, 1.0771, 1.0755, 1.0738, 1.0721, 1.0702, 1.0683, 1.0666, 1.0653, 1.0643, 1.0631, 1.0622, 1.0613, 1.0605, 1.0596, 1.0587, 1.0578, 1.0568, 1.0558, 1.0549, 1.054, 1.0529, 1.0519, 1.0509, 1.0498, 1.0488, 1.0477, 1.0467, 1.0457, 1.0429, 1.0403, 1.0375, 1.0349, 1.0321, 1.0296, 1.0271, 1.026, 1.025, 1.024, 1.023, 1.0219, 1.0209, 1.0198]
+    store_ga80_status: present
+    qc_flags: []
+
+  L6:
+    pair: L5_L6
+    enrichment_segment: 5.3
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.2771
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.27712   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.65
+    enr_zone: 4.95
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.5
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_L6.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.65 w/o"
+      2: "zoning 저농축 4.95 w/o"
+      3: "Gd봉 U3.50 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.08378
+    kinf10: 1.08456
+    kinf20: 1.11118
+    kinf30: 1.07501
+    bu_k1: 41.33229
+    kinf_eol50: 0.94589
+    kinf_dip: 1.07775
+    bu_dip_gwd: 1
+    kinf_peak: 1.11525
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 3119.90237
+    rho_boc_minus_peak_pcm: -2603.65465
+    depletion_slope_pcm_per_gwd: -622.80799
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1444
+    ff_boc: 1.1444
+    ff_window_max: 1.1023
+    kinf_curve: [1.08378, 1.08128, 1.07894, 1.07775, 1.07827, 1.07912, 1.07976, 1.08025, 1.0808, 1.08146, 1.08233, 1.08331, 1.08456, 1.08603, 1.08771, 1.08963, 1.09179, 1.09428, 1.09702, 1.10021, 1.10377, 1.10751, 1.11118, 1.11399, 1.11525, 1.11458, 1.11195, 1.10756, 1.10196, 1.09569, 1.08894, 1.08198, 1.07501, 1.06812, 1.06133, 1.05457, 1.04789, 1.04123, 1.03463, 1.02807, 1.02153, 1.01503, 1.00856, 1.00212, 0.99574, 0.98938, 0.98306, 0.97676, 0.96122, 0.94589, 0.93076, 0.91599, 0.90145, 0.88722, 0.87336, 0.85987, 0.8468, 0.8342, 0.82211, 0.81053, 0.79947, 0.78902]
+    ff_curve: [1.1444, 1.1429, 1.141, 1.1377, 1.132, 1.1285, 1.1251, 1.1215, 1.1177, 1.114, 1.1102, 1.1062, 1.1023, 1.0983, 1.0942, 1.0902, 1.0861, 1.0819, 1.0778, 1.0757, 1.0761, 1.0767, 1.0774, 1.0781, 1.0787, 1.079, 1.0788, 1.0785, 1.0779, 1.0768, 1.0758, 1.0748, 1.0738, 1.0726, 1.0716, 1.0705, 1.0692, 1.0681, 1.0669, 1.0658, 1.0645, 1.0633, 1.0621, 1.0609, 1.0596, 1.0584, 1.0571, 1.0558, 1.0527, 1.0495, 1.0463, 1.0431, 1.0399, 1.0369, 1.034, 1.0313, 1.0286, 1.0262, 1.0253, 1.0243, 1.0234, 1.0224]
+    store_ga80_status: present
+    qc_flags: []
+
+  N1:
+    pair: N1_N2
+    enrichment_segment: 5.4
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4271
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.42712   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.7
+    enr_zone: 5
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_N1.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.70 w/o"
+      2: "zoning 저농축 5.00 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.12687
+    kinf10: 1.11349
+    kinf20: 1.12044
+    kinf30: 1.08351
+    bu_k1: 42.7429
+    kinf_eol50: 0.955
+    kinf_dip: 1.11335
+    bu_dip_gwd: 11
+    kinf_peak: 1.12225
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 712.30941
+    rho_boc_minus_peak_pcm: 365.32429
+    depletion_slope_pcm_per_gwd: -607.55666
+    kconv_is_monotone: 0
+    ff_pin_max: 1.115
+    ff_boc: 1.115
+    ff_window_max: 1.0849
+    kinf_curve: [1.12687, 1.12412, 1.12131, 1.11934, 1.11849, 1.11804, 1.11733, 1.11648, 1.11565, 1.11488, 1.1143, 1.11378, 1.11349, 1.11335, 1.11337, 1.11349, 1.11373, 1.11413, 1.11476, 1.11569, 1.11699, 1.11857, 1.12044, 1.12179, 1.12225, 1.12126, 1.11876, 1.11467, 1.1094, 1.10346, 1.09696, 1.09029, 1.08351, 1.07675, 1.06999, 1.06327, 1.05664, 1.05001, 1.04346, 1.03689, 1.0304, 1.02393, 1.01749, 1.01106, 1.00471, 0.99837, 0.99205, 0.98577, 0.97028, 0.955, 0.93983, 0.92496, 0.91034, 0.89603, 0.88206, 0.86844, 0.8552, 0.8424, 0.83009, 0.81825, 0.80695, 0.79619]
+    ff_curve: [1.115, 1.1143, 1.1134, 1.1122, 1.1092, 1.1062, 1.1032, 1.1002, 1.0971, 1.094, 1.0909, 1.0878, 1.0849, 1.0832, 1.0815, 1.0798, 1.078, 1.0762, 1.0745, 1.0728, 1.0711, 1.0694, 1.0676, 1.0659, 1.0638, 1.0619, 1.0601, 1.0588, 1.0577, 1.0566, 1.0556, 1.0549, 1.0541, 1.0533, 1.0526, 1.0518, 1.0509, 1.0501, 1.0492, 1.0485, 1.0476, 1.0467, 1.0457, 1.0449, 1.044, 1.043, 1.0421, 1.0412, 1.0388, 1.0364, 1.0339, 1.0315, 1.0291, 1.0268, 1.0246, 1.0234, 1.0227, 1.0219, 1.0212, 1.0204, 1.0195, 1.0186]
+    store_ga80_status: present
+    qc_flags: []
+
+  N2:
+    pair: N1_N2
+    enrichment_segment: 5.4
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4034
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.40339   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.7
+    enr_zone: 5
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 4.3
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_N2.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.70 w/o"
+      2: "zoning 저농축 5.00 w/o"
+      3: "Gd봉 U4.30 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.0886
+    kinf10: 1.08926
+    kinf20: 1.1121
+    kinf30: 1.08102
+    bu_k1: 42.35918
+    kinf_eol50: 0.9526
+    kinf_dip: 1.08262
+    bu_dip_gwd: 1
+    kinf_peak: 1.1169
+    bu_peak_gwd: 23
+    reactivity_swing_pcm: 2834.98311
+    rho_boc_minus_peak_pcm: -2327.5757
+    depletion_slope_pcm_per_gwd: -616.13503
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1401
+    ff_boc: 1.1401
+    ff_window_max: 1.0969
+    kinf_curve: [1.0886, 1.08616, 1.08384, 1.08262, 1.08314, 1.08404, 1.0847, 1.08521, 1.08575, 1.08638, 1.0872, 1.08809, 1.08926, 1.09056, 1.09207, 1.09376, 1.09557, 1.09759, 1.09979, 1.10238, 1.10534, 1.10865, 1.1121, 1.11501, 1.11682, 1.1169, 1.11512, 1.11155, 1.10658, 1.10085, 1.09448, 1.08782, 1.08102, 1.07426, 1.0675, 1.06078, 1.05413, 1.04753, 1.04096, 1.03443, 1.02793, 1.02146, 1.01502, 1.00862, 1.00227, 0.99595, 0.98965, 0.98337, 0.96791, 0.9526, 0.93745, 0.92262, 0.90807, 0.89377, 0.87981, 0.86619, 0.85299, 0.84021, 0.82791, 0.81612, 0.80483, 0.7941]
+    ff_curve: [1.1401, 1.1385, 1.1366, 1.1333, 1.1274, 1.1238, 1.1202, 1.1165, 1.1126, 1.1087, 1.1048, 1.1008, 1.0969, 1.0928, 1.0887, 1.0846, 1.0805, 1.0764, 1.0723, 1.0681, 1.0675, 1.0677, 1.068, 1.0684, 1.0687, 1.0688, 1.0689, 1.0687, 1.0683, 1.0675, 1.0667, 1.0659, 1.0651, 1.0642, 1.0634, 1.0625, 1.0614, 1.0605, 1.0596, 1.0587, 1.0576, 1.0566, 1.0555, 1.0545, 1.0535, 1.0524, 1.0514, 1.0503, 1.0476, 1.0448, 1.0421, 1.0393, 1.0365, 1.0339, 1.0314, 1.0293, 1.027, 1.0249, 1.0229, 1.0223, 1.0216, 1.0208]
+    store_ga80_status: present
+    qc_flags: []
+
+  N3:
+    pair: N3_N4
+    enrichment_segment: 5.4
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.439
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.43898   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.75
+    enr_zone: 5.05
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.9
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_N3.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.75 w/o"
+      2: "zoning 저농축 5.05 w/o"
+      3: "Gd봉 U3.90 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.12838
+    kinf10: 1.114
+    kinf20: 1.12125
+    kinf30: 1.08437
+    bu_k1: 42.87204
+    kinf_eol50: 0.9558
+    kinf_dip: 1.11383
+    bu_dip_gwd: 11
+    kinf_peak: 1.12309
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 740.24846
+    rho_boc_minus_peak_pcm: 417.43199
+    depletion_slope_pcm_per_gwd: -606.58594
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1164
+    ff_boc: 1.1164
+    ff_window_max: 1.0885
+    kinf_curve: [1.12838, 1.12562, 1.12277, 1.12073, 1.11973, 1.11918, 1.11835, 1.1174, 1.11647, 1.11562, 1.11496, 1.11437, 1.114, 1.11383, 1.11385, 1.11398, 1.11424, 1.11471, 1.11541, 1.1164, 1.11777, 1.11938, 1.12125, 1.12261, 1.12309, 1.12208, 1.11954, 1.11545, 1.11019, 1.1043, 1.09782, 1.09116, 1.08437, 1.07757, 1.07079, 1.06407, 1.05743, 1.0508, 1.04424, 1.03769, 1.0312, 1.02473, 1.0183, 1.01187, 1.00552, 0.99919, 0.99287, 0.98659, 0.97107, 0.9558, 0.94066, 0.92579, 0.91116, 0.89684, 0.88287, 0.86925, 0.856, 0.84319, 0.83087, 0.81902, 0.8077, 0.79692]
+    ff_curve: [1.1164, 1.1157, 1.1149, 1.1138, 1.1109, 1.108, 1.1052, 1.1025, 1.0999, 1.0974, 1.0945, 1.0915, 1.0885, 1.0862, 1.0845, 1.083, 1.0812, 1.0796, 1.0779, 1.0763, 1.0747, 1.0731, 1.0714, 1.0697, 1.0678, 1.0659, 1.0641, 1.0628, 1.0616, 1.0605, 1.0595, 1.0588, 1.058, 1.0571, 1.0563, 1.0555, 1.0545, 1.0537, 1.0528, 1.052, 1.051, 1.05, 1.0491, 1.0482, 1.0472, 1.0462, 1.0452, 1.0442, 1.0417, 1.0392, 1.0366, 1.034, 1.0314, 1.029, 1.0266, 1.0251, 1.0243, 1.0235, 1.0226, 1.0216, 1.0207, 1.0197]
+    store_ga80_status: present
+    qc_flags: []
+
+  N4:
+    pair: N3_N4
+    enrichment_segment: 5.4
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4076
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.40763   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.75
+    enr_zone: 5.05
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.9
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_N4.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.75 w/o"
+      2: "zoning 저농축 5.05 w/o"
+      3: "Gd봉 U3.90 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.0901
+    kinf10: 1.08958
+    kinf20: 1.11276
+    kinf30: 1.0815
+    bu_k1: 42.43829
+    kinf_eol50: 0.9531
+    kinf_dip: 1.08398
+    bu_dip_gwd: 1
+    kinf_peak: 1.11761
+    bu_peak_gwd: 23
+    reactivity_swing_pcm: 2775.97352
+    rho_boc_minus_peak_pcm: -2258.05217
+    depletion_slope_pcm_per_gwd: -615.69449
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1412
+    ff_boc: 1.1412
+    ff_window_max: 1.1001
+    kinf_curve: [1.0901, 1.08764, 1.08528, 1.08398, 1.08433, 1.08509, 1.08562, 1.086, 1.08643, 1.08696, 1.08768, 1.08849, 1.08958, 1.09082, 1.09229, 1.09395, 1.09579, 1.0979, 1.10019, 1.10287, 1.10592, 1.10927, 1.11276, 1.11569, 1.11753, 1.11761, 1.11582, 1.11223, 1.10725, 1.10149, 1.09506, 1.08835, 1.0815, 1.07471, 1.06796, 1.06124, 1.0546, 1.048, 1.04143, 1.03491, 1.02842, 1.02195, 1.01551, 1.00912, 1.00277, 0.99645, 0.99016, 0.98388, 0.96841, 0.9531, 0.93798, 0.92318, 0.90862, 0.89432, 0.88036, 0.86675, 0.85352, 0.84073, 0.82844, 0.81663, 0.80531, 0.79457]
+    ff_curve: [1.1412, 1.1397, 1.1377, 1.1345, 1.1295, 1.1261, 1.1226, 1.1191, 1.1153, 1.1116, 1.1078, 1.1039, 1.1001, 1.0961, 1.0921, 1.0881, 1.084, 1.08, 1.0759, 1.0721, 1.0723, 1.0726, 1.0731, 1.0736, 1.0741, 1.0743, 1.0744, 1.0742, 1.0737, 1.0729, 1.072, 1.0711, 1.0702, 1.0692, 1.0683, 1.0673, 1.0662, 1.0652, 1.0641, 1.0631, 1.0619, 1.0608, 1.0597, 1.0586, 1.0575, 1.0563, 1.0552, 1.054, 1.0511, 1.0481, 1.0451, 1.0422, 1.0391, 1.0363, 1.0335, 1.0312, 1.0287, 1.0263, 1.0246, 1.0238, 1.023, 1.0221]
+    store_ga80_status: present
+    qc_flags: []
+
+  N5:
+    pair: N5_N6
+    enrichment_segment: 5.4
+    role: L          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4424
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.44237   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.8
+    enr_zone: 5.1
+    du: 0.7
+    n_main_pin: 164
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 20
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.4
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_N5.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 1, 2, 6]
+      - [1, 3, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 1]
+      - [1, 1, 1, 1, 3, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.80 w/o"
+      2: "zoning 저농축 5.10 w/o"
+      3: "Gd봉 U3.40 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.12973
+    kinf10: 1.1142
+    kinf20: 1.12201
+    kinf30: 1.08476
+    bu_k1: 42.92902
+    kinf_eol50: 0.95617
+    kinf_dip: 1.11399
+    bu_dip_gwd: 11
+    kinf_peak: 1.12385
+    bu_peak_gwd: 22
+    reactivity_swing_pcm: 787.56657
+    rho_boc_minus_peak_pcm: 463.12083
+    depletion_slope_pcm_per_gwd: -606.63428
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1183
+    ff_boc: 1.1183
+    ff_window_max: 1.0928
+    kinf_curve: [1.12973, 1.12696, 1.12406, 1.12195, 1.12079, 1.12009, 1.11914, 1.11808, 1.11703, 1.11608, 1.11532, 1.11466, 1.1142, 1.11399, 1.11399, 1.11413, 1.11444, 1.11501, 1.11583, 1.11692, 1.1184, 1.12008, 1.12201, 1.12337, 1.12385, 1.1228, 1.12019, 1.11604, 1.11073, 1.1048, 1.09829, 1.0916, 1.08476, 1.07794, 1.07115, 1.06443, 1.05778, 1.05115, 1.04458, 1.03804, 1.03155, 1.02508, 1.01865, 1.01224, 1.00589, 0.99955, 0.99324, 0.98696, 0.97144, 0.95617, 0.94106, 0.92618, 0.91155, 0.89724, 0.88326, 0.86964, 0.85639, 0.84358, 0.83126, 0.8194, 0.80808, 0.79729]
+    ff_curve: [1.1183, 1.1177, 1.1169, 1.1157, 1.1131, 1.1103, 1.1084, 1.1064, 1.1039, 1.1014, 1.0986, 1.0958, 1.0928, 1.0898, 1.0882, 1.0868, 1.0852, 1.0836, 1.0821, 1.0806, 1.0791, 1.0776, 1.0761, 1.0745, 1.0726, 1.0708, 1.069, 1.0677, 1.0665, 1.0653, 1.0643, 1.0635, 1.0627, 1.0617, 1.0609, 1.06, 1.059, 1.058, 1.0571, 1.0562, 1.0551, 1.0541, 1.0531, 1.0521, 1.0511, 1.05, 1.049, 1.0479, 1.0452, 1.0425, 1.0397, 1.037, 1.0342, 1.0316, 1.029, 1.0272, 1.0262, 1.0252, 1.0241, 1.0231, 1.022, 1.0209]
+    store_ga80_status: present
+    qc_flags: []
+
+  N6:
+    pair: N5_N6
+    enrichment_segment: 5.4
+    role: H          # L = light-load, H = heavy-load position
+    u_avg_enrichment: 5.4017
+    u_avg_source: sheet
+    u_avg_from_pinmap: 5.40169   # QC cross-check
+    # --- pin zoning -------------------------------------------------
+    enr_main: 5.8
+    enr_zone: 5.1
+    du: 0.7
+    n_main_pin: 160
+    zone_pin_count: 52
+    # --- burnable absorber ------------------------------------------
+    n_gd: 24
+    gd_wt: 10          # Gd2O3 wt%
+    gd_u_enr: 3.4
+    gd_pattern: PB
+    # --- geometry (from the 1/8 map) --------------------------------
+    n_fuel_rod: 236
+    n_guide_tube: 20
+    decart_deck: dec_FA_N6.inp
+    pinmap_octant:   # row i holds j=0..i; w=4 on diagonal, 8 off it
+      - [9]
+      - [2, 3]
+      - [1, 1, 1]
+      - [1, 3, 2, 6]
+      - [1, 1, 2, 8, 9]
+      - [1, 1, 1, 2, 2, 3]
+      - [1, 1, 1, 3, 1, 1, 1]
+      - [1, 1, 1, 1, 1, 1, 2, 2]
+    pinmap_legend:
+      1: "주연료 5.80 w/o"
+      2: "zoning 저농축 5.10 w/o"
+      3: "Gd봉 U3.40 w/o + Gd2O3 10.0 wt%"
+      6: "안내관/계측관 (GT)"
+      7: "안내관/계측관 (GT)"
+      8: "안내관/계측관 (GT)"
+      9: "안내관/계측관 (GT)"
+    # --- k-inf / FF curve features (same conventions as
+    #     lpopt.data.fuel_types.kconv_curve_shape / _burnup_at_k1) --------
+    kinf0: 1.0913
+    kinf10: 1.08954
+    kinf20: 1.11341
+    kinf30: 1.08137
+    bu_k1: 42.42496
+    kinf_eol50: 0.95303
+    kinf_dip: 1.08502
+    bu_dip_gwd: 1
+    kinf_peak: 1.11821
+    bu_peak_gwd: 23
+    reactivity_swing_pcm: 2735.55932
+    rho_boc_minus_peak_pcm: -2205.19079
+    depletion_slope_pcm_per_gwd: -616.46122
+    kconv_is_monotone: 0
+    ff_pin_max: 1.1428
+    ff_boc: 1.1428
+    ff_window_max: 1.104
+    kinf_curve: [1.0913, 1.08881, 1.0864, 1.08502, 1.0852, 1.08581, 1.0862, 1.08645, 1.08675, 1.08719, 1.0878, 1.08854, 1.08954, 1.09074, 1.09219, 1.09383, 1.09573, 1.09796, 1.1004, 1.10321, 1.10642, 1.10986, 1.11341, 1.11636, 1.11818, 1.11821, 1.11636, 1.11267, 1.10758, 1.1017, 1.09513, 1.0883, 1.08137, 1.07456, 1.06782, 1.06112, 1.05448, 1.04789, 1.04131, 1.03481, 1.02831, 1.02184, 1.01542, 1.00904, 1.00269, 0.99636, 0.99008, 0.98381, 0.96832, 0.95303, 0.93794, 0.92318, 0.90863, 0.89435, 0.8804, 0.86681, 0.85359, 0.84081, 0.82853, 0.81672, 0.80539, 0.79466]
+    ff_curve: [1.1428, 1.1414, 1.1395, 1.1364, 1.1322, 1.129, 1.1257, 1.1223, 1.1187, 1.1151, 1.1115, 1.1077, 1.104, 1.1001, 1.0962, 1.0923, 1.0883, 1.0844, 1.0803, 1.0778, 1.0782, 1.0788, 1.0795, 1.0802, 1.0809, 1.0813, 1.0813, 1.0811, 1.0806, 1.0796, 1.0786, 1.0776, 1.0766, 1.0754, 1.0744, 1.0733, 1.072, 1.0709, 1.0697, 1.0686, 1.0673, 1.0661, 1.0649, 1.0636, 1.0624, 1.0611, 1.0599, 1.0585, 1.0553, 1.0521, 1.0488, 1.0456, 1.0422, 1.0391, 1.036, 1.0333, 1.0305, 1.0279, 1.0265, 1.0256, 1.0246, 1.0236]
+    store_ga80_status: present
+    qc_flags: []
+
+# ---------------------------------------------------------------------------
+store_crosscheck:   # dbx value vs data/store/fuel_types.parquet library_id='ga80'
+  # (parquet READ ONLY — nothing was written back)
+  n_types_in_dbx: 40
+  n_present_in_store: 36
+  n_absent_from_store: 4   # [E5, E6, J7, J8]
+  n_store_ga80_rows_total: 70    # 34 of them feature_poor (B/C/D/A1/A3-7/G1/G2/H5/H6)
+  scalar_agreement:   # dbx - store, over the 36 shared types
+    kinf10: {n: 36, mean_diff: -7.2222e-06, median_abs_diff: 4.5e-05, max_abs_diff: 0.00048}
+    kinf20: {n: 36, mean_diff: 0.00042722, median_abs_diff: 0.000505, max_abs_diff: 0.00068}
+    kinf30: {n: 36, mean_diff: 0.00020528, median_abs_diff: 0.00026, max_abs_diff: 0.00045}
+    kinf_eol50: {n: 36, mean_diff: 1.3111e-05, median_abs_diff: 6.75e-05, max_abs_diff: 0.000353}
+    bu_k1: {n: 36, mean_diff: 0.0019766, median_abs_diff: 0.0066664, max_abs_diff: 0.055872}
+    ff_pin_max: {n: 36, mean_diff: -0.001925, median_abs_diff: 0.003, max_abs_diff: 0.0041}
+    kinf0: {n: 36, mean_diff: -0.027594, median_abs_diff: 0.027755, max_abs_diff: 0.02985}
+    depletion_slope_pcm_per_gwd: {n: 36, mean_diff: -4.2413, median_abs_diff: 0.37255, max_abs_diff: 176.81}
+    reactivity_swing_pcm: {n: 36, mean_diff: 47.762, median_abs_diff: 22.553, max_abs_diff: 1486.4}
+  verdict: |
+    kinf10 / kinf20 / kinf30 / kinf_eol50 agree to <7e-4 (<0.07 %) and bu_k1 to
+    <0.056 GWd/tU (<0.15 %) on all 36 shared types — the workbook curves and the store's
+    HGC harvest are the same physics.  ff_pin_max differs by <0.0041 (<0.36 %).
+    kinf0 differs by -0.028 on average: a BU=0 xenon-state convention difference, not a
+    disagreement (see the caveat in merge_note).
+    reactivity_swing_pcm and depletion_slope_pcm_per_gwd agree to a median 23 pcm and
+    0.37 pcm/GWd, with exactly ONE outlier: A8, where the STORE value (swing 11 pcm,
+    slope -462) is the artefact — its hump detector latched onto a numerical ripple on the
+    finer HGC grid.  The workbook grid gives A8 swing 1497 pcm / slope -639, in line with
+    its siblings.  Merging this file therefore also CORRECTS one existing store row.
+  fields_the_store_has_no_value_for_today:
+    enr_main: {store_non_null: 0, dbx_non_null: 36}
+    enr_zone: {store_non_null: 0, dbx_non_null: 36}
+    gd_wt: {store_non_null: 0, dbx_non_null: 36}
+    gd_u_enr: {store_non_null: 0, dbx_non_null: 36}
+    zone_pin_count: {store_non_null: 0, dbx_non_null: 36}
+  u_avg_enrichment: |
+    The store carries the FAMILY ANCHOR from config/fuel_types_manual.yaml (A/E->5.0,
+    J->5.1, K->5.2, L->5.3, N->5.4, B/G/H->5.5), identical for every member of a family.
+    The workbook gives the realised per-type value; the spread inside a family reaches
+    0.050 w/o (E4 5.0500 vs E3 5.0246) and the anchor is off by up to +0.050 / -0.039
+    (A2 4.9610 against anchor 5.0).  n_gd agrees 36/36.
+
+pair_feed_summary:   # [이 쌍의 합격 노심 분포] block, verbatim
+  A8_A2:
+    121: {n_pass: 2, best_f_r: 1.5427}
+  E1_E2:
+    101: {n_pass: 50, best_f_r: 1.5295}
+    105: {n_pass: 79, best_f_r: 1.5235}
+    109: {n_pass: 44, best_f_r: 1.5366}
+    113: {n_pass: 154, best_f_r: 1.5295}
+    117: {n_pass: 151, best_f_r: 1.5129}
+    121: {n_pass: 31, best_f_r: 1.5195}
+  E3_E4:
+    121: {n_pass: 61, best_f_r: 1.4971}
+  E5_E6:
+    101: {n_pass: 6, best_f_r: 1.5314}
+    105: {n_pass: 12, best_f_r: 1.5273}
+    109: {n_pass: 16, best_f_r: 1.529}
+    113: {n_pass: 7, best_f_r: 1.5425}
+    117: {n_pass: 12, best_f_r: 1.5363}
+    121: {n_pass: 3, best_f_r: 1.5372}
+  G3_G4:
+    101: {n_pass: 100, best_f_r: 1.5232}
+    105: {n_pass: 135, best_f_r: 1.5131}
+    109: {n_pass: 24, best_f_r: 1.5449}
+    113: {n_pass: 23, best_f_r: 1.5401}
+    117: {n_pass: 1, best_f_r: 1.5498}
+    121: {n_pass: 46, best_f_r: 1.5384}
+  H1_H2:
+    121: {n_pass: 6, best_f_r: 1.5273}
+  H3_H4:
+    101: {n_pass: 83, best_f_r: 1.5104}
+    105: {n_pass: 57, best_f_r: 1.511}
+    109: {n_pass: 3, best_f_r: 1.5466}
+    113: {n_pass: 54, best_f_r: 1.545}
+    117: {n_pass: 119, best_f_r: 1.5204}
+    121: {n_pass: 23, best_f_r: 1.5168}
+  J1_J2:
+    101: {n_pass: 148, best_f_r: 1.5005}
+    105: {n_pass: 4, best_f_r: 1.5442}
+    109: {n_pass: 110, best_f_r: 1.5376}
+    113: {n_pass: 99, best_f_r: 1.5261}
+    117: {n_pass: 65, best_f_r: 1.518}
+    121: {n_pass: 26, best_f_r: 1.5175}
+  J3_J4:
+    101: {n_pass: 79, best_f_r: 1.5171}
+    105: {n_pass: 68, best_f_r: 1.5342}
+    121: {n_pass: 10, best_f_r: 1.5344}
+  J5_J6:
+    101: {n_pass: 97, best_f_r: 1.5111}
+    105: {n_pass: 3, best_f_r: 1.5441}
+    121: {n_pass: 22, best_f_r: 1.5253}
+  J7_J8:
+    101: {n_pass: 117, best_f_r: 1.5124}
+    105: {n_pass: 18, best_f_r: 1.5323}
+    109: {n_pass: 20, best_f_r: 1.5321}
+    113: {n_pass: 83, best_f_r: 1.5299}
+    117: {n_pass: 136, best_f_r: 1.5284}
+    121: {n_pass: 42, best_f_r: 1.5304}
+  K1_K2:
+    101: {n_pass: 141, best_f_r: 1.5115}
+    105: {n_pass: 122, best_f_r: 1.5227}
+    109: {n_pass: 6, best_f_r: 1.5457}
+    113: {n_pass: 149, best_f_r: 1.5226}
+    117: {n_pass: 169, best_f_r: 1.5168}
+    121: {n_pass: 47, best_f_r: 1.5231}
+  K3_K4:
+    121: {n_pass: 15, best_f_r: 1.5249}
+  K5_K6:
+    101: {n_pass: 31, best_f_r: 1.5217}
+    105: {n_pass: 38, best_f_r: 1.5327}
+    109: {n_pass: 71, best_f_r: 1.5409}
+    113: {n_pass: 13, best_f_r: 1.5442}
+    117: {n_pass: 313, best_f_r: 1.5229}
+    121: {n_pass: 12, best_f_r: 1.5341}
+  L1_L2:
+    101: {n_pass: 19, best_f_r: 1.526}
+    105: {n_pass: 45, best_f_r: 1.5269}
+    109: {n_pass: 26, best_f_r: 1.5391}
+    113: {n_pass: 60, best_f_r: 1.5464}
+    117: {n_pass: 35, best_f_r: 1.5315}
+    121: {n_pass: 31, best_f_r: 1.5198}
+  L3_L4:
+    101: {n_pass: 143, best_f_r: 1.5137}
+    105: {n_pass: 84, best_f_r: 1.5125}
+    109: {n_pass: 106, best_f_r: 1.5304}
+    113: {n_pass: 209, best_f_r: 1.5331}
+    117: {n_pass: 179, best_f_r: 1.5277}
+    121: {n_pass: 57, best_f_r: 1.5215}
+  L5_L6:
+    101: {n_pass: 65, best_f_r: 1.5263}
+    105: {n_pass: 289, best_f_r: 1.5059}
+    109: {n_pass: 9, best_f_r: 1.5433}
+    113: {n_pass: 5, best_f_r: 1.548}
+    117: {n_pass: 52, best_f_r: 1.5441}
+    121: {n_pass: 14, best_f_r: 1.5376}
+  N1_N2:
+    101: {n_pass: 42, best_f_r: 1.5223}
+    105: {n_pass: 107, best_f_r: 1.5024}
+    109: {n_pass: 41, best_f_r: 1.542}
+    113: {n_pass: 45, best_f_r: 1.5374}
+    117: {n_pass: 38, best_f_r: 1.534}
+    121: {n_pass: 32, best_f_r: 1.5202}
+  N3_N4:
+    101: {n_pass: 162, best_f_r: 1.4958}
+    105: {n_pass: 137, best_f_r: 1.5101}
+    109: {n_pass: 105, best_f_r: 1.538}
+    113: {n_pass: 211, best_f_r: 1.5407}
+    117: {n_pass: 137, best_f_r: 1.5221}
+    121: {n_pass: 21, best_f_r: 1.5277}
+  N5_N6:
+    121: {n_pass: 31, best_f_r: 1.5362}
+
+# ---------------------------------------------------------------------------
+merge_note: |
+  HOW THIS WOULD BE MERGED (not done here — fuel_types.parquet is read-only in
+  this pass).  The manual-yaml pathway already exists: lpopt.data.fuel_types
+  .load_manual_anchors() reads config/fuel_types_manual.yaml and ga80_rows()
+  builds the ga80 library from GA80_TYPE_IDS x anchors x HGC Gd counts.  This
+  file slots in as a higher-priority ga80 overlay, applied inside ga80_rows()
+  after the HGC harvest:
+
+    1. ROSTER.  GA80_FAMILIES currently reads E: 4, J: 6.  The DB uses E5, E6,
+       J7, J8 -> set E: 6, J: 8.  That alone makes 472 DB core rows (E5_E6 56 +
+       J7_J8 416) featurizable; today they resolve to a missing type_id.
+    2. ANCHOR -> REALISED ENRICHMENT.  ga80 rows currently carry
+       u_avg_enrichment = the FAMILY anchor (E->5.0, J->5.1, ...).  Replace it
+       per type with `u_avg_enrichment` here (5.0119 .. 5.5102): a spread of up
+       to 0.05 w/o inside a family that the anchor collapses to one number.
+       Set source_flags += ['dbx_lattice'].
+    3. NEW COLUMNS FILLED.  enr_main, enr_zone, gd_wt, gd_u_enr and
+       zone_pin_count are all-NaN for every ga80 row today (ga80 ships no dec
+       inp in this workspace).  The P_ sheets' 1/8 pin maps supply all five for
+       the 36 decked types, exactly the columns the featurizer expects.
+    4. THE FOUR NEW TYPES.  E5, E6, J7, J8 have no DeCART deck in the workbook
+       ('(덱 없음)'), so enr_main / enr_zone / gd_wt / gd_u_enr / zone_pin_count
+       stay unknown for them.  They DO carry a full 62-point k-inf and FF curve,
+       which is what the reactivity features are computed from — so they can be
+       admitted with feature_poor=False for the curve family (kinf0/10/20/30,
+       bu_k1, ff_pin_max, kconv_* ) and NaN for the zoning family.  Recommended:
+       a new flag `zoning_unknown=True` rather than the blunt feature_poor.
+    5. CURVE PARITY.  Load `kinf_curve` (with `burnup_grid_gwd_per_tu`) into the
+       same kconv_curve_shape()/_burnup_at_k1() the store already uses, rather
+       than trusting the scalar fields here — that keeps the store's train of
+       thought and the two sources agree by construction.
+    6. DO NOT overwrite kinf0 or ff_pin_max on the 36 types that already carry
+       HGC values.  The workbook's BU=0 row is xenon-state-inconsistent between
+       decked and deckless sheets (see caveat below); bu_k1 / kinf10 / kinf20 /
+       kinf30 agree with the store to <2e-4 and are safe.
+
+  CAVEAT — BU=0 xenon state.  On the 36 decked types the sheet's BU=0 k-inf sits
+  ~0.03 BELOW the store's kinf0 and shows no fresh no-xenon spike; on the four
+  deckless types (E5, E6, J7, J8) BU=0 is 0.03 ABOVE the BU=0.2 point, i.e. it
+  IS the xenon-free spike.  The two families therefore use different BU=0
+  conventions.  Everything at BU >= 0.2 is consistent.  Consequence: kinf0 and
+  rho_boc_minus_peak_pcm are NOT comparable across the two families, and for E5
+  the hump detector latches onto a 1.8e-4 ripple at 3 GWd/tU instead of the real
+  burnout peak near 20 GWd/tU (flagged in qc_flags).

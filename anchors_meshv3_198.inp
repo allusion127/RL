@@ -1,0 +1,289 @@
+# lpopt PRODUCE deck -- mesh-v3 REDIRECTED anchors, box 198, 2026-08-17.
+#
+# PRE-REGISTERED: data/reports/mesh_v3_20260817/PREREG2_anchor_redirect_20260817.md
+#   §3a  184 chains inside the user's grid (feed 109-129)  -- map cells
+#   §3b   30 chains at f101                                 -- CALIBRATION ONLY
+#   §3c   36 chains reserve (cy1 bootstrap / retries), NOT in this deck
+#   total in this deck = 214, hard cap 250
+#
+# WHAT THIS BUYS, IN ONE LINE
+#   Whether raising the Gd PIN COUNT to 24 gets a high-enrichment core under the
+#   1600 ppm soluble-boron limit.  Across the 11 244 converged cores that already
+#   exist at e_core >= 5.6, relaxing F_r alone to 1.80 opens ONE of them and
+#   relaxing CBC alone to 2600 ppm opens NONE -- boron is the wall, and n_gd is
+#   the lever (-73.5 ppm per Gd pin, R^2 0.907, see cbc_wall.py).
+#   EVERY pair below has NEVER BEEN RUN.  Four of them are the only n_gd = 24
+#   pairs the paramA library can build above e_core 5.6.
+#
+# REGISTERED PREDICTION (written before the spend, PREREG2 §6)
+#   flagship P6656Z1G06N24_P6661Z2G10N24 @ f109 -> 1551 +- 101 ppm.
+#   <=1600 confirms H1; 1600-1700 is "marginal"; >1700 rejects it.
+#
+# WHY produce AND NOT optimize
+#   These are coverage/DoE labels, not an objective chase -- and only
+#   ProduceDriver._maybe_promote (produce.py:1253) calls
+#   CaseAssetResolver.promote(), so a produce run populates the level-1 restart
+#   cache for the never-run cells it opens.  A campaign cannot.
+#
+# WHY [model] POINTS AT AN OLD ENSEMBLE
+#   ProduceDriver never loads a model.  It reads exactly one field --
+#   [model].library_id (produce.py:411-416) -- to pick its SINGLE resolver.
+#   So this deck names a model_dir that already exists on 198 (the same one
+#   fill_198.inp used) instead of shipping 199 MB of s1g for nothing.
+#
+# FLEET RULES HONOURED
+#   * 198 only.  Verified idle at write time: MASTER 0, python 0, 61 GB free.
+#   * 199 is running fpcamp_minfr_E1E2_f109 -- NOT TOUCHED.
+#   * 181 never.  238 unused (no training in this task).
+#   * ship-don't-remote-edit: this file is scp'd in as a NEW file.
+#   * data/store/ stays read-only until the post-run harvest+merge.
+#   * PRE-FLIGHT REQUIRED before launch, on the box, in the kit venv:
+#       venv/Scripts/python.exe check_single_resolver.py anchors_meshv3_198.inp
+#     Exit 0 = safe.  Any UNRESOLVED cell is dropped from the deck (PREREG2 §4a-2)
+#     rather than launched.
+#   * single library (paramA) throughout -- one resolver, no routing split.
+#
+# THIS DECK MUST SIT AT THE KIT ROOT.  CaseAssetResolver resolves every relative
+# path against the DECK'S OWN DIRECTORY (resolver.py:33-39, _base_dir =
+# cfg.source_path.parent), so a deck parked in a subfolder resolves
+# "data/design/package" relative to THAT subfolder and every cell comes back
+# unresolved.  That is why every deck in this repo lives at the root.
+#
+# PRE-FLIGHT ALREADY RUN LOCALLY (2026-08-17), against the same design package
+# 198 carries:  python lpopt/tools/probe_assets.py anchors_meshv3_198.inp
+#   -> RESULT: ALL USABLE (13/13), exit 0.  Every cell resolves at LEVEL 3
+#      (pair_ecore) with a synthesized 37-type reload template; e_core matches
+#      PREREG2 to 3 dp.  NO cy1 bootstrap and NO new DeCART library are needed,
+#      so PREREG2 §4a STOP-1 does not fire.  Re-run it on 198 anyway --
+#      resolution is a property of that box's assets.
+#
+# !! SEED HAZARD -- WHY THE STRATA ARE ORDERED THE WAY THEY ARE !!
+#   Level 3 borrows a restart from the nearest-e_core pair.  Two seeds are in
+#   play and they are NOT equally trustworthy:
+#     * MAS_RST.APRQ_11_0767.14  (bases/Q1_Q2)  re-bootstrapped 2026-08-11,
+#       AFTER the library went 33 -> 37 types (ncomp 38 -> 42).  CLEAN.
+#     * MAS_RST.APRQ_11_0705.02  (bases/P0_P1)  dated 2026-07-19 and NEVER
+#       refreshed after that rebuild; its template carries %GEN_DIM 14 16, an
+#       11-type library, two generations stale.  realize_lat1600.log:74-77
+#       listed Q1_Q2 and Q7_Q8 for re-bootstrap and did them -- P0_P1 was not
+#       on the list.  The TEMPLATE is safe (assets.py:660-669 skips the
+#       dimension-inconsistent deck and synthesizes from the 37-type roster);
+#       the RESTART is the open question.
+#   So the deck runs ALL FIVE clean-seed strata first (88 chains, priority
+#   200-175).  Those alone settle H1 (flagship CBC vs 1600) and H2 (flagship
+#   minus n_gd-22 control).  Only then do the six P0_P1-seeded strata run.
+#   If a P0_P1 chain dies at INITIALIZE with "NOT DEFINED IN LPD_B&C" or a
+#   missing MAS_SUM EDIT 2 header, that is the ncomp mismatch: stop those
+#   strata, keep the flagship results, and refresh the seed with
+#     python -m lpopt design bootstrap --input <deck>.inp --pair P0_P1 \
+#            --feed 121 --cy1-cap-efpd 736.6
+#   (cap = 2*B1/(241/feed+1), B1 = 1101.79 EFPD, the uncapped P0_P1 cy1).
+#   One bootstrap is ~11-17 MASTER calls and fits the 36-chain reserve; it
+#   refreshes BOTH 5.69 and 5.83 families at once.
+
+[flow]
+title = "mesh-v3 redirected anchors: Gd-pin lever vs the boron wall (198, seed 1817)"
+output_root = "runs"
+random_seed = 1817
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"
+harvest_maps = true
+
+[model]
+# NOT loaded -- library_id is the only field produce reads (see header).
+model_dir = "data/models/20260725_063351"
+cond_schema = "v6"
+store_dir = "data/store"
+library_id = "paramA"
+device = "cpu"
+
+[design]
+# paramA routing: build_case_resolver() sends library="paramA" strata to this
+# package, NOT to [verify].package_root.  Without it every cell is UNRESOLVED.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[produce]
+campaign = "meshv3anchor20260817"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+workers = 16
+use_all_cores = true
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 14
+purge_intermediate = true
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+# ============================================================================ #
+# 3a. INSIDE the user's grid (feed 109-129) -- these are map cells.
+# ============================================================================ #
+
+# ---- FLAGSHIP: the only unrun pair predicted to pass 1600 ppm above e 6.0 ---
+# n_gd 24, e_core 6.139, spread 0.0066.  Predicted CBC: f109 1551 / f117 1641 /
+# f125 1731.  f109 carries the extra 8 chains because it is the decisive cell.
+[[produce.strata]]
+name = "mv3_flag_e614_f109"
+campaign = "mv3_flag_e614_f109"
+library = "paramA"
+pairs = ["P6656Z1G06N24_P6661Z2G10N24"]
+feed = 109
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 24
+priority = 200
+
+[[produce.strata]]
+name = "mv3_flag_e614_f117"
+campaign = "mv3_flag_e614_f117"
+library = "paramA"
+pairs = ["P6656Z1G06N24_P6661Z2G10N24"]
+feed = 117
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 190
+
+[[produce.strata]]
+name = "mv3_flag_e614_f125"
+campaign = "mv3_flag_e614_f125"
+library = "paramA"
+pairs = ["P6656Z1G06N24_P6661Z2G10N24"]
+feed = 125
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 185
+allow_single_cycle_discharge = true
+
+# ---- n_gd 24 at e 5.83 -- predicted comfortably under the limit ------------- #
+[[produce.strata]]
+name = "mv3_e583_f109"
+campaign = "mv3_e583_f109"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6257Z1G06N24"]
+feed = 109
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 170
+
+[[produce.strata]]
+name = "mv3_e583_f117"
+campaign = "mv3_e583_f117"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6257Z1G06N24"]
+feed = 117
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 165
+
+[[produce.strata]]
+name = "mv3_e583_f125"
+campaign = "mv3_e583_f125"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6257Z1G06N24"]
+feed = 125
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 160
+allow_single_cycle_discharge = true
+
+# ---- n_gd 24 at e 5.69 -- the bottom of the unrun high-Gd family ------------ #
+[[produce.strata]]
+name = "mv3_e569_f109"
+campaign = "mv3_e569_f109"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N24"]
+feed = 109
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 155
+
+[[produce.strata]]
+name = "mv3_e569_f125"
+campaign = "mv3_e569_f125"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N24"]
+feed = 125
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 150
+allow_single_cycle_discharge = true
+
+[[produce.strata]]
+name = "mv3_e569b_f109"
+campaign = "mv3_e569b_f109"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G06N24"]
+feed = 109
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 145
+
+# ---- CONTROL: n_gd 22 at the SAME enrichment as the flagship ---------------- #
+# e_core 6.161 vs the flagship's 6.139 -- so the flagship-minus-control CBC gap
+# isolates the net effect of TWO Gd pins.  PREREG2 §5 H2 expects 147 +- 101 ppm.
+[[produce.strata]]
+name = "mv3_ctl_ngd22_e616_f109"
+campaign = "mv3_ctl_ngd22_e616_f109"
+library = "paramA"
+pairs = ["P6656Z1G08N20_P6661Z2G10N24"]
+feed = 109
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 180
+
+[[produce.strata]]
+name = "mv3_ctl_ngd22_e616_f125"
+campaign = "mv3_ctl_ngd22_e616_f125"
+library = "paramA"
+pairs = ["P6656Z1G08N20_P6661Z2G10N24"]
+feed = 125
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 175
+allow_single_cycle_discharge = true
+
+# ============================================================================ #
+# 3b. OUTSIDE the user's grid (f101) -- CALIBRATION ONLY, 30 chains.
+#     These are NOT v3 map cells and must be reported as 보정(calibration).
+#     They pin the CBC-vs-feed slope (+11.2 ppm/assembly) and the LRM alpha at
+#     the low-feed end, where the only CBC-passing high-e cores exist today.
+# ============================================================================ #
+[[produce.strata]]
+name = "mv3_cal_flag_e614_f101"
+campaign = "mv3_cal_flag_e614_f101"
+library = "paramA"
+pairs = ["P6656Z1G06N24_P6661Z2G10N24"]
+feed = 101
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 16
+priority = 100
+
+[[produce.strata]]
+name = "mv3_cal_e583_f101"
+campaign = "mv3_cal_e583_f101"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6257Z1G06N24"]
+feed = 101
+split_w1 = [0.4, 0.6]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 14
+priority = 90

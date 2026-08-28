@@ -1,0 +1,54 @@
+chains 220  converged 218  feasible 30  in-band feasible 30
+failures: {'non_finite_flux': 2}
+cyclen range of children: 623.27 - 626.19   (out-of-band children: 0)
+
+## §4a  PRIMARY - best IN-BAND feasible F_r
+
+     record_id parent_record_id    f_r    f_q   cbc_max  ao_abs   cyclen  node_peak  parent_f_r   d_f_r
+8ec148f9d9e... 1ca37638c03...   1.4741 1.8179 1339.6800  0.0253 623.6570     1.3328      1.4750 -0.0009
+aa59765c22b... abd38bc5b21...   1.4760 1.8404 1352.1300  0.0239 625.0370     1.3056      1.4747  0.0013
+1346a065ff8... abd38bc5b21...   1.4818 1.8738 1356.2400  0.0227 625.2290     1.2942      1.4747  0.0071
+00edbbcd290... 188c9a338d9...   1.4830 1.8767 1357.6700  0.0229 625.4090     1.2900      1.4749  0.0081
+152d4667606... 195699e488e...   1.4857 1.8697 1324.4400  0.0240 623.3730     1.3161      1.4763  0.0094
+7d0e0ab65f0... 188c9a338d9...   1.4860 1.8423 1348.1000  0.0250 625.4280     1.3231      1.4749  0.0111
+81b7429f593... 1ca37638c03...   1.4909 1.8391 1327.6900  0.0270 623.9800     1.3474      1.4750  0.0159
+a95753e6137... abd38bc5b21...   1.4914 1.8328 1346.9900  0.0238 625.4930     1.3289      1.4747  0.0167
+8b21d46c33f... abd38bc5b21...   1.4916 1.8314 1353.7300  0.0228 625.2340     1.2983      1.4747  0.0169
+c2a368e57f9... 1ca37638c03...   1.4960 1.8442 1313.2100  0.0271 623.6310     1.3493      1.4750  0.0210
+
+BEST IN-BAND: 8ec148f9d9ef  F_r 1.4741 @ 623.657 EFPD
+  F_q 1.8179  CBC 1339.68  |AO| 0.0253  node_peak 1.3328  parent 1ca37638c03c
+  vs current in-band best       1.4747: -0.0006   BEATS
+  vs r8 campaign record         1.4749: -0.0008   BEATS
+  vs ga80 incumbent (stretch)   1.4636: +0.0105   does not beat
+
+## §4c  lambda-objective vs the r8 record (the usability test)
+
+  vs r8 record        d_F_r -0.0008 (worth +0.32 EFPD-eq)  d_cyclen -1.80  ->  NET -1.48 EFPD-eq  reference preferred
+  vs ga80 incumbent   d_F_r +0.0105 (worth -4.20 EFPD-eq)  d_cyclen -9.67  ->  NET -13.87 EFPD-eq  reference preferred
+
+  boards in-band beating 1.4747: 1   beating 1.4636: 0
+
+## §4b  SECONDARY - per-parent improving fraction (DEEP-N ONLY, n>=40)
+
+QUOTED (n >= 40):
+               n     min    p25    p50   mean    max  frac<0  parent_f_r
+abd38bc5b212  70  0.0013 0.1207 0.1551 0.1584 0.3787  0.0000      1.4747
+188c9a338d9f  68  0.0081 0.1275 0.1514 0.1702 0.3745  0.0000      1.4749
+1ca37638c03c  40 -0.0009 0.1227 0.1646 0.1677 0.4087  0.0250      1.4750
+
+NOT QUOTED as rates (n < 40) - carried in the corpus only, per the n=4 retraction:
+               n    min    p25    p50   mean    max  frac<0  parent_f_r
+a6d11f78a7f6  25 0.0219 0.1410 0.1616 0.1784 0.3801  0.0000      1.4762
+195699e488e6  15 0.0094 0.1349 0.1641 0.1703 0.4042  0.0000      1.4763
+
+pooled improving_fr = 0.005 +- 0.009 (n=218)
+  618-branch wave measured 0.052; registered expectation was 'at or below 0.052' (better parents)
+
+by direction:
+                    n  improving
+fresh_radial_dir                
+inward            194      0.005
+neutral             5      0.000
+outward            19      0.000
+

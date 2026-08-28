@@ -1,0 +1,84 @@
+{
+  "pinned_snapshot": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl",
+  "copied_at": "2026-07-16T08:26:21.313696+00:00",
+  "files": {
+    "__init__.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\__init__.py",
+      "sha256": "38e56ba1c4a548133454c1ae8adc1f5fc4cf939b017f750b0517238fc2ef7d82",
+      "bytes": 274,
+      "note": "verbatim"
+    },
+    "burnup.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\burnup.py",
+      "sha256": "d917ca2554baaed437eb104e1db58766c4a1e414374921bba8efe8555f039fbd",
+      "bytes": 9088,
+      "note": "verbatim"
+    },
+    "dataset.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\dataset.py",
+      "sha256": "c4a9265b2018b56bba591bb2eadd67cb72b2087c258d1d6ef029f044298f18b2",
+      "bytes": 11315,
+      "note": "verbatim"
+    },
+    "domain.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\domain.py",
+      "sha256": "98cd693d2d515d2574c4b035cf3555b35c7a1bcaa347459724b6087d694ddcac",
+      "bytes": 11319,
+      "note": "verbatim"
+    },
+    "equilibrium.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\equilibrium.py",
+      "sha256": "997e772f53ae2b059837a1f451435050366075e6533fb7a61b307685657804ef",
+      "bytes": 20092,
+      "note": "verbatim"
+    },
+    "features.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\features.py",
+      "sha256": "94b83fcb217a06752cae59ab77677c72361f8c2910e86119c7e57de89eafefe0",
+      "bytes": 9032,
+      "note": "verbatim"
+    },
+    "ga.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\ga.py",
+      "sha256": "79fa3f0e3972958338372ecfa68337696749692bd1d7c35b3be0a866f53d60a9",
+      "bytes": 55675,
+      "note": "verbatim"
+    },
+    "jsonio.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\jsonio.py",
+      "sha256": "4d5d44dd4974d93d0068229f6c515d9ee137fce0c260672f5cc468b63f1a9034",
+      "bytes": 4293,
+      "note": "verbatim"
+    },
+    "master.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\master.py",
+      "sha256": "7e0346cce622e36f50e0d4b244038ee9f6fa6f09ea9d3b5821673366387e41be",
+      "bytes": 33684,
+      "note": "patched: CREATE_NO_WINDOW (guarded by os.name==nt on the MASTER Popen; suppresses the child console window on Windows, stdout/stderr redirection unaffected). Only deliberate delta from the pinned snapshot."
+    },
+    "parallel.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\parallel.py",
+      "sha256": "6c2f42765f13098f18c7d0acf37a50770b23fe97ef9ac2d793d13ce11a271815",
+      "bytes": 10348,
+      "note": "verbatim"
+    },
+    "reward.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\reward.py",
+      "sha256": "3c7b214960e7de2a21f034d2d19a0e14042c3e4e668394b5ea5ec42a65d91b45",
+      "bytes": 23246,
+      "note": "verbatim"
+    },
+    "search.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\search.py",
+      "sha256": "b4760ec35acb7162d089961fe90965478379d1e69a366d2956a3ff3d59949ce5",
+      "bytes": 3035,
+      "note": "shim: verbatim block lines 34-89 (EvaluationResult, PatternEvaluator, SurrogateEvaluator, EquilibriumEvaluator) + needed imports"
+    },
+    "surrogate.py": {
+      "source_path": "C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ 시범연료봉 장전 인허가 과제\\2026\\2_계산\\3_GA_Surrogate\\runs_flow\\20260713_061541\\cases\\K1_K2\\20260713_130413\\source\\master_rl\\surrogate.py",
+      "sha256": "a67883a91f6e08231beaaff03408a18d425d6c4f3e9e42a7f3c1a87477ccd844",
+      "bytes": 42126,
+      "note": "verbatim"
+    }
+  }
+}

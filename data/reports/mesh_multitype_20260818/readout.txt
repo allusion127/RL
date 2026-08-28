@@ -1,0 +1,120 @@
+=== 1. COVERAGE — which cells admit a composition-matched multi-type case ===
+cells swept: 90
+  with a 3-type case: 78   (R1 mono-spec 42, cross-spec 36)
+  with a 4-type case: 42   — ALL of them EXTRAPOLATION (0 four-type rows in the training store)
+  no 3-type ladder in the roster: 12 cells (e-levels [np.float64(5.5), np.float64(6.0)])
+
+by e-level:
+          n  has3  mono3  has4
+e_target                      
+5.0       6     6      6     0
+5.1       6     6      0     0
+5.2       6     6      0     0
+5.3       6     6      0     0
+5.4       6     6      0     0
+5.5       6     0      0     0
+5.6       6     6      6     6
+5.7       6     6      6     6
+5.8       6     6      0     6
+5.9       6     6      6     6
+6.0       6     0      0     0
+6.1       6     6      0     6
+6.2       6     6      6     6
+6.3       6     6      6     6
+6.4       6     6      6     0
+
+=== 2. THE DELTA — delta(3-2) on the joint-clean F_r floor ===
+(joint-clean = passes CBC, F_q, |AO| and predicted pin <= 78; F_r free)
+defined in 29/78 cells with a triple (the rest have no joint-clean core at one of the two counts)
+  mean +0.0361   median +0.0647   best -0.1377   worst +0.1092
+  gains beyond the 0.005 dead band: 9   losses beyond it: 19   inside it: 1
+
+per-cell, best delta first:
+     cell library_id                        pair                                    case_3  mono_anchor_3  nested_3  min_f_r_clean_2  min_f_r_clean_3  d_min_f_r_clean_3v2  clean_pin_2  clean_pin_3  n_clean_but_fr_2  n_clean_but_fr_3
+e5.6_f117     paramA P6253Z2G06N24_P6253Z2G10N24 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24           True         2           1.8697           1.7320              -0.1377      77.9680      77.9577                 3           38.0000
+e5.6_f121     paramA P6253Z2G06N24_P6253Z2G10N24 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24           True         2           1.7071           1.6625              -0.0446      75.5323      75.5363               680          326.0000
+e5.0_f113       ga80                       E1_E2                                  E3_E1_E2           True         2           1.5600           1.5163              -0.0437      75.2703      73.8914               128          186.0000
+e5.0_f125       ga80                       E1_E2                                  E3_E1_E2           True         2           1.4826           1.4484              -0.0342      68.6639      67.5391               867          632.0000
+e5.0_f121       ga80                       E1_E2                                  E3_E1_E2           True         2           1.4886           1.4568              -0.0318      68.9384      67.9403               893          668.0000
+e5.0_f117       ga80                       E1_E2                                  E3_E1_E2           True         2           1.4860           1.4567              -0.0293      72.9431      70.5806               538          444.0000
+e5.0_f129       ga80                       E1_E2                                  E3_E1_E2           True         2           1.5131           1.4891              -0.0240      69.0464      68.6738               656          523.0000
+e5.6_f129     paramA P6253Z2G06N24_P6253Z2G10N24 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24           True         2           1.7267           1.7071              -0.0196      74.8646      75.1851               593          262.0000
+e5.6_f125     paramA P6253Z2G06N24_P6253Z2G10N24 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24           True         2           1.6978           1.6866              -0.0112      75.2974      75.3480               599          274.0000
+e5.0_f109       ga80                       E1_E2                                  E3_E1_E2           True         2           1.5753           1.5730              -0.0023      77.3438      76.2070                14           25.0000
+e5.4_f129       ga80                       N1_N2                                  G3_N1_L1          False         1           1.6113           1.6236               0.0123      73.1284      73.2769               691          479.0000
+e5.4_f117       ga80                       N1_N2                                  G3_N1_L1          False         1           1.5714           1.6158               0.0444      77.4546      75.6077               197           79.0000
+e5.3_f129       ga80                       L1_L2                                  N1_L1_K1          False         1           1.5781           1.6249               0.0468      72.3482      71.6897               621          418.0000
+e5.2_f129       ga80                       K1_K2                                  L1_K1_J1          False         1           1.5747           1.6322               0.0574      72.0449      72.2168               663          382.0000
+e5.3_f121       ga80                       L1_L2                                  N1_L1_K1          False         1           1.4764           1.5411               0.0647      70.8522      71.7464               933          618.0000
+e5.1_f129       ga80                       J1_J2                                  K1_J1_E1          False         1           1.5604           1.6268               0.0663      70.3456      69.7222               706          388.0000
+e5.4_f121       ga80                       N1_N2                                  G3_N1_L1          False         1           1.4907           1.5571               0.0664      72.4800      73.2815               828          550.0000
+e5.2_f113       ga80                       K1_K2                                  L1_K1_J1          False         1           1.6243           1.6963               0.0720      77.1837      76.8629                85           42.0000
+e5.2_f117       ga80                       K1_K2                                  L1_K1_J1          False         1           1.5353           1.6094               0.0741      73.4149      77.1373               435          330.0000
+e5.3_f117       ga80                       L1_L2                                  N1_L1_K1          False         1           1.5457           1.6206               0.0750      76.2028      77.9188               215           77.0000
+e5.2_f121       ga80                       K1_K2                                  L1_K1_J1          False         1           1.4806           1.5594               0.0787      70.2630      70.6386               956          650.0000
+e5.1_f121       ga80                       J1_J2                                  K1_J1_E1          False         1           1.4864           1.5664               0.0800      69.0690      69.9482               958          662.0000
+e5.4_f125       ga80                       N1_N2                                  G3_N1_L1          False         1           1.5311           1.6197               0.0887      72.1935      74.4649               834          586.0000
+e5.1_f117       ga80                       J1_J2                                  K1_J1_E1          False         1           1.5177           1.6067               0.0890      76.0390      72.6217               586          345.0000
+e5.1_f113       ga80                       J1_J2                                  K1_J1_E1          False         1           1.5962           1.6931               0.0969      74.8649      77.1442               160           65.0000
+e5.2_f125       ga80                       K1_K2                                  L1_K1_J1          False         1           1.5085           1.6061               0.0976      70.8359      72.1527               839          587.0000
+e5.3_f125       ga80                       L1_L2                                  N1_L1_K1          False         1           1.5007           1.5985               0.0978      70.8766      71.6056               808          596.0000
+e5.1_f125       ga80                       J1_J2                                  K1_J1_E1          False         1           1.5171           1.6236               0.1065      69.3757      69.9203               862          518.0000
+e5.1_f109       ga80                       J1_J2                                  K1_J1_E1          False         1           1.6459           1.7551               0.1092      77.7997      76.8886                13            1.0000
+e5.2_f109       ga80                       K1_K2                                  L1_K1_J1          False         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.3_f109       ga80                       L1_L2                                  N1_L1_K1          False         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.3_f113       ga80                       L1_L2                                  N1_L1_K1          False         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.4_f109       ga80                       N1_N2                                  G3_N1_L1          False         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.4_f113       ga80                       N1_N2                                  G3_N1_L1          False         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.6_f109     paramA P6253Z2G06N24_P6253Z2G10N24 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.6_f113     paramA P6253Z2G06N24_P6253Z2G10N24 P6253Z2G10N20_P6253Z2G10N24_P6253Z2G06N24           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.7_f109     paramA P5853Z1G08N12_P6253Z1G06N24 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.7_f113     paramA P5853Z1G08N12_P6253Z1G06N24 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.7_f117     paramA P5853Z1G08N12_P6253Z1G06N24 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.7_f121     paramA P5853Z1G08N12_P6253Z1G06N24 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.7_f125     paramA P5853Z1G08N12_P6253Z1G06N24 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.7_f129     paramA P5853Z1G08N12_P6253Z1G06N24 P6253Z1G06N24_P6253Z2G08N16_P6253Z2G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.8_f109     paramA P6253Z1G06N24_P6253Z1G08N20 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.8_f113     paramA P6253Z1G06N24_P6253Z1G08N20 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.8_f117     paramA P6253Z1G06N24_P6253Z1G08N20 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.8_f121     paramA P6253Z1G06N24_P6253Z1G08N20 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.8_f125     paramA P6253Z1G06N24_P6253Z1G08N20 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.8_f129     paramA P6253Z1G06N24_P6253Z1G08N20 P6257Z2G08N16_P6253Z1G08N20_P6253Z1G06N24          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.9_f109     paramA P6253Z1G08N20_P6257Z1G10N12 P6257Z1G10N12_P6257Z2G06N12_P6257Z2G08N16           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.9_f113     paramA P6253Z1G08N20_P6257Z1G10N12 P6257Z1G10N12_P6257Z2G06N12_P6257Z2G08N16           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.9_f117     paramA P6253Z1G08N20_P6257Z1G10N12 P6257Z1G10N12_P6257Z2G06N12_P6257Z2G08N16           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.9_f121     paramA P6253Z1G08N20_P6257Z1G10N12 P6257Z1G10N12_P6257Z2G06N12_P6257Z2G08N16           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.9_f125     paramA P6253Z1G08N20_P6257Z1G10N12 P6257Z1G10N12_P6257Z2G06N12_P6257Z2G08N16           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e5.9_f129     paramA P6253Z1G08N20_P6257Z1G10N12 P6257Z1G10N12_P6257Z2G06N12_P6257Z2G08N16           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.1_f109     paramA P6656Z1G06N24_P6656Z2G08N12 P6661Z2G10N24_P6656Z1G06N24_P6656Z2G08N12          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.1_f113     paramA P6656Z1G06N24_P6656Z2G08N12 P6661Z2G10N24_P6656Z1G06N24_P6656Z2G08N12          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.1_f117     paramA P6656Z1G06N24_P6656Z2G08N12 P6661Z2G10N24_P6656Z1G06N24_P6656Z2G08N12          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.1_f121     paramA P6656Z1G06N24_P6656Z2G08N12 P6661Z2G10N24_P6656Z1G06N24_P6656Z2G08N12          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.1_f125     paramA P6656Z1G06N24_P6656Z2G08N12 P6661Z2G10N24_P6656Z1G06N24_P6656Z2G08N12          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.1_f129     paramA P6656Z1G06N24_P6656Z2G08N12 P6661Z2G10N24_P6656Z1G06N24_P6656Z2G08N12          False         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.2_f109     paramA P6656Z1G08N20_P6661Z2G06N16 P6656Z1G10N16_P6656Z1G08N20_P6656Z1G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.2_f113     paramA P6656Z1G08N20_P6661Z2G06N16 P6656Z1G10N16_P6656Z1G08N20_P6656Z1G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.2_f117     paramA P6656Z1G08N20_P6661Z2G06N16 P6656Z1G10N16_P6656Z1G08N20_P6656Z1G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.2_f121     paramA P6656Z1G08N20_P6661Z2G06N16 P6656Z1G10N16_P6656Z1G08N20_P6656Z1G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.2_f125     paramA P6656Z1G08N20_P6661Z2G06N16 P6656Z1G10N16_P6656Z1G08N20_P6656Z1G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.2_f129     paramA P6656Z1G08N20_P6661Z2G06N16 P6656Z1G10N16_P6656Z1G08N20_P6656Z1G06N24           True         1              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.3_f109     paramA P6661Z1G06N16_P6661Z1G08N20 P6661Z1G06N12_P6661Z1G06N16_P6661Z1G08N20           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.3_f113     paramA P6661Z1G06N16_P6661Z1G08N20 P6661Z1G06N12_P6661Z1G06N16_P6661Z1G08N20           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.3_f117     paramA P6661Z1G06N16_P6661Z1G08N20 P6661Z1G06N12_P6661Z1G06N16_P6661Z1G08N20           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.3_f121     paramA P6661Z1G06N16_P6661Z1G08N20 P6661Z1G06N12_P6661Z1G06N16_P6661Z1G08N20           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.3_f125     paramA P6661Z1G06N16_P6661Z1G08N20 P6661Z1G06N12_P6661Z1G06N16_P6661Z1G08N20           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.3_f129     paramA P6661Z1G06N16_P6661Z1G08N20 P6661Z1G06N12_P6661Z1G06N16_P6661Z1G08N20           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.4_f109     paramA P6661Z1G06N12_P6661Z1G10N12 P6661Z1G10N12_P6661Z1G06N12_P6661Z1G08N16           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.4_f113     paramA P6661Z1G06N12_P6661Z1G10N12 P6661Z1G10N12_P6661Z1G06N12_P6661Z1G08N16           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.4_f117     paramA P6661Z1G06N12_P6661Z1G10N12 P6661Z1G10N12_P6661Z1G06N12_P6661Z1G08N16           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.4_f121     paramA P6661Z1G06N12_P6661Z1G10N12 P6661Z1G10N12_P6661Z1G06N12_P6661Z1G08N16           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.4_f125     paramA P6661Z1G06N12_P6661Z1G10N12 P6661Z1G10N12_P6661Z1G06N12_P6661Z1G08N16           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+e6.4_f129     paramA P6661Z1G06N12_P6661Z1G10N12 P6661Z1G10N12_P6661Z1G06N12_P6661Z1G08N16           True         2              NaN              NaN                  NaN          NaN          NaN                 0            0.0000
+
+=== 3. THE 2-TYPE CONTROL — this sweep's k=2 vs the v3 (s1g) sweep ===
+cells matched: 90   same 2-type pair in both: 90/90
+in-band min predicted F_r, s1i - s1g: mean +0.0138  median +0.0005  sd 0.0413
+tier-1 feasible cells: v3(s1g, 4 axes) 16  ->  this sweep (s1i, 5 axes) 16  [4-axis on s1i: 19]
+The 4-axis column is the like-for-like one; the drop to 5 axes is the pin gate doing work, not a modelling change.
+
+=== 4. CALIBRATION — the one MEASURED 3-type delta (PREREG §6) ===
+hgd569/f125   predicted delta -0.0044   measured delta -0.0364   sign reproduced: True

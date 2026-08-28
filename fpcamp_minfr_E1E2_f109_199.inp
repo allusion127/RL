@@ -1,0 +1,377 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — LOW-FEED OPENING CAMPAIGN, ROUND 2 (feed-109 column)
+# E1_E2 / feed 109 / ga80 (e_core 5.0)  |  champion s1g  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_E1E2_f109_199.inp \
+#        --run-dir runs/fpcamp_minfr_E1E2_f109 --no-early-stop`
+#
+# Direct successor to fpcamp_minfr_N1N2_f113_199.inp (2026-08-16), which opened
+# the f113 column: 41 feasible cores, best F_r 1.4961 @ 641.6 EFPD, first
+# feasible core at MASTER call 23.  Results:
+# data/reports/fpcamp_N1N2_f113_results_20260816.md.  The design below is that
+# deck's design, unchanged except where noted.
+#
+################################################################################
+# PRE-REGISTRATION — written 2026-08-17, BEFORE launch.  User-approved design.
+################################################################################
+#
+# OBJECTIVE (registered, one line):
+#   PURE F_r MINIMISATION UNDER SAFETY GATES ONLY.  NO cycle-length target and
+#   NO cycle-length band.  cyclen is RECORDED on every row and is the objective's
+#   subordinate tie-break, nothing more.  Identical to the f113 campaign.
+#
+# ============================== CELL CHOICE ================================= #
+#
+# The brief delegated the f109 cell choice to the evidence.  **E1_E2 / feed 109
+# (e_core 5.0)** is chosen.  All six ga80 cells of the f109 column were compared
+# on the three named sources.  The table is the whole argument:
+#
+#  mesh cell   pair    DB floor  store   s1g       s1g    corrected  verdict        feasible  morph
+#              (own pair)        floor   min_pred  bias   floor                     elites    units
+#  e5.0_f109   E1_E2   1.5366    1.7692  1.5654    +0.020 **1.5458** model-biased   **434**   3
+#  e5.1_f109   J1_J2   1.5376    1.6796  1.6050    +0.016   1.5891   pool-starved    63       3
+#  e5.2_f109   K1_K2   1.5457    1.7254  1.5957    +0.033   1.5625   pool-starved   119       3
+#  e5.3_f109   L1_L2   1.5391    1.6846  1.6197    +0.051   1.5684   pool-starved    27       3
+#  e5.4_f109   N1_N2   1.5420    1.6940  1.5780    +0.017   1.5612   pool-starved    67     **1**
+#  e5.5_f109   G3_G4   1.5449    1.7616  1.7170    +0.055   1.6617   pool-starved    14       3
+#
+#  (DB floor from data/reports/dbx_frontier_table.csv, per-pair at feed 109.
+#   s1g columns from data/reports/scoping_mesh_20260815/{mesh_nodes,cell_verdicts}.csv
+#   — verified to be the s1g re-read, not s1f: mesh_nodes.csv row e5.4_f113 reads
+#   min_pred_f_r 1.5145 / n_feasible 255, matching comparison_readout.md §10.4
+#   exactly.  "feasible elites" = constraint-feasible store rows for that PAIR
+#   across ALL feeds, i.e. what `_store_elites` can actually hand the pool.
+#   "morph units" = octant n_fresh distance from the bulk donor feed to 27.)
+#
+# WHY E1_E2 — three independent reasons, in order of weight:
+#
+#  1. IT IS THE ONLY `model-biased` CELL IN THE WHOLE f109 COLUMN.  Every other
+#     f109 cell is `pool-starved`.  By the readout's own definition that verdict
+#     means the pool is NOT the binding problem: E1_E2/f109's bias-corrected pool
+#     floor is **1.5458, INSIDE the 1.55 gate**, and only s1g's residual frontier
+#     pessimism (+0.0196) keeps the raw prediction (1.5654) outside it.  Removing
+#     exactly that pessimism, by putting MASTER labels in the cell, is what this
+#     campaign does.  No other f109 cell has a corrected floor under the gate
+#     (next best is N1_N2 at 1.5612, still +0.011 OVER).
+#  2. THE DEEPEST ELITE POOL IN THE PROGRAM — 434 constraint-feasible E1_E2 rows
+#     across all feeds.  Pre-flighted against the real selection: **all 32
+#     elite_top_k slots fill with FEASIBLE parents spanning F_r 1.4636–1.4935**,
+#     every one below 1.50, and the top parent IS the program-wide ga80 incumbent
+#     (1.4636, cyclen 633.3).  The f113 campaign opened its cell from 26 feasible
+#     parents of which only 26/32 slots were feasible and the best was 1.4932.
+#     This cell starts strictly better seeded.
+#  3. `gap_search = −0.1553`, the most negative in the f109 column: the pool
+#     already out-performs this cell's own stored minimum by 0.155.
+#
+# WHY NOT THE THREE BETTER DB FLOORS.  E5_E6 (1.5290), L3_L4 (1.5304) and
+# J7_J8 (1.5321) all beat E1_E2's DB floor.  **All three have ZERO
+# constraint-feasible store rows anywhere in the pair** — E5_E6 and J7_J8 have no
+# store rows at all, and L3_L4 has 117 converged f109 rows of which none is
+# feasible.  Launching there would reproduce the M5 pilot failure documented at
+# campaign.py:985-1000 (0 of 32 "elites" feasible -> no feasible-neighbourhood
+# child is ever generated).  A better DB floor with no seed is not a better cell.
+#
+# WHY NOT N1_N2/f109, THE OBVIOUS CANDIDATE.  It is the only pair whose elite
+# pool now contains the f113 campaign's 41 new cores, and its morph is the
+# smallest possible (n_fresh 28 -> 27, ONE unit).  It was seriously considered
+# and rejected on the readout's own control experiment:
+#   * comparison_readout.md §10.2 separates the s1g gain into MODEL and POOL
+#     terms.  At f109 the column gap moved −0.0516, of which **−0.0444 (86%) is
+#     model and only −0.0072 is pool**.  The pool term touched just 3 of 55 cells
+#     and **opened none of them.**
+#   * So "the transfer-boosted model" that this campaign is registered to test is
+#     s1g ITSELF, and that boost is delivered to the ENTIRE f109 column — not
+#     preferentially to N1_N2.  The f113 donor-pool effect is the smaller term by
+#     a factor of six.
+#   * N1_N2/f109 stays `pool-starved` under s1g with a corrected floor of 1.5612,
+#     i.e. s1g does NOT predict it opens even after bias correction.
+#   Choosing N1_N2 would optimise for the narrative (donor cores next door) over
+#   the measurement (which cell s1g says is openable).  E1_E2 is the stronger test.
+#
+# NOTE ON THE BRIEF'S DONOR CHECK.  The brief asked to "verify the elite query
+# picks up" the f113 cores.  Verified, and the answer is a scoping fact:
+# `_case_store_rows` (campaign.py:980) filters the store by `case_pair` ONLY.
+# The 41 f113 cores are `case_pair = N1_N2`, so they are donors for **N1_N2
+# cells only** and are NOT in this campaign's elite pool.  This deck's donors are
+# E1_E2's own 434 feasible rows (bulk at f121).  The claim "f113 cores are prime
+# donors alongside f121" holds for an N1_N2 campaign; it does not transfer across
+# pairs, and the deck does not pretend otherwise.
+#
+# ---------------------------------------------------------------- THE MARKS --
+#
+# 1. DB TRUTH — dbx_frontier_table.csv, pair E1_E2, feed 109 (44 cores, 43
+#    feasible, one split bucket 55-60):
+#       F_r_min      **1.5366**
+#       best core    split 0.5596 = **E1 ×61, E2 ×48**, EFPD 601.3,
+#                    CBC_max 1256.0, F_q 1.895, ncyc 7
+#    Cross-check, cell_verdicts.csv row e5.0_f109: the SEGMENT's DB floor is
+#    1.5290 but that belongs to **E5_E6**, a different pair with no seeds.  The
+#    like-for-like mark for this campaign is E1_E2's own 1.5366.
+#
+# 2. THIS CELL'S STORE FLOOR — data/store/records.parquet, case_pair=E1_E2,
+#    feed=109, converged (177 of 292):
+#       F_r      min **1.7692**   p10 1.9276   p50 2.1704   p90 2.7199
+#       cyclen   550.5 – 595.2 (p50 576.7)
+#       feasible **0** — not one of the 177 clears the four gates.
+#       campaigns: 5-5.25_f109 (153), fill_5-5.25_f109 (24) — produce sampling only.
+#    DATA GAP = 1.7692 − 1.5366 = **+0.2326**, the largest of any cell this
+#    programme has opened (f113's was +0.1869).
+#
+# 3. s1g's PREDICTED FLOOR FOR THIS CELL — mesh_nodes.csv row e5.0_f109
+#    (1200 candidates, model-only, no MASTER):
+#       min_pred_f_r      **1.5654**
+#       n_feasible        **0 / 1200**
+#       max_pred_cyclen   592.83
+#       in_distribution   False
+#       frontier bias     +0.0196  ->  corrected floor **1.5458**
+#       verdict           **model-biased** (the only one at f109)
+#    s1g IS calibrated for this exact cell: `feed=109|ebin=5.0`, **n=407** (the
+#    largest per-cell calibration sample of any f109 candidate), F_r affine
+#    a=1.2685 b=−0.4297 taking MAE 0.1192 -> 0.0441.
+#
+# --------------------------------------------------------- REGISTERED READOUTS
+# Fixed before launch; all four are reported whatever they say.
+#
+#   R1  BEST F_r vs the 1.55 gate and vs DB truth 1.5366.
+#   R2  CALLS-TO-FIRST-FEASIBLE, against the f113 benchmark of **23**.
+#       This is the headline transfer question: does the transfer-boosted model
+#       (s1g, whose f109 improvement is 86% model-driven) open a cell FASTER
+#       than s1f did at f113?  Registered directions:
+#         < 23  -> transfer accelerated the opening
+#         ~ 23  -> transfer moved the floor but not the speed
+#         > 23  -> no acceleration; report it plainly.  NOTE the confound
+#                  registered in advance: this cell has a LARGER data gap
+#                  (+0.2326 vs +0.1869) and a WORSE historical convergence rate
+#                  (60.6% vs 68.4%), so it is a harder cell on two axes; a slower
+#                  opening would not by itself falsify transfer.
+#   R3  (cyclen, F_r) PARETO FRONT — recorded whatever the objective ranks.
+#   R4  FEASIBLE YIELD CURVE — feasible rows per wave (f113 ran 0,0,1,2,3,5,4,2,
+#       5,5,4,6,4 = 41/100).
+#
+# --------------------------------------------------------------- SUCCESS ----
+#   PRIMARY   a MASTER-verified constraint-feasible core (F_r ≤ 1.55, CBC ≤ 1600,
+#             F_q ≤ 2.41, |AO| ≤ 0.30) at E1_E2/feed-109.  There is currently
+#             ZERO such row in the store for this cell.
+#   SECONDARY F_r ≤ 1.5366 — matching or beating the DB's own best core here,
+#             with a loading pattern we actually hold (the DB ships none).
+#   STRETCH   F_r < 1.4636, the programme-wide ga80 incumbent.  Registered as a
+#             stretch and NOT expected: the incumbent sits at f121 with 24 more
+#             fresh assemblies, and no f109 cell has ever produced a feasible row.
+#   PARTIAL   no feasible core, but the cell floor moves below 1.7692.  Every
+#             0.01 is a frontier label where s1g has never seen one.
+#   NULL      the floor does not move below ~1.77 in 100 calls.  PUBLISHABLE.
+#             The reading would be that s1g's `model-biased` verdict is wrong at
+#             this cell — that the corrected floor of 1.5458 was an artefact of a
+#             bias measured on rows two-tenths away from the frontier — and the
+#             f109 column needs its own labels before any cell in it opens.
+#
+# ---------------------------------------------------------------------------
+# CARRIED UNCHANGED FROM THE f113 DECK (all vindicated there; see §6 of the
+# results report for the audit):
+#
+#   * lambda_Fr = 1000.0.  NOT 0.0: `acquisition.py:474` is
+#     `scalar = cyclen_lcb − lam_fr·fr_ucb`, so lambda=0 deletes the F_r term and
+#     silently inverts the campaign into pure cycle-length maximisation.  1000 is
+#     the code's own "F_r strictly dominates" default and makes the acquisition
+#     agree with the hard-coded lexicographic best-tracking (campaign.py:1457).
+#     MEASURED AT f113: at lambda 200/400 the infeasible wave-0 long-cycle boards
+#     outrank the first feasible core; at 1000 they rank last.
+#   * NO cyclen band.  `cycle_target_efpd` / `cycle_tolerance_efpd` gate nothing
+#     on this objective (`feasibility_limits_for` leaves cyclen_lo/hi = None;
+#     `_is_on_target` short-circuits True).  Set below only so the report's
+#     `distance` readout means something, and set WIDE so it cannot express a
+#     preference.
+#   * elite_frac 0.65 / guided 0.10 / diversity 0.25, n_moves 2/5, elite_top_k 32.
+#   * budget 100 = 12 waves x 8 + 4 reserve; --no-early-stop at the launcher.
+#
+# CHANGED FROM THE f113 DECK:
+#   * [case] N1_N2/113 -> E1_E2/109; [model] s1f -> s1g; e_core 5.4 -> 5.0.
+#   * random_seed 1201 -> **1109** (fresh; no prior campaign used it).
+#   * **THE [constraints] BLOCK IS DROPPED.**  It was measured INERT on this
+#     objective at f113: the log read "SDM/MTC gate: no delivery ranking to
+#     verify (objective='min_fr_max_cycle'; the gate targets the flat_power
+#     delivery candidates, decision D9) — gate not run", and
+#     `post_verify_calls = 0`.  Both parent decks carry it; it does nothing here
+#     and a deck that sets an inert knob teaches the next reader something false.
+#   * cycle_target_efpd 659.7 -> 601.3 (this cell's DB-truth EFPD).
+#
+# ---------------------------------------------------------------------------
+# ASSET RESOLUTION — level 2 (pair_feed), predicted exactly.
+#
+# `CaseKey.folder` is `pair` when feed == 121 and `<pair>_f<feed>` otherwise, so
+# this case's folder is `E1_E2_f109`, which does not exist.  The kit holds TWO
+# same-pair base folders:
+#     FEASIBLE_PACKAGE/bases/E1_E2       -> MAS_RST.APRQ_11_0635.19   (feed 121)
+#     FEASIBLE_PACKAGE/bases/E1_E2_f117  -> MAS_RST.APRQ_11_0615.88   (feed 117)
+# The pair_feed rung takes the NEAREST feed folder: |117−109| = 8 beats
+# |121−109| = 12, so resolution must land on **MAS_RST.APRQ_11_0615.88**.
+#
+# THIS IS ALREADY PROVEN FOR THIS EXACT CELL: all 292 stored E1_E2/f109 rows
+# carry `restart_provenance = pair_feed:MAS_RST.APRQ_11_0615.88`.  Spot-check
+# wave 0 of labels.jsonl; every row must read that string.  (At f113 the
+# equivalent prediction matched on 98/98 rows.)  Template resolves the same way
+# via the same-pair tier — `cores/E1_E2` (32 dirs) and `cores/E1_E2_f117` both
+# exist.  `promote()` is never called by `lpopt optimize` (only by ProduceDriver,
+# produce.py:1287) and the kit's promoted root is empty, so level 1 cannot fire.
+#
+# FIXED-POINT TOLERANCE: `max_cycles = 16`, `consecutive = 2`, unchanged.  All
+# 177 converged rows here landed in 7-12 cycles with ZERO at the cap.
+# BUDGET REALISM: this cell converges at **60.6%** historically (115 of the 292
+# failures are `non_finite_flux`), the worst of the f109 candidates — expect
+# ~60-75 usable labels from 100 calls.  At f113 the morphed-elite region actually
+# converged at 98%, far above that cell's 68.4% history; whether that repeats is
+# an open question, not an assumption.
+#
+# PRECONDITIONS SHIPPED WITH THIS LAUNCH:
+#   1. data/models/s1g -> the kit (it was NOT there; the kit held up to s1f).
+#      207,997,335 bytes, 30 files, verified byte-exact after transfer.
+#   2. data/store/records.parquet on the kit is the post-f113-merge canonical
+#      store (74,003 rows) — it already carries the 100 f113 labels, so the
+#      (feed 109, e_core 5.0) trust-region bin holds 177 converged labels.
+#
+# NOTE (D) — the `[optimize][DEPRECATED]` banner for `min_fr_max_cycle` is
+# EXPECTED and is not a failed launch (campaign.py:72).
+# NOTE (R) — `lpopt report`'s "Best verified loading patterns" table ranks by
+# CYCLE DISTANCE regardless of objective, so it will NOT show the F_r winner.
+# Read `state.json -> best`.  Known defect, documented at f113 §7.1.
+#
+# CONSTRAINTS HONOURED: 198 / 181 / 238 untouched.  Canonical store READ-ONLY
+# until the final merge.  Fresh run dir (no meshcalc or prior campaign dir is
+# reused).  199 was idle with 52.6 GB free at arming time.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle LOW-FEED OPENING r2 — E1_E2/f109 (ga80, e_core 5.0), champion s1g, PURE F_r min, NO cycle band, CBC gate 1600"
+output_root = "runs"
+random_seed = 1109
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+workers = 8
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # the ga80 package, relative to the kit root
+harvest_maps = true                 # record-only on this objective; kept so every
+                                    # row carries node_peak / map_cov
+
+[case]
+mode = "fixed"
+pair = "E1_E2"
+feed = 109
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1g"   # 8th champion.  Calibrated for THIS cell:
+                                # feed=109|ebin=5.0, n=407, F_r affine MAE 0.0441.
+                                # Frontier bias here +0.0196 (pessimistic) — the
+                                # bias this campaign's labels exist to correct.
+cond_schema = "v6b"
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "ga80"
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # pre-flighted: all 32 elite slots fill with
+                             # FEASIBLE E1_E2 parents, F_r 1.4636–1.4935, and all
+                             # 32 feed-morph cleanly to n_fresh 27
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+near_miss_f_r = 1.65         # LIVE: admits THIS CAMPAIGN'S own verified rows with
+                             # F_r <= this into the tight (n_moves=1) arm.  Same
+                             # value as f113 and for the same reason: it sits well
+                             # below this cell's store floor (1.7692) so the arm
+                             # cannot fill with the produce rows we are beating,
+                             # and well above s1g's corrected floor (1.5458) so it
+                             # arms as soon as the campaign enters new territory.
+                             # A search knob; gates nothing.
+near_miss_top_k = 8          # INERT here (flat_power only); left at the default
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the (feed 109, e_core 5.0 ± 0.1) bin holds 177
+                             # converged labels — comfortably in support
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1                  # at f113 this arm produced 37 of the 41 feasible
+                             # cores once the elites had seeded the basin
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 100
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 1000.0        # see the header: lambda=0 inverts the objective
+
+# --- feasibility: all four axes GATE in this mode -----------------------------
+f_r_limit = 1.55             # licensing limit AND the PRIMARY success bar.  Not
+                             # tightened toward 1.5366: at 1.55 the pair offers
+                             # 434 feasible elite parents; tightening would sink
+                             # nearly every candidate under the 1e4 constraint
+                             # tier and the search would rank "least infeasible".
+cbc_limit = 1600.0           # programme decision 2026-08-11
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING. --------------------------
+cycle_target_efpd = 601.3    # the DB-truth core's EFPD for THIS cell, so
+                             # `distance` reads as "EFPD off the DB-truth cycle".
+                             # NOT a target the search pursues.
+cycle_tolerance_efpd = 30.0  # band 571.3-631.3 spans this cell's whole observed
+                             # range (550-595) plus the DB region.  Deliberately
+                             # too wide to express a cycle preference.
+
+# --- wave online-update gate -------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # E1_E2 resolves its template via the same-pair tier

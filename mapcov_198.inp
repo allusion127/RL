@@ -1,0 +1,64 @@
+# lpopt MAP-COVERAGE deck -- 198 (band 5.5-5.75 map deficit).
+# 2026-07-26. Selection is PURELY map-coverage deficit + flatness-supervision
+# diversity; F_r is OFF the objective and no F_r-boundary bias is present.
+# NOTE ON SEMANTICS: `produce` dedups against store record_ids, so this does NOT
+# retrofit maps onto the existing map-less rows -- it ADDS NEW patterns that carry
+# maps + EDIT5 trajectory + EDIT6 axial.  Cell coverage% rises by addition.
+# Every label here feeds node_peak / map_cov directly.
+
+[flow]
+title = "map-coverage 198 (band 5.5-5.75, seed 1210)"
+random_seed = 1210
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"
+harvest_maps = true
+
+[model]
+model_dir = "data/models/20260725_063351"   # A6 champion (honest-gate promoted 2026-07-25, v6)
+cond_schema = "v6"           # A6 = 52ch v6; must match the champion
+store_dir = "data/store"
+library_id = "ga80"
+device = "cpu"
+
+[produce]
+campaign = "newfeed20260725"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+workers = 16
+use_all_cores = true
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 14
+purge_intermediate = true
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+
+[[produce.strata]]
+name = "mc_5.5-5.75_f125"
+campaign = "mc_5.5-5.75_f125"
+library = "ga80"
+pairs = ["G3_G4", "H1_H2", "H3_H4"]
+feed = 125
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 150
+priority = 100
+
+[[produce.strata]]
+name = "mc_5.5-5.75_f101"
+campaign = "mc_5.5-5.75_f101"
+library = "ga80"
+pairs = ["G3_G4", "H1_H2", "H3_H4"]
+feed = 101
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 150
+priority = 100

@@ -1,0 +1,322 @@
+# lpopt campaign deck (TOML) — example with known real values.
+# Loaded by `python -m lpopt <cmd> --input lpopt.inp` (see lpopt.config).
+
+[flow]
+title = "K1_K2 pilot"
+output_root = "runs"
+random_seed = 0
+
+[master]
+# Local Windows MASTER executable (MASTER runs on the local PC — plan 4.7).
+executable = "D:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+workers = 8
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+# MASTER package root (FEASIBLE_PACKAGE: lib/, bases/, cores/). Relative to this deck.
+package_root = "../3_GA_Surrogate/FEASIBLE_PACKAGE"
+harvest_maps = true          # roadmap 20260725: maps + EDIT5 traj + EDIT6 axial
+
+[remote]
+# gpu2-6000 (RTX PRO 6000 Blackwell) — training host. Plan 4.7.
+host = "HOST_238"      # ssh alias "gpu2-6000(40.238)" rejected by OpenSSH (parens) -> explicit
+user = "USER"
+port = 8022
+workdir = "~/lpopt_ws"
+env = "~/lpopt_ws/venv"
+gpu = 0                      # 사용자 지시 2026-07-24: GPU 0 고정 (GPU 1 사용 금지, 재허가 전까지 auto 금지).
+tmux_prefix = "lpopt"
+
+[case]
+mode = "fixed"               # fixed | feed_range | free  (v1 implements 'fixed' end-to-end)
+pair = "K1_K2"
+feed = 121
+
+[model]
+# Position-value backend for the campaign (plan sec. 4.5). The trained ensemble
+# lives under data/models/<ts>/ (5 members + ensemble.json + calibration.json).
+backend = "posval_cnn"       # posval_cnn | sklearn_fallback (MODEL_HALT fallback)
+model_dir = "data/models/s1i"   # 9th champion (round 12, arm S1h — honest-gate promoted 2026-08-17: no_regression worst_drop 0.021 vs eps 0.139, blind_targets [], legacy tail PASS; prereg data/reports/ab2_addendum_S1H_20260817.md, gate data/reports/gate_s1h.json). FIRST checkpoint that can encode a 3-fresh-type core: cond_schema v7 = v6c cells (62ch) + 5 appended composition globals (13->18). Trained on S1h (62,379/12,098) at the frozen 224/8/384 x5 recipe.
+cond_schema = "v7"           # 62ch (= v6b 58 + v6c ADF 4) + 18 globals (= 13 + g_type_frac_1..3, g_e_type_std, g_n_fresh_types).
+                             # MUST track model_dir: gate-promote rewrites model_dir only, so this key is
+                             # updated by hand at every promotion that changes schema.  A stale value here is
+                             # not silently served — PosValCnnBackend rebuilds the encoder from the CHECKPOINT's
+                             # own meta.json and REJECTS a supplied encoder whose schema disagrees — but a deck
+                             # that misdescribes its own champion is a trap for the next reader.
+# --- hires map-path structure (arm A6) — cond_schema와 반드시 한 세트로 움직인다 ---
+# v6 스키마에 선형 맵헤드를 쓰면 추가 채널값을 지불하고도 644-파라미터 1x1 판독기가
+# 그것을 쓰지 못한다(A6 결과 node_peak Δ75/SD 1.41→0.70이 재현되지 않음).
+# curriculum._v5_train_config / _v5_train_flags가 로컬·원격 재학습 양쪽에 동일하게 전달한다.
+map_head_mode = "multiscale"       # 스템+중간탭 스킵 디코더 (고주파 경로)
+map_prior_residual = true          # prior_power 채널을 맵헤드에 가산 스킵 (잔차 학습)
+map_spectral_weight = 0.3          # 대역가중 FFT 맵 손실
+device = "cpu"               # local torch device for the CPU path + wave fine-tune (plan 4.7)
+# Campaign inference backend (plan 4.7).  Pick where the large-pool screen/deepen
+# bulk predictions run:
+#   inference = "local_cpu"   # (default when omitted) score every candidate on this
+#                             #   PC's CPU — network-independent; survives a server outage.
+#   inference = "remote_gpu"  # offload the big screen batches to the gpu2-6000 GPU 1,
+#                             #   returning only the ranked score arrays (a few MB).  Probes
+#                             #   the [remote] server first (5 s) and — if unreachable, or on
+#                             #   ANY per-batch transport error mid-campaign — logs loudly and
+#                             #   falls back to local CPU (never aborts, never partial scores).
+# Omitting `inference` keeps the legacy `remote_screening` key (below) in charge, so
+# an unchanged deck behaves exactly as before.  `device` above is unaffected either way.
+inference = "local_cpu"
+# remote_screening = false   # legacy alias for `inference`; "auto" | true | false.
+# remote_screening_min = 5000  # only route batches with >= this many predictions to the GPU.
+library_id = "ga80"
+store_dir = "data/store"
+
+[search]
+# Candidate-pool construction (plan sec. 4.6). dry_run_pool_size keeps the
+# StubEvaluator acceptance run CPU-friendly; live uses pool_size.
+pool_size = 20000
+pool_cap = 100000
+elite_frac = 0.60
+guided_frac = 0.30
+diversity_frac = 0.10
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+dry_run_pool_size = 400
+
+[search.trust_region]
+# Support-grid gate (plan sec. 6.2). v1 fixed feed-121 -> trivially satisfied,
+# but the gate is always active (off-grid candidates are hard-zeroed).
+enabled = true
+feed_step = 4                # one reachable feed step = 4 assemblies (1+4N grid)
+e_core_band = 0.10
+n_min = 50
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 256
+neighbors = 200
+depth = 3
+max_predictions = 40000
+n_moves = 1
+
+[acquisition]
+# Budget / wave composition / gates (plan sec. 4.6). 100 = 12 waves x 8 + 4 reserve.
+budget = 100
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+# objective (target_cycle) + constraints (plan sec. 1-4)
+cycle_target_efpd = 625.0
+cycle_tolerance_efpd = 2.0
+risk_z = 0.25
+f_r_limit = 1.55
+cbc_limit = 1550.0
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+# wave online-update gate
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+# stopping
+min_waves_before_stop = 6
+no_improve_waves = 3
+# dry-run lighter compute (StubEvaluator acceptance path; live keeps the above)
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[data]
+# Extraction source paths (populated at milestone M2). Empty for M0.
+sources = []
+lp_cache = []
+lp_case_decks = []
+eqlp_ws = []
+ga_manifests = []
+ga_event_logs = []
+
+[extract]
+# Dataset A extraction (M2). Each workspace expands to its sa_2b_cache.jsonl +
+# sa_2b_cache.stale-*.jsonl caches and its runs/ tree (case decks + run_meta).
+# The three defaults expand to the 11 real cache files.
+workspaces = ["../2_LP/0_Case", "D:/eqlp_ws", "D:/eqlp_ws_rev02"]
+store_dir = "data/store"
+reports_dir = "data/reports"
+workers = 8
+
+[produce]
+# Learning-data production campaign (plan section 5). `lpopt produce [--dry-run]`.
+# The MASTER package (lib/, bases/, cores/) is [verify].package_root above; the
+# 80-type ga80 library is harness-native, so replace_lpd_shf + restart-reference
+# rewrite make any (pair, feed) deck (plan 5.2).
+campaign = "P0_pathfinder"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+# CPU 100% for data production: one MASTER chain per logical core (P-cores first,
+# then E-cores), minus host_reserve for the Python host.  workers=0 => auto (fill
+# the pool); set a positive value to cap.  use_all_cores=false => legacy 8 P-cores.
+workers = 0
+use_all_cores = true
+host_reserve = 1
+chain_timeout = 3600
+max_cycles = 14
+resume = true
+purge_case_dirs = true
+promoted_root = "data/produce/promoted"
+# Readable template-deck fallback (the exact case decks are OneDrive-dehydrated;
+# the runs_flow GA candidate decks are fully hydrated — plan environment reality).
+template_fallbacks = [
+  "../3_GA_Surrogate/runs_flow/*/cases/*/*/candidates/*/rank_*_*/MAS_INP_cy*.inp",
+]
+
+# --- P0 pathfinder: 8 probe cells x 24 chains = 192 (plan 5.3) --------------
+# f117 seed reproduce + feed 105/109 probes + fixed-point-identity placeholders
+# + one 125 discharge-gate probe.  ga80 native pair K1_K2 (feed axis around it).
+
+[constraints]
+# SDM / MTC PRE-DELIVERY GATE (decision D9, 2026-07-25).
+#
+# The flat_power objective removed F_r from the objective, which is what lets the
+# search flatten - and flattening monotonically degrades control-rod worth and
+# raises leakage.  Neither is measured by ANY search axis, so both are checked
+# here, after the campaign picks its top-K flat feasible (= feasible EXCLUDING
+# F_r) delivery candidates.  Each enabled axis costs ~1 extra MASTER branch call
+# per candidate; those calls are reported SEPARATELY from the search budget.
+#
+# enable and limit are INDEPENDENT:
+#   *_enable = false            -> the axis is not run at all (the default: extra
+#                                  MASTER calls are never implicit)
+#   *_enable = true, no limit   -> REPORT-ONLY (measured + recorded, no violators)
+#   *_enable = true, limit set  -> GATED (out-of-limit candidates are marked)
+#
+# ---------------------------------------------------------------------------
+# OPEN USER QUESTION - the limits below are deliberately COMMENTED OUT.
+# We do not know this project's licensing thresholds.  The APR1400 DCD Table 4.3
+# values (what MOCHA uses) are suggested here and must be CONFIRMED before any
+# gate is switched on:
+#     mtc_max_pcm_per_c = 9.0        # most-POSITIVE allowed MTC [pcm/C]
+#     mtc_min_pcm_per_c = -54.0      # most-negative allowed MTC [pcm/C]
+#     sdm_required_pcm  = 10870.0    # minimum shutdown margin [pcm]
+#                                    #   = CEA allowance 10180 + uncertainty 690
+# ---------------------------------------------------------------------------
+mtc_enable = false
+sdm_enable = false
+post_verify_top_k = 3
+
+[curriculum]
+# Cell-sequential curriculum (plan section 12.2/12.3). `lpopt curriculum`.
+# Walks (e_core band x feed) cells outward from the support anchor, running a
+# crash-safe per-cell state machine with blind transfer measurement BEFORE each
+# increment of learning and a re-validation gate AFTER.  Cell 1 = (5.25-5.5, 117).
+state_dir = "data/curriculum"
+library = "ga80"
+anchor_band = [5.25, 5.5]
+anchor_feed = 117
+probe_size = 16
+n_target = 150
+min_band_types = 4
+max_pairs = 4
+generators = { random = 0.4, heuristic = 0.4, elite_perturb = 0.2 }
+retrain_mode = "remote_full"     # remote_full | local_finetune | local_full
+retrain_ensemble = 5
+retrain_split = "S1"
+# Honest no-regression gate epsilon.  Recalibrated 0.05 -> 0.10: at n=30 per-cell
+# holdouts + a max-of-6 gate statistic, 0.05 has ~53% family-wise false-reject
+# under an equivalent candidate; 0.10 (per-check ~0.07) is the 5% family-wise
+# rate (data/reports/gate_noise_analysis.md).
+gate_noreg_epsilon = 0.10
+# Curriculum-cell sampling-weight cap OVERRIDE (legacy corpus keeps [train] 8.0):
+# lets previously-learned cells fully un-cap (cells 1-3 uncapped ~= 12.9) so their
+# ranking holds against a new cell's gradient (negative-transfer mitigation).
+cell_weight_cap = 16.0
+gate_mini_budget = 16
+# Cell-1 in-band ga80 pairs (L=5.3, N=5.4 land in [5.25,5.5); K1_K2_f117 is the
+# nearest-e_core fallback restart).  Omit to auto-select from the band's types.
+[curriculum.cell_pairs]
+"5.25-5.5_f117" = ["L1_L2", "N1_N2"]
+
+[[produce.strata]]
+name = "p0_fixedpoint_121"        # fixed-point identity trial placeholder (native restart)
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 121
+center_batch = "auto"
+split_w1 = [0.5]
+generators = { random = 0.7, heuristic = 0.3 }
+n_target = 24
+priority = 90
+
+[[produce.strata]]
+name = "p0_f117_seed"             # f117 3-batch seed reproduce (plan M2.5 acc. 5)
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 117
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 24
+priority = 100
+
+[[produce.strata]]
+name = "p0_feed113"
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 113
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 24
+priority = 95
+
+[[produce.strata]]
+name = "p0_feed109"              # S3b core cell
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 109
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 24
+priority = 100
+
+[[produce.strata]]
+name = "p0_feed105"              # S3b core cell (625-EFPD bracketing region)
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 105
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 24
+priority = 100
+
+[[produce.strata]]
+name = "p0_feed97"
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 97
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 24
+priority = 80
+
+[[produce.strata]]
+name = "p0_feed125_discharge"    # high-feed envelope, single-cycle discharge gate
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 125
+allow_single_cycle_discharge = true
+generators = { random = 1.0 }
+n_target = 24
+priority = 70
+notes = "allow_single_cycle_discharge=true; discharge economics documented (plan 5.3 P1-A')"
+
+[[produce.strata]]
+name = "p0_elite_perturb"        # generator tuning: exercises G3 elite-perturb path
+library = "ga80"
+pairs = ["K1_K2"]
+feed = 121
+generators = { elite_perturb = 0.5, random = 0.3, heuristic = 0.2 }
+n_target = 24
+priority = 60

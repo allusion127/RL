@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lpopt"
+version = "0.1.0"
+description = "APR1400 equilibrium-cycle loading-pattern optimization via a supervised position-value model and guided search."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "scikit-learn",
+    "scipy",
+    "pyyaml",
+    "matplotlib",
+    "joblib",
+]
+# NOTE: torch is intentionally NOT a dependency. It is installed separately per
+# environment (remote GPU: cu128 wheel; local CPU) so that the vendored master_rl
+# closure and the M0 test suite remain torch-free.  See plan sections 4.1 / 4.7.
+
+[project.scripts]
+lpopt = "lpopt.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lpopt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

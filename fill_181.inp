@@ -1,0 +1,155 @@
+# lpopt COVERAGE-FILL produce deck -- 181 (paramA 5.75-6 maps + NEW f121 cells).
+# Directive 2026-07-25: coverage-driven gap filling via the produce (DoE) path.
+#
+# TWO GAP CLASSES HERE:
+#  (1) band 5.75-6, feeds 101/109/117/125/133/141 -- 1,466 labels, ZERO maps.
+#  (2) **feed 121 is entirely ABSENT from every high band** (paramA feeds are only
+#      101/109/117/125/133/141).  f121 is the NATIVE feed of the whole corpus
+#      (39,920 of 49,016 converged rows) yet has no high-enrichment counterpart --
+#      so the model has never seen native-feed physics above e_core 5.5.  These 3
+#      strata are brand-new (band x feed) territory, the highest-value coverage
+#      cells in the whole grid.
+# 181 = 16 cores 100%, disjoint vs 198 (6.0-6.5) and 104 (ga80).
+# NOTE: 181 is shared -- launch ONLY after its SCALE job clears (non-intrusion).
+
+[flow]
+title = "coverage-fill 181 (paramA 5.75-6 + new f121, maps ON, seed 1030)"
+output_root = "runs"
+random_seed = 1030
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"
+harvest_maps = true
+
+[model]
+model_dir = "data/models/20260725_063351"   # A6 champion (honest-gate promoted 2026-07-25, v6)
+cond_schema = "v6"           # A6 = 52ch v6; must match the champion
+store_dir = "data/store"
+library_id = "paramA"
+device = "cpu"
+
+[design]
+# paramA routing: build_case_resolver() sends library="paramA" strata to this
+# package (registry alias bridge + %GEN_DIM dims), NOT to [verify].package_root.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[produce]
+campaign = "fill20260725"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+workers = 16
+use_all_cores = true
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 14
+purge_intermediate = true
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+# --- (2) NEW TERRITORY: feed 121 in the 3 high bands (priority 120 = first) --- #
+[[produce.strata]]
+name = "fill_5.75-6_f121"
+campaign = "fill_5.75-6_f121"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 121
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 150
+priority = 120
+
+[[produce.strata]]
+name = "fill_6-6.25_f121"
+campaign = "fill_6-6.25_f121"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12", "P6661Z2G06N16_P6661Z2G10N24", "P6656Z1G06N24_P6656Z1G08N20"]
+feed = 121
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 150
+priority = 120
+
+[[produce.strata]]
+name = "fill_6.25-6.5_f121"
+campaign = "fill_6.25-6.5_f121"
+library = "paramA"
+pairs = ["P6661Z1G08N16_P6661Z1G08N20", "P6661Z1G10N12_P6661Z1G10N20", "P6661Z1G06N12_P6661Z1G06N16"]
+feed = 121
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 150
+priority = 120
+
+# --- (1) band 5.75-6 maps backfill (6 cells) -------------------------------- #
+[[produce.strata]]
+name = "fill_5.75-6_f101"
+campaign = "fill_5.75-6_f101"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 101
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "fill_5.75-6_f109"
+campaign = "fill_5.75-6_f109"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 109
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "fill_5.75-6_f117"
+campaign = "fill_5.75-6_f117"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 117
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "fill_5.75-6_f125"
+campaign = "fill_5.75-6_f125"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 125
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "fill_5.75-6_f133"
+campaign = "fill_5.75-6_f133"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 133
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100
+
+[[produce.strata]]
+name = "fill_5.75-6_f141"
+campaign = "fill_5.75-6_f141"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24", "P6257Z2G06N12_P6257Z2G08N16", "P6257Z1G06N24_P6257Z1G10N12", "P6253Z1G06N24_P6253Z1G08N20"]
+feed = 141
+split_w1 = [0.3, 0.7]
+generators = { random = 0.5, heuristic = 0.35, elite_perturb = 0.15 }
+n_target = 80
+priority = 100

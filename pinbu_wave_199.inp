@@ -1,0 +1,94 @@
+# pinbu_wave_199.inp -- MEASURED PIN-BURNUP RE-EVALUATION WAVE, box 199.
+#
+# This deck does NOT drive `lpopt optimize`.  It is read by `pinbu_wave.py run`
+# for exactly three things:
+#
+#   (1) [master]  + [produce]  -> the MASTER executable, worker/core policy and
+#                                 equilibrium protocol that
+#                                 `curriculum.make_pin_burnup_verifier` reads
+#                                 (it takes its wave size from [produce], not
+#                                 [master] -- curriculum.py:1091-1132);
+#   (2) [verify]  package_root -> the ga80 FEASIBLE_PACKAGE routing;
+#   (3) [design]  package_root -> the paramA routing, selected per-core by
+#                                 `build_case_resolver(cfg, fuel, library_id)`.
+#
+# ONE deck serves BOTH libraries because the resolver is built per library_id
+# and `make_pin_burnup_verifier` derives package_root + %GEN_DIM dims FROM THE
+# RESOLVER (curriculum.py:1060-1065).  The four campaigns being replayed used
+# `FEASIBLE_PACKAGE` (ga80: N1_N2/f113, E1_E2/f109) and `data/design/package`
+# (paramA: the two hgd569/f125 cells), and both are present on this kit.
+#
+# WHAT IS DIFFERENT FROM THE CAMPAIGN DECKS, AND WHY
+#   * enable_pin_burnup -- NOT a deck knob at all.  `pinbu_wave.py` reaches it by
+#     calling `make_pin_burnup_verifier` instead of the default optimize
+#     verifier, which is the ONLY reason this wave exists (`optimize` cannot set
+#     it: verify.py:851 hard-codes False).
+#   * [produce] workers = 12 (the campaigns ran 8).  Those campaigns ran a torch
+#     finetune between waves on the same box; this wave runs no model at all, and
+#     12 pinned MASTER chains against 57.8 GB free RAM keeps >2x headroom.
+#   * harvest_maps = false.  Every core replayed here ALREADY has its EDIT5 map
+#     in the canonical maps.npz from its own campaign, and the store merge is an
+#     in-place patch of the two burnup columns only (`pinbu_wave.py patch`), so
+#     a second harvest would cost disk and buy nothing.
+#   * NO [search]/[acquisition] search knobs are meaningful: the patterns are
+#     FIXED (each is a stored record's own pattern).  The defaults are left
+#     untouched so the deck stays a legal LpoptConfig.
+#
+# NOTHING HERE TOUCHES boxes 198 / 181 / 238, nor any runs/ dir other than
+# runs/pinbu_wave.
+
+[flow]
+title = "measured pin-burnup re-evaluation of stored cores (delivery verdicts + low-feed pin-head calibration)"
+output_root = "runs"
+random_seed = 820          # inert: no sampling happens on this path
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+timeout = 3600
+max_cycles = 16            # matches every campaign being replayed
+consecutive = 2            # ditto -- the equilibrium protocol must be identical
+                           # or the replay is not the same evaluation
+keep_success = false
+
+[produce]
+# make_pin_burnup_verifier reads its wave size / core policy / chain timeout /
+# purge policy from HERE (curriculum.py:1091-1132), not from [master].
+store_dir = "data/store"
+workers = 12
+use_all_cores = true       # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 16
+consecutive = 2
+purge_intermediate = true  # only the converged cycle is needed; the PPI pin
+                           # burnup is parsed DURING the run, not after
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []    # EMPTY, as in all four campaign decks.  On paramA a
+                           # ga80 glob fallback would win resolution and then
+                           # fail the %GEN_DIM gate; on ga80 it could shadow the
+                           # pair's own same-pair deck.
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # ga80, relative to the kit root (cwd)
+harvest_maps = false                # see header
+
+[design]
+store_dir = "data/design"
+package_root = "data/design/package"   # paramA
+
+[case]
+mode = "fixed"
+pair = "N1_N2"             # INERT: every CaseKey comes from the plan's own rows.
+feed = 113                 # Present only so the deck reads as a legal fixed-case
+                           # config; `pinbu_wave.py run` never reads [case].
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1i"   # INERT on the run path (no model is loaded);
+cond_schema = "v7"              # the predictions were pinned in the PLAN step,
+device = "cpu"                  # on the coordinator box, before any spend.
+inference = "local_cpu"
+library_id = "ga80"             # resolver DEFAULT only; pinbu_wave.py passes the
+                                # per-core library_id explicitly.
+store_dir = "data/store"

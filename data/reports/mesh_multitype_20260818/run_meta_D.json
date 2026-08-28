@@ -1,0 +1,34 @@
+{
+ "model": "s1i",
+ "pin_limit": 78.0,
+ "budget": {
+  "2": [
+   800,
+   400
+  ],
+  "3": [
+   640,
+   320
+  ],
+  "4": [
+   160,
+   80
+  ]
+ },
+ "match_tol": 0.02,
+ "feeds": [
+  109,
+  113,
+  117,
+  121,
+  125,
+  129
+ ],
+ "support_class": {
+  "2": "trained (74,537 rows)",
+  "3": "SPARSE (60 rows / 39 in train)",
+  "4": "EXTRAPOLATION (0 rows; g_type_frac_4 inert at train time)",
+  "5": "EXTRAPOLATION (0 rows)"
+ },
+ "n_cells": 18
+}

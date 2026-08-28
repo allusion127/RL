@@ -1,0 +1,353 @@
+################################################################################
+# lpopt FRONTIER-KIT deck — FIRST 3-FRESH-TYPE (GRADED) CAMPAIGN
+# P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24  (alias S3_T1_S5) / feed 125 / paramA
+# champion s1h (cond_schema v7)  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfr_TRIPLE_f125_199.inp \
+#        --run-dir runs/fpcamp_minfr_triple_f125 --no-early-stop`
+#
+# Written 2026-08-17, AFTER the 2-type f125 campaign closed (joint-clean F_r
+# 1.6357, 4 of 5 gates clear, predicted pin 76.955) and AFTER the v7 retrain
+# (round 12, arm S1h) was gated. Full pre-registration:
+#   data/reports/tripletype_f125_prereg_20260817.md
+# Design note (BUILD+TEST, no campaign):
+#   data/reports/tripletype_design_20260817.md
+# Model addendum: data/reports/ab2_addendum_S1H_20260817.md
+# The prereg is authoritative where it and this header differ, and nothing in
+# either was written after seeing a 3-type result.
+#
+################################################################################
+# WHY A THIRD FRESH TYPE, AND WHY HERE
+################################################################################
+#
+# Radial GRADING — stepping fresh reactivity in more than two levels — is the
+# textbook way to flatten radial power, i.e. to attack F_r directly.  Every
+# campaign this programme has run used TWO fresh types.  This is the first with
+# three, and the only thing that changes versus its 2-type predecessor is the
+# size of the fresh-type alphabet: same cell, same feed, same e_core band, same
+# objective, same gates, same budget, same box.
+#
+# The cell is chosen because the programme's best core is one axis short:
+#
+#     F_r      1.6357   vs 1.55   <- THE ONLY OPEN AXIS
+#     CBC_max  1565.46  vs 1600   ok, 34.54 ppm
+#     F_q      2.0346   vs 2.41   ok
+#     |AO|     0.0266   vs 0.30   ok
+#     pin BU   76.955   vs 78     ok, 1.045 GWd/tU  (predicted)
+#
+# 4 of 5 gates clear on record 8b9acbcd..., found call 11/60.  The whole
+# high-enrichment programme has never produced a 5-gate-clean core.
+#
+################################################################################
+# THE ALPHABET — and why T1, not P5
+################################################################################
+#   hot   P6253Z1G06N24  (S3)  e 5.7861  n_gd 24  Gd 6%
+#   mid   P6253Z2G10N20  (T1)  e 5.6386  n_gd 20  Gd 10%   <- CHOSEN
+#   cold  P6253Z2G10N24  (S5)  e 5.6023  n_gd 24  Gd 10%
+#
+# equal-thirds e_core 5.675821  (2-type 50/50 reference: 5.694438)
+# grading steps hot->mid->cold: 0.148 / 0.036 w/o
+#
+# The rejected alternative was P5 (P6253Z2G08N16, e 5.6685, n_gd 16), which
+# grades more evenly (0.118 / 0.066) but drops the middle ring from 24 Gd rods
+# to 16.  With only ~1 GWd/tU of pin margin left at this cell, that is a real
+# risk, so the choice was DECIDED BY MEASUREMENT, not by preference: rule frozen
+# in tripletype_midpick.py (sha256 090e4721..., written while s1h was still
+# training) and run against the v7 champion over 292 graded_morph seeds per arm
+# from the SAME rng sequence:
+#
+#            pred pin BU (p50)   under 78    pred F_r (p50)   pred CBC (p50)
+#   P5           75.950           74.3%          1.7594          1666.88
+#   T1           75.691           76.7%          1.7126          1620.83
+#
+# The pin p50 gap is 0.258 — INSIDE the pin head's own in-cell MAE (1.84), so
+# the pin axis CANNOT resolve the two and the pre-registered rule fell through
+# to predicted F_r, where T1 leads by 0.047.  T1 also carries the lower
+# predicted CBC, which matters at this feed (see R3).  Recorded honestly: the
+# headline reason T1 won is F_r, not pin; pin merely failed to object.
+#
+# Both arms predict pin BELOW the 2-type MEASURED band (76.96-77.96), which is
+# the residence/grading argument showing up in the surrogate — R-PIN is where it
+# gets checked against MASTER instead of assumed.
+#
+################################################################################
+# THE MARKS — PINNED BEFORE LAUNCH (prereg §4)
+################################################################################
+#   PRIMARY   a MASTER-verified core passing ALL FOUR gates (F_r<=1.55 &
+#             CBC<=1600 & F_q<=2.41 & |AO|<=0.30) with predicted pin <=78.
+#             Would be the programme's FIRST deliverable-grade high-e core.
+#             0/57 at 2-type f125, 0/40 at f109, 0/178 anchors.
+#   STRETCH   F_r < 1.6357 CBC-clean — BEAT THE 2-TYPE JOINT FRONTIER at this
+#             exact cell and feed.  THE NUMBER TO BEAT.  This is the only
+#             honest "grading helps" bar.
+#   SECONDARY F_r < 1.6088 (the 2-type RAW, CBC-violating best) — weaker,
+#             reported labelled, never as the headline.
+#   NULL      F_r does not fall below 1.6357 in 60 calls.  Registered reading:
+#             "a third fresh type does not buy F_r at this cell."  Reported
+#             plainly.  Given the MODEL CAVEAT below this is a genuinely likely
+#             outcome and is a publishable result about grading, not a failure.
+#
+#   REGISTERED CONFOUND: the 2-type mark 1.6357 was set with an ALL-INFEASIBLE
+#   elite pool (its own prereg §6).  This campaign is seeded with that
+#   campaign's own converged output (see ELITE SEEDING).  So a SMALL F_r gain
+#   is not attributable to grading alone — better seeding is confounded with the
+#   third type.  R-SEED and R-GRADE (prereg §8) are the registered separators.
+#
+################################################################################
+# ELITE SEEDING — the cold start, and the code change it required
+################################################################################
+# `CampaignDriver._store_elites` picks parents by `case_pair == <this case>`.
+# A graded case id matches ZERO store rows, so without intervention this
+# campaign would start from an EMPTY elite pool — random and heuristic boards
+# only — and would then NULL for a plumbing reason wearing the costume of a
+# physics result.
+#
+# `[search] elite_seed_cases` (NEW, default off, byte-identical for every
+# existing deck) names DONOR case ids whose converged store rows also seed the
+# elite-mutation parent set.  `mutate(..., batches=<3 types>)` then draws
+# `graded_morph`, which re-labels a radial slice of a 2-type parent onto the
+# third type — feed, wiring and depth-2 count preserved exactly.
+#
+# Donor = the 2-type parent pair, BOTH feeds (canonical store, 74,477 rows):
+#     f125  84 rows / 73 converged, F_r 1.6088..; 15 joint-clean; best 1.6357
+#     f109  83 rows / 56 converged, F_r 1.6743..; 38 joint-clean; best 1.6743
+# elite_top_k = 32 ranked best-objective-first => the parent set is the best ~32
+# F_r boards this pair has ever produced.  f109 parents are feed-morphed to
+# N=31 by the existing `_morph_feed` path.
+#
+# Donors are PARENTS ONLY: they are not added to the wave holdout, their
+# case_pair is not rewritten, and they are never reported as in-cell truth.
+# tests/test_elite_seed_cases.py (5 tests) fixes all of that.
+#
+# Dry run on the real donors before launch: 292/292 morph seeds reached the
+# third type for BOTH candidate mids, feed preserved 31 -> 31.
+#
+################################################################################
+# MODEL CAVEAT — THE STRONGEST THIS PROGRAMME HAS HAD TO WRITE
+################################################################################
+# Every row of the 74,477-row training store is 2-TYPE.  Measured, not argued
+# (ab2_addendum_S1H §4.2): on that corpus v7's five appended composition globals
+# are degenerate — g_type_frac_1 == g_split_frac exactly, g_type_frac_3 == 0 and
+# g_n_fresh_types == 2/3 are CONSTANT, and g_e_type_std == sqrt(w(1-w))*g_e_split
+# to 6e-08.  So s1h has never seen a 3-type input and two of its composition
+# channels have never varied.  Every candidate here drives g_type_frac_3 > 0 and
+# g_n_fresh_types = 1.0 — outside the training range on channels whose weights
+# were fitted against constants.
+#
+# Consequences, registered rather than discovered later:
+#   * wave-0 rankings are out of distribution, more so than the 2-type f125 run;
+#   * this case has ZERO store rows, so the wave fine-tune gate has NO in-cell
+#     holdout and will read explore/NaN — it cannot veto.  A blind gate must not
+#     later be reported as a passed gate;
+#   * the load-bearing early check is MASTER truth, not the model: do the
+#     graded_morph seeds beat their own 2-type parents in wave 0-1?
+#
+################################################################################
+# ASSET RESOLUTION — level 3 (pair_ecore), probed directly, not assumed
+################################################################################
+# CaseAssetResolver against the real paramA package before launch:
+#     _pair_e_core("S3_T1_S5" types) = 5.675821  (finite => no neutral fallback)
+#     alias_case_key -> CaseKey(pair='S3_T1_S5', feed=125)
+# |de| to the 2-type pair is 0.019, so the expected restart is the same
+# `bases/P0_P1/MAS_RST.APRQ_11_0705.02` both 2-type siblings resolved to.  The
+# launch script gates on its presence.  `lpopt optimize` never calls promote(),
+# so level 3 is expected here too, not a regression.
+#
+################################################################################
+# FLEET RULES.  199 only (busy gate refuses rather than stacks; deck-hash gate
+# refuses on any edit).  198 / 181 / 238 untouched.  Fresh run dir.  Ship-don't-
+# remote-edit: every file scp'd in whole.
+# STORE IS REFRESHED for this run (unlike the 2-type sibling) because the DONOR
+# rows are the entire point of the elite seeding above; the launch script gates
+# on the canonical store's sha256.
+# NOTE (D) — the `[optimize][DEPRECATED]` banner for min_fr_max_cycle is
+# EXPECTED (campaign.py), not a failed launch.
+# NOTE (R) — `lpopt report`'s "Best verified loading patterns" table ranks by
+# CYCLE DISTANCE regardless of objective and will NOT show the F_r winner.
+# Read `state.json -> best`.  Known defect, unchanged from the 2-type runs.
+################################################################################
+
+[flow]
+title = "min_fr_max_cycle 3-FRESH-TYPE GRADED — S3_T1_S5/f125 (paramA, e_core 5.676 equal-thirds), champion s1h (v7), CBC gate 1600, pin-BU gate 78"
+output_root = "runs"
+random_seed = 5695
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+workers = 8
+use_all_cores = true         # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"   # the paramA package (NOT FEASIBLE_PACKAGE)
+harvest_maps = true                    # record-only on this objective; kept so
+                                       # every row carries node_peak / map_cov
+
+[design]
+# paramA routing (anchors_meshv3_198.inp idiom).  `build_case_resolver` sends a
+# library="paramA" case to THIS package plus the registry alias bridge and the
+# package's own %GEN_DIM dims.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[case]
+mode = "fixed"
+# THE ONLY SUBSTANTIVE CHANGE from the 2-type f125 deck: a THIRD fresh type is
+# inserted between the hot and cold members.  Member order is the radial grading
+# order (hot, mid, cold); `case_batches` parses it and `resolved_center` takes
+# the first member, exactly as the 2-type deck's center_batch="auto" did.
+pair = "P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24"
+feed = 125                             # n_fresh 31 (feed = 1 + 4N), unchanged
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1h"   # 9th champion — the FIRST checkpoint that can
+                                # encode a 3-type core (18 globals; s1g's 13
+                                # cannot).  NOT calibrated for this cell, and
+                                # never trained on ANY 3-type row: see the
+                                # MODEL CAVEAT block in the header.
+cond_schema = "v7"              # v6c cells (62ch) + the 5 composition globals
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "paramA"           # featurize reads the paramA fuel rows; all
+                                # three P6253* type_ids are present in
+                                # data/store/fuel_types.parquet (verified)
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65            # 32 parents, now REAL optimized boards rather than
+                             # the all-infeasible backfill the 2-type siblings
+                             # had — see the ELITE SEEDING block and the
+                             # registered confound in THE MARKS.
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+# NEW KNOB (1/2).  Without it the elite pool for a graded case is EMPTY and
+# graded_morph is unreachable.  Donor = the 2-type parent pair (both feeds).
+elite_seed_cases = ["P6253Z1G06N24_P6253Z2G10N24"]
+# NEW KNOB (2/2) — THE GRADED-BUDGET GUARD.  Measured on this exact deck before
+# launch: with the guard OFF, 59.5% of a wave-0 pool (2500 candidates) fed only
+# TWO of the three types, and the dry run's acquisition ranked those FIRST — 5
+# of 8 wave-0 picks were 2-type boards.  A 2-type board under this case id is
+# the SAME PHYSICAL CORE as a 2-type board under the pair's case id (identical
+# %LPD_SHF), so those calls would have re-measured a population that already has
+# 57 MASTER labels at this cell and feed — chosen by a model that has never seen
+# a 3-type input.  With the guard ON every one of the 60 calls buys a genuinely
+# graded core.  The search can still drive the mid type down to a SINGLE
+# assembly, so R-GRADE ("does the optimizer want the third type?") stays
+# answerable; it just cannot be answered by deleting the type and reporting the
+# result as graded.
+require_all_fresh_types = true
+near_miss_f_r = 1.70         # LIVE: arms the tight (n_moves=1) arm once a
+                             # verified row lands below 1.70.  Set between the
+                             # 2-type joint frontier (1.6357) and the 2-type
+                             # in-cell median (1.6726) so the arm engages on a
+                             # genuinely good board without requiring the record
+                             # to be broken first.  The 2-type deck used 1.75
+                             # against a 1.8375 anchor floor; the floor has
+                             # since moved, so the trigger moves with it.
+near_miss_top_k = 8          # INERT here (flat_power only); left at the default
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30                   # the campaign's OWN cell is unconditionally
+                             # in-region (TrustRegion.__init__), so n_min cannot
+                             # starve the fixed case — it only decides which
+                             # OTHER bins count as support
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+objective = "min_fr_max_cycle"
+budget = 60                  # 7 waves x 8 + 4 reserve — SAME as both 2-type
+                             # siblings, so the alphabet is the only variable.
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 7
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+minfr_lambda = 1000.0        # the code's own "F_r strictly dominates" default,
+                             # carried from the 2-type f125/f109/f113/E1E2 runs.
+                             # lambda = 0 would DELETE the F_r term
+                             # (acquisition.py: scalar = cyclen_lcb -
+                             # lam_fr*fr_ucb) and silently invert this into
+                             # cycle-length maximisation.
+
+# --- feasibility: F_r / CBC / F_q / |AO| GATE, and pin BU too ----------------
+f_r_limit = 1.55             # licensing limit AND the primary success bar
+cbc_limit = 1600.0           # programme decision 2026-08-11.  MATERIALLY
+                             # BINDING at this feed: the 2-type run passed only
+                             # 16/57 with median 1614.63 and r(F_r,CBC) = -0.45.
+                             # Grading redistributes radial reactivity and so
+                             # moves critical boron — see R3.
+f_q_limit = 2.41             # non-binding at 2-type (52/57 pass); report
+                             # whether that survives grading (R4).
+ao_abs_limit = 0.30          # slack: 2-type |AO| max was 0.0630
+
+minfr_pin_bu_limit = 78.0    # UNCHANGED.  LEU+ limit 80 minus 2.0 model margin
+                             # (pin head in-cell MAE 1.84, bias -1.39,
+                             # under-predicting).  Screens the PREDICTION only
+                             # (surrogate target index 6); `is_feasible` passes a
+                             # missing pin BU by design.  Crossover unchanged:
+                             #   F_r_crossover = 1.55 + 0.01*(pin_pred - 78)
+
+# --- REPORT-ONLY cycle readouts.  THEY GATE NOTHING. --------------------------
+cycle_target_efpd = 730.9    # the 2-type f125 joint-clean winner's own cyclen,
+                             # so `distance` reads as "EFPD off the core this
+                             # campaign is trying to beat".  NOT a target the
+                             # search pursues.
+cycle_tolerance_efpd = 40.0  # band 690.9-770.9; same width as both siblings.
+
+# --- wave online-update gate -------------------------------------------------
+# NOTE: this case has ZERO store rows, so `_holdout_rows` is EMPTY and the
+# panel will read explore/NaN.  Registered in the header, not a surprise.
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping ----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []      # MUST stay empty on paramA: a ga80 reload deck
+                             # would win resolution and then fail the paramA
+                             # %GEN_DIM sanity gate (resolver.py header)
