@@ -15,23 +15,50 @@ Three blocks, in the order a reader needs them:
    reader attributing it to the multi-type machinery.
 
     python mesh_multitype_readout.py
+
+THE OBJECTIVE AXIS (design ``data/reports/fxy_switch_design_20260829.md`` §3.5.5).
+Every number here is READ OUT OF ``mesh_multitype.csv``, whose F_r columns
+(``min_f_r_clean_2/3``, ``d_min_f_r_clean_3v2``) are written by
+``mesh_multitype.py`` from the model's surrogate column 0.  There is no F_xy
+column to switch to until that sweep emits one — which needs an f_xy head, the
+same prerequisite ``scoping_mesh.py`` names.  So ``--objective min_fxy`` is
+REFUSED here rather than relabelling F_r deltas as F_xy deltas.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+
+import readout_axis as RA                                     # noqa: E402
+
 OUT = BASE / "data" / "reports" / "mesh_multitype_20260818"
 V3 = BASE / "data" / "reports" / "mesh_v3_20260817"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    RA.add_axis_args(ap)
+    args = ap.parse_args(argv)
+    axis = RA.axis_from_args(args)
+
     d = pd.read_csv(OUT / "mesh_multitype.csv")
+    if axis.is_fxy and f"min_{axis.key}_clean_2" not in d.columns:
+        # See the module docstring.  Refusing beats printing F_r deltas under an
+        # F_xy heading (design 20260829 sec. 3.6).
+        raise SystemExit(
+            f"mesh_multitype.csv carries no {axis.label} column "
+            f"(min_{axis.key}_clean_2 / _3): its deltas are the model's surrogate "
+            f"column 0, i.e. F_r.  Re-run mesh_multitype.py under a champion with "
+            f"an f_xy head before reading this sweep on {axis.label}.")
     lines: list[str] = []
 
     def log(m: str = "") -> None:

@@ -424,9 +424,14 @@ def test_delivery_artifact_applies_the_band_and_excludes_the_flattest(tmp_path):
     drv = _drv(tmp_path / "deliver")
     peaks = np.linspace(1.30, 1.68, 12)
     for i, p in enumerate(peaks):
+        # max_pin_burnup AND f_xy are MEASURED: delivery.json is built from the
+        # DELIVERY predicate now (review 2026-08-29 §6.4), which refuses a row
+        # whose gated licensing axes were never measured — and flat_power gates
+        # F_xy at 1.65 by default.  A constant f_xy keeps the F_r ordering below
+        # the thing under test (the F_xy-first key is pinned in test_delivery).
         drv.campaign_rows.append(_row(peak=float(p), cov=0.30,
                                       f_r=1.50 + 0.01 * i, record_id=f"d{i}",
-                                      max_pin_burnup=70.0))
+                                      max_pin_burnup=70.0, f_xy=1.60))
     payload = drv._write_delivery()
     assert payload is not None and payload["banded"]
     ranked = [c["record_id"] for c in payload["ranked"]]

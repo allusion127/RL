@@ -47,6 +47,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from ..config import LpoptConfig, StratumConfig
+from ..safelog import safe_logger
 from ..data.schema import compute_record_id, pack_pattern, unpack_pattern
 from ..data.store import StoreReader
 from ..vendor.masterrl.domain import CaseKey, Pattern
@@ -615,7 +616,9 @@ def run_boundary_probe(cfg: LpoptConfig, cell_id: str, *, top_k: int = DEFAULT_T
     """
     from ..model.model_api import PosValCnnBackend
 
-    log = log or (lambda m: print(m))
+    # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+    # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+    log = safe_logger(log)
     log("[boundary][DEPRECATED] F_r-ranked label manufacturing (program §10 STOP): "
         "this selects candidates by the champion's F_r head, the axis the "
         "flatness-first program retired. Kept for reproducing existing reports; "

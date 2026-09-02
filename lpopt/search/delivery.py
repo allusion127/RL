@@ -42,6 +42,13 @@ import numpy as np
 #: flatness campaign (program §10 STOP list).
 LICENSING_FR_LIMIT = 1.55
 
+#: The licensing limit **F_xy** (MASTER ``FXYP``, pin PLANAR peaking) must
+#: respect — user decision 2026-08-29.  Same standing as
+#: :data:`LICENSING_FR_LIMIT`: a REPORTING / DELIVERY constant here.  The two are
+#: independent axes, not two spellings of one: measured cores pass F_r <= 1.55 and
+#: fail F_xy <= 1.65 (18/52 at one cell), and other cores do the reverse.
+LICENSING_FXY_LIMIT = 1.65
+
 #: The delivery flat band, as within-cell ``node_peak`` percentiles (program §2.2).
 #: The floor is the "do not deliver the flattest point" rule.
 BAND_LO = 0.10
@@ -68,6 +75,21 @@ def compliance_margin(f_r: Any, *, bias: float = 0.0,
     correction.  ``None`` in -> ``None`` out, never a fabricated margin.
     """
     v = _num(f_r)
+    if v is None:
+        return None
+    b = _num(bias) or 0.0
+    return float(limit) - (v - b)
+
+
+def compliance_margin_fxy(f_xy: Any, *, bias: float = 0.0,
+                          limit: float = LICENSING_FXY_LIMIT) -> float | None:
+    """``limit - (f_xy - bias)`` — headroom to the F_xy licensing limit.
+
+    The F_xy twin of :func:`compliance_margin`, added alongside it rather than
+    replacing it: F_r stays a licensing axis of its own, so a delivery candidate
+    carries BOTH margins.  ``None`` in -> ``None`` out, never a fabricated margin.
+    """
+    v = _num(f_xy)
     if v is None:
         return None
     b = _num(bias) or 0.0
@@ -114,6 +136,10 @@ class DeliveryCandidate:
     in_band: bool
     reason: str
     row: Mapping[str, Any]
+    #: MEASURED F_xy and its licensing headroom (``None`` when the row carries no
+    #: F_xy label — which is most of the store until the retro-backfill lands).
+    f_xy: float | None = None
+    compliance_margin_fxy: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +148,8 @@ class DeliveryCandidate:
             "map_cov": self.map_cov,
             "f_r": self.f_r,
             "compliance_margin": self.compliance_margin,
+            "f_xy": self.f_xy,
+            "compliance_margin_fxy": self.compliance_margin_fxy,
             "peak_percentile": self.peak_percentile,
             "in_band": self.in_band,
             "reason": self.reason,
@@ -157,6 +185,8 @@ def select_delivery(
     peak_key: str = "node_peak",
     cov_key: str = "map_cov",
     fr_key: str = "f_r",
+    fxy_key: str = "f_xy",
+    fxy_limit: float = LICENSING_FXY_LIMIT,
     min_band_rows: int = MIN_BAND_ROWS,
     top_k: int | None = None,
 ) -> DeliveryReport:
@@ -169,7 +199,12 @@ def select_delivery(
 
     Returns every candidate, partitioned: ``ranked`` are in-band and ordered by
     descending :func:`compliance_margin` (largest licensing headroom first),
-    ``excluded`` carry the reason they dropped out — ``"flatter than the band"``
+    ``ranked`` is ordered by MEASURED F_xy headroom FIRST and F_r headroom second
+    (design fxy_switch_20260829 §3.5.5): F_xy is the objective axis now, and a row
+    with no measured F_xy sorts BELOW every row that has one — it cannot be shown
+    to satisfy the axis it is being ranked on.  When no row carries an F_xy label
+    the whole first key is constant and the order is the historical F_r ranking,
+    unchanged.  ``excluded`` carry the reason they dropped out — ``"flatter than the band"``
     (the §2.2 rule that the flattest point is not delivered), ``"less flat than
     the band"``, ``"no flatness label"``, ``"no F_r"``.
 
@@ -193,6 +228,8 @@ def select_delivery(
         cov = _num(row.get(cov_key))
         f_r = _num(row.get(fr_key))
         margin = compliance_margin(f_r, bias=fr_bias, limit=limit)
+        f_xy = _num(row.get(fxy_key))
+        margin_fxy = compliance_margin_fxy(f_xy, limit=fxy_limit)
         p = float(pct[i]) if np.isfinite(pct[i]) else None
         rid = row.get("record_id")
         rid = None if rid is None else str(rid)
@@ -202,6 +239,7 @@ def select_delivery(
                 record_id=rid, node_peak=peak, map_cov=cov, f_r=f_r,
                 compliance_margin=margin, peak_percentile=p,
                 in_band=in_band, reason=reason, row=row,
+                f_xy=f_xy, compliance_margin_fxy=margin_fxy,
             )
 
         if peak is None:
@@ -222,7 +260,13 @@ def select_delivery(
 
     # NOTE the explicit None test: ``margin or -inf`` would send a candidate
     # sitting EXACTLY on the 1.55 limit (margin 0.0) to the bottom of the list.
+    # F_xy margin is the PRIMARY key (design §3.5.5); an UNMEASURED F_xy sorts
+    # last within its band rather than first, hence the explicit None flag ahead
+    # of the value.  With no F_xy labels at all both F_xy keys are constant and
+    # this reduces exactly to the historical F_r ordering.
     ranked.sort(key=lambda c: (
+        c.compliance_margin_fxy is None,
+        -(c.compliance_margin_fxy if c.compliance_margin_fxy is not None else 0.0),
         -(c.compliance_margin if c.compliance_margin is not None else -np.inf),
         str(c.record_id or "")))
     if top_k is not None:
@@ -239,8 +283,10 @@ __all__ = [
     "DeliveryCandidate",
     "DeliveryReport",
     "LICENSING_FR_LIMIT",
+    "LICENSING_FXY_LIMIT",
     "MIN_BAND_ROWS",
     "compliance_margin",
+    "compliance_margin_fxy",
     "select_delivery",
     "within_cell_percentile",
 ]

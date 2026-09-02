@@ -1,0 +1,456 @@
+# produce_fxyera_r1_199.inp -- F_xy-ERA COVERAGE-FILL PRODUCE ROUND 1, box 199.
+#
+# WHAT THIS IS.  An objective-NEUTRAL DoE production round under the standing
+# 2026-07-25 directive ("노심 계산 결과에 무관하게 다양한 데이터셋 생성이 학습에
+# 유리 -> 스케쥴링해 빈 영역을 채워라"): coverage-driven gap filling through the
+# `produce` path, NOT a min_fr / flat_power objective search.
+#
+# WHY NOW.  The optimisation target switched from F_r to F_xy (MASTER FXYP,
+# "MAXIMUM PIN PLANAR POWER", hard limit 1.65) on 2026-08-29.  FXYP is printed
+# ONLY in MAS_OUT -- MAS_SUM's SUMMARY EDIT 3 carries AO/FQN/FRN/FQP/FRP and no
+# FXYP column at all -- so the entire 74,657-row store has ZERO f_xy labels and
+# no retained MAS_OUT to recover them from for most of its history.
+#
+#   => THE PRIMARY DELIVERABLE OF THIS ROUND IS THE RETAINED MAS_OUT SET.
+#      Every converged chain's FINAL equilibrium cycle work dir must survive so
+#      the F_xy parser (data/reports/fxy_switch_design_20260829.md, in design)
+#      can retro-label it.  That is the FIRST f_xy label batch the programme will
+#      ever have.  The scalar cyclen/F_r/CBC/map labels are the ordinary
+#      coverage-fill product; the MAS_OUT set is the new one.
+#
+# HOW RETENTION IS GUARANTEED (verified in code, not assumed):
+#   * [verify] harvest_maps = true  -> WaveVerifier.__init__ sets
+#     `self.keep_success = bool(keep_success) or self.harvest_maps`
+#     (lpopt/search/verify.py:754), so keep_success is forced True.
+#   * That flag reaches BOTH WatchdogMasterRunner(keep_success=...) (verify.py:840)
+#     and PurgingEquilibriumRunner(keep_success=...) (verify.py:850).
+#   * master.py:857-864 then does `retain_success = self.keep_success` and only
+#     rmtree's the work dir when it is False -- so with True the final cycle dir
+#     (MAS_OUT + MAS_SUM + MAS_RST) is kept.
+#   * PurgingEquilibriumRunner deletes only the PREVIOUS cycle's dir once its
+#     restart has been consumed (verify.py:443-457); the FINAL cycle dir is
+#     explicitly a survivor (its own docstring, verify.py:379-384).
+#   * ProduceDriver._maybe_purge (produce.py:1336-1338) removes ONLY
+#     `run_dir/produce_cases` (the staged decks), never `run_dir/master_work`.
+#   * [master] keep_success = true is ALSO set below -- redundant with
+#     harvest_maps by the OR above, but it is the knob whose `false` value was
+#     measured to purge 100% of the final-cycle files
+#     (data/reports/pinbu_rodavg_20260820.md, pinbu_wave_keep_199.inp header), so
+#     it is pinned explicitly rather than left to an implication.
+#   Measured retention cost: 592 retained final dirs = 5.6 GB in
+#   runs/produce_run_20260725_135935 => ~9.5 MB/chain.  ~1,120 chains => ~11 GB.
+#   The launcher refuses to start below 30 GB free.
+#
+# WHAT THIS DECK DELIBERATELY DOES NOT DO
+#   * NO pin burnup.  `enable_pin_burnup` is NOT a deck knob and the produce /
+#     optimize verifier hard-codes it False (lpopt/search/verify.py:851); it is
+#     reachable only from `[design].enable_pin_burnup` (bootstrap) and
+#     `curriculum.make_pin_burnup_verifier`.  Turning it on inside `lpopt produce`
+#     would be a code change, which this round is forbidden to make.  Pin BU (and
+#     the replicate-QC determinism arm) are therefore PHASE 2 of this round, run
+#     through the EXISTING pinbu_wave.py harness with the EXISTING
+#     pinbu_wave_keep_199.inp deck.  See the pre-registration, section 6.
+#   * NO ga80 strata.  ProduceDriver builds exactly ONE CaseAssetResolver per run
+#     (produce.py:_run_library_id / _default_resolver); a deck naming both
+#     libraries routes every paramA stratum through FEASIBLE_PACKAGE and kills
+#     them (feedgrid_pathfinder_20260815.md section 1/9: "the single-resolver rule
+#     is not negotiable").  The ga80 half of the F_xy-era gap map (N1_N2/f113,
+#     E1_E2/f109) is round r2, a sibling deck.
+#   * NO axial degrees of freedom (user directive 2026-07-25, permanent).
+#
+# STRATUM DESIGN.  19 strata, EVERY ONE n_target = 40 and priority = 120, so the
+# driver's round-robin-within-priority fill keeps the arm ratios of the external
+# review section 7.6 approximately invariant under early termination:
+#     A space-filling   5/19 = 26.3%   (review: 25%)
+#     B boundary        5/19 = 26.3%   (review: 25%)
+#     C exploit         4/19 = 21.1%   (review: 20%)
+#     D rule-seed       3/19 = 15.8%   (review: 15%)
+#     E adversarial/OOD 2/19 = 10.5%   (review: 10%)
+#     (review's 5% replicate-QC = phase 2, see above)
+# Total 760 converged labels; at the measured 0.678 converged/chain that is
+# ~1,120 chains, and at the measured 199 cadence (24 workers, 24.32 min/wave
+# median => 55.6 chains/h sustained) ~20.1 h.  --max-chains 1250 in the .bat is
+# the hard budget fence.
+#
+# NOTHING HERE TOUCHES boxes 198 / 181 / 238, nor any runs/ dir other than
+# runs/produce_fxyera_r1.
+
+[flow]
+title = "F_xy-era coverage fill r1 (paramA, MAS_OUT retained for f_xy retro-labelling)"
+# NOTE: `lpopt produce` has no --run-dir flag (cli.py:1779-1783); the driver
+# builds `<output_root>/produce_run_<stamp>` (produce.py:358-364).  Pointing
+# output_root at the round's own folder is what puts the run under
+# runs/produce_fxyera_r1/ as required, and gives each invocation a fresh
+# sub-run-dir (resume is via the ledger + store, never via the run dir).
+output_root = "runs/produce_fxyera_r1"
+random_seed = 2601
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+keep_success = true        # see the retention proof in the header
+
+[verify]
+# paramA runs take package_root from the RESOLVER (produce.py:487-497), so this
+# value is documentation for the ga80 path; `harvest_maps` however IS read here
+# (produce.py:511) and is the flag that forces keep_success.
+package_root = "data/design/package"
+harvest_maps = true
+
+[design]
+# paramA routing is MANDATORY: without [design].package_root, build_case_resolver
+# cannot see paramA and every stratum resolves kind=unresolved / restart=None.
+store_dir = "data/design"
+package_root = "data/design/package"
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1i"   # 10th champion; INERT on the produce path (no
+cond_schema = "v8"              # acquisition, no inference) -- present so the
+device = "cpu"                  # deck is a legal LpoptConfig and so the launcher
+inference = "local_cpu"         # model gate has something to check.
+library_id = "paramA"           # THE run-wide resolver routing key.
+store_dir = "data/store"
+
+[acquisition]
+# Read by ONE thing on this path: `flat_feasible` elite-parent selection in the
+# C arm calls campaign.feasibility_limits_for(acq, "flat_power"), which gates
+# parents on cbc_max / f_q / ao_abs from here (produce.py:_FLAT_ELITE_GATES).
+# cbc_limit 1600 is the 2026-08-11 user relaxation; the 1550 default would shrink
+# every exploit pool.
+cbc_limit = 1600.0
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+[produce]
+campaign = "fxyera20260829"
+ledger = "data/produce/ledger.jsonl"
+store_dir = "data/store"
+workers = 24
+use_all_cores = true
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 14            # SAME as fill_199.inp -- the 24.32 min/wave cadence
+consecutive = 2            # the budget is derived from was measured at 14.
+purge_intermediate = true  # intermediate cycles only; the FINAL cycle survives
+purge_case_dirs = true     # removes run_dir/produce_cases only, never master_work
+resume = true
+promoted_root = "data/produce/promoted"
+template_fallbacks = []    # EMPTY: on paramA a ga80 glob fallback would win
+                           # resolution and then fail the %GEN_DIM gate.
+elite_objective = "cyclen" # run-wide DEFAULT (legacy); the C arm overrides it
+                           # per stratum to "flat_feasible".
+rule_bias_metric = "rm1i"  # inboard-only fresh-fresh face adjacency: measured
+                           # stronger than whole-core rm1 (rho +0.235 vs +0.085)
+rule_bias_percentile = 90.0
+rule_bias_calib = 128
+rule_bias_tries = 16
+
+# =========================================================================== #
+# ARM A -- SPACE-FILLING (5 strata, 26.3%).  Unbiased random/heuristic draws in
+# the THINNEST paramA (pair, feed) cells.  The f121 column is the corpus-native
+# feed (44,292 of 66,078 converged rows) yet holds only 22-73 rows in EVERY
+# high-band paramA pair, and f117 is nearly as thin.  split_w1 is deliberately
+# WIDE here -- spanning the split axis is the point of a space-filling arm.
+# =========================================================================== #
+[[produce.strata]]
+name = "fxy_sf_e585_f121"
+campaign = "fxy_sf_e585_f121"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24"]
+feed = 121
+split_w1 = [0.3, 0.7]
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 40
+priority = 120
+notes = "e_core 5.85, store 42 converged; thinnest f121 cell of this pair family"
+
+[[produce.strata]]
+name = "fxy_sf_e614_f121"
+campaign = "fxy_sf_e614_f121"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12"]
+feed = 121
+split_w1 = [0.3, 0.7]
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 40
+priority = 120
+notes = "e_core 6.14, store 73 converged"
+
+[[produce.strata]]
+name = "fxy_sf_e630_f121"
+campaign = "fxy_sf_e630_f121"
+library = "paramA"
+pairs = ["P6661Z1G08N16_P6661Z1G08N20"]
+feed = 121
+split_w1 = [0.3, 0.7]
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 40
+priority = 120
+notes = "e_core 6.30, store 51 converged; top of the paramA band"
+
+[[produce.strata]]
+name = "fxy_sf_e594_f117"
+campaign = "fxy_sf_e594_f117"
+library = "paramA"
+pairs = ["P6257Z1G06N24_P6257Z1G10N12"]
+feed = 117
+split_w1 = [0.3, 0.7]
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 40
+priority = 120
+notes = "e_core 5.94, store 26 converged; the one grid cell seeded at level-3 pair_ecore"
+
+[[produce.strata]]
+name = "fxy_sf_e580_f117"
+campaign = "fxy_sf_e580_f117"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z1G08N20"]
+feed = 117
+split_w1 = [0.3, 0.7]
+generators = { random = 0.6, heuristic = 0.4 }
+n_target = 40
+priority = 120
+notes = "e_core 5.80, store 22 converged -- the thinnest non-empty paramA cell"
+
+# =========================================================================== #
+# ARM B -- CONSTRAINT BOUNDARY (5 strata, 26.3%), sited on the F_xy = 1.65 wall.
+#
+# MEASURED (541 retained MASTER cycle dirs, MAS_OUT FXYP vs MAS_SUM max-FRP,
+# which is exactly the store's f_r -- vendor/masterrl/master.py:411):
+#     f_r in [1.50,1.55): FXYP/f_r median 1.0717   FXYP min 1.6522
+#     f_r in [1.55,1.60): FXYP/f_r median 1.0642   FXYP min 1.6502
+#     f_r in [1.60,1.65): FXYP/f_r median 1.0522   FXYP min 1.6734
+# => F_xy <= 1.65 is approximately the iso-constraint F_r <= 1.55, and the
+# boundary BAND to over-sample is f_r in [1.50, 1.60].  Zero of the 541 cores
+# measured clear 1.65 (min 1.6502) -- the new limit sits AT the current frontier.
+#
+# The boundary is hit by CELL SITING, not by a generator: these are the only
+# paramA cells whose converged population already lives in the band (T6_T4/f121
+# 896 of 1,495 rows have f_r in [1.40,1.62]).  Generators stay random/heuristic
+# so the arm is an unbiased sample OF the boundary region, which is what the
+# review's "boundary/uncertainty" 25% asks for.  split_w1 is NARROW here so the
+# labels stay attributable to the cell.
+# =========================================================================== #
+[[produce.strata]]
+name = "fxy_bnd_T6T4_f121"
+campaign = "fxy_bnd_T6T4_f121"
+library = "paramA"
+pairs = ["T6_T4"]
+feed = 121
+split_w1 = [0.45, 0.55]
+generators = { random = 0.5, heuristic = 0.5 }
+n_target = 40
+priority = 120
+notes = "record cell: f_r floor 1.4605, e_core 4.893 at w1=0.5, 896 band rows"
+
+[[produce.strata]]
+name = "fxy_bnd_T5T6_f121"
+campaign = "fxy_bnd_T5T6_f121"
+library = "paramA"
+pairs = ["T5_T6"]
+feed = 121
+split_w1 = [0.45, 0.65]
+generators = { random = 0.5, heuristic = 0.5 }
+n_target = 40
+priority = 120
+notes = "e_core 5.016, store 33 converged, f_r floor 1.5257 -- 22 of 33 in band"
+
+[[produce.strata]]
+name = "fxy_bnd_T1T4_f117"
+campaign = "fxy_bnd_T1T4_f117"
+library = "paramA"
+pairs = ["T1_T4"]
+feed = 117
+split_w1 = [0.35, 0.45]
+generators = { random = 0.5, heuristic = 0.5 }
+n_target = 40
+priority = 120
+notes = "e_core 5.094, store 32, f_r floor 1.6375 -> F_xy ~1.72: JUST ABOVE the wall"
+
+[[produce.strata]]
+name = "fxy_bnd_T3T4_f121"
+campaign = "fxy_bnd_T3T4_f121"
+library = "paramA"
+pairs = ["T3_T4"]
+feed = 121
+split_w1 = [0.40, 0.70]
+generators = { random = 0.5, heuristic = 0.5 }
+n_target = 40
+priority = 120
+notes = "e_core 4.760, store ONE converged row (f_r 1.5329) -- effectively empty and inside the band"
+
+[[produce.strata]]
+name = "fxy_bnd_S3T1S5_f125"
+campaign = "fxy_bnd_S3T1S5_f125"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24"]
+feed = 125
+split_w1 = [0.30, 0.40]
+generators = { random = 0.5, heuristic = 0.5 }
+n_target = 40
+priority = 120
+allow_single_cycle_discharge = true
+notes = "3-fresh-type graded frontier cell, e_core 5.676, f_r floor 1.5864 -> F_xy ~1.67; feed 125 -> N=31 > FRESH_UNIT_COUNT 30"
+
+# =========================================================================== #
+# ARM C -- EXPLOIT (4 strata, 21.1%).  elite_perturb-dominant in the four
+# CURRENT paramA frontier cells, so the first f_xy labels land where the next
+# campaigns will actually search.
+#
+# elite_objective = "flat_feasible": the ONLY parent rule that applies the
+# feasibility gates (CBC <= 1600 / F_q <= 2.41 / |AO| <= 0.30).  Measured pool
+# sizes under those gates -- T6_T4 1,453 / 3-type-f125 55 / hgd569-f125 25 /
+# hgd569-f109 38 -- so no arm starves (the driver would say so LOUDLY and
+# cmd_produce reports `elite_fallback_random` on the result line).
+# REGISTERED RISK: node_peak is anti-correlated with F_r inside the feasible
+# region (Pearson -0.750, 2026-08-09), so "flattest feasible parent" may pull
+# AWAY from the F_xy wall.  Falsifiable prediction in the pre-registration
+# section 7; there is no F_r/F_xy-targeted elite_objective in the code today and
+# adding one is a code change this round may not make.
+# =========================================================================== #
+[[produce.strata]]
+name = "fxy_exp_T6T4_f121"
+campaign = "fxy_exp_T6T4_f121"
+library = "paramA"
+pairs = ["T6_T4"]
+feed = 121
+split_w1 = [0.45, 0.55]
+generators = { elite_perturb = 0.7, heuristic = 0.2, random = 0.1 }
+elite_objective = "flat_feasible"
+n_target = 40
+priority = 120
+notes = "T6_T4/f121 frontier (min_fr campaign CLOSED at r8); flat_feasible pool 1453"
+
+[[produce.strata]]
+name = "fxy_exp_S3T1S5_f125"
+campaign = "fxy_exp_S3T1S5_f125"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24"]
+feed = 125
+split_w1 = [0.30, 0.40]
+generators = { elite_perturb = 0.7, heuristic = 0.2, random = 0.1 }
+elite_objective = "flat_feasible"
+n_target = 40
+priority = 120
+allow_single_cycle_discharge = true
+notes = "3-type f125 frontier (TRIPLE r2 live); flat_feasible pool 55"
+
+[[produce.strata]]
+name = "fxy_exp_HGD569_f125"
+campaign = "fxy_exp_HGD569_f125"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N24"]
+feed = 125
+split_w1 = [0.45, 0.55]
+generators = { elite_perturb = 0.7, heuristic = 0.2, random = 0.1 }
+elite_objective = "flat_feasible"
+n_target = 40
+priority = 120
+allow_single_cycle_discharge = true
+notes = "hgd569 2-type f125, e_core 5.694, f_r floor 1.6036; flat_feasible pool 25 (cell) / 63 (pair)"
+
+[[produce.strata]]
+name = "fxy_exp_HGD569_f109"
+campaign = "fxy_exp_HGD569_f109"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N24"]
+feed = 109
+split_w1 = [0.45, 0.55]
+generators = { elite_perturb = 0.7, heuristic = 0.2, random = 0.1 }
+elite_objective = "flat_feasible"
+n_target = 40
+priority = 120
+notes = "hgd569 f109, store 56 converged, f_r floor 1.6743; flat_feasible pool 38"
+
+# =========================================================================== #
+# ARM D -- RULE SEED (3 strata, 15.8%).  G4 `rule_biased` with metric rm1i:
+# random draws whose INBOARD fresh-fresh face-adjacency count falls in the worst
+# decile of that (pair, feed)'s own random-draw distribution are rejected
+# (engineering rule R-03).  It is a BIAS, not a filter -- after rule_bias_tries
+# rejections the last candidate is accepted, so no region is truncated out of
+# the DoE.  This is the review's "rule/expert seed" 15% expressed with the one
+# rule the programme has actually validated.
+# =========================================================================== #
+[[produce.strata]]
+name = "fxy_rule_T6T4_f121"
+campaign = "fxy_rule_T6T4_f121"
+library = "paramA"
+pairs = ["T6_T4"]
+feed = 121
+split_w1 = [0.45, 0.55]
+generators = { rule_biased = 0.7, random = 0.3 }
+n_target = 40
+priority = 120
+notes = "R-03 rm1i decile bias in the record cell; the 0.3 random share is the in-cell control"
+
+[[produce.strata]]
+name = "fxy_rule_S3T1S5_f125"
+campaign = "fxy_rule_S3T1S5_f125"
+library = "paramA"
+pairs = ["P6253Z1G06N24_P6253Z2G10N20_P6253Z2G10N24"]
+feed = 125
+split_w1 = [0.30, 0.40]
+generators = { rule_biased = 0.7, random = 0.3 }
+n_target = 40
+priority = 120
+allow_single_cycle_discharge = true
+notes = "R-03 on a 3-fresh-type core -- rm_fresh_face_adjacency has never been exercised on a graded case"
+
+[[produce.strata]]
+name = "fxy_rule_e585_f125"
+campaign = "fxy_rule_e585_f125"
+library = "paramA"
+pairs = ["P6253Z1G08N20_P6257Z1G06N24"]
+feed = 125
+split_w1 = [0.3, 0.7]
+generators = { rule_biased = 0.7, random = 0.3 }
+n_target = 40
+priority = 120
+allow_single_cycle_discharge = true
+notes = "R-03 at high enrichment (e_core 5.85), where the rule was never calibrated"
+
+# =========================================================================== #
+# ARM E -- ADVERSARIAL / OOD TRANSFER (2 strata, 10.5%).  Two DIFFERENT
+# out-of-envelope axes, not the same axis twice (review D6: every OOD record
+# must carry an ood_reason).
+#   E1  ood_reason = "feed transfer on the record cell" -- T6_T4 exists at feed
+#       121 ONLY (1,495 rows); at f109 it has never been run.  Resolves level-2
+#       pair_feed off its own f121 restart (bases/T6_T4).
+#   E2  ood_reason = "missing paramA feed column" -- the paramA lattice is
+#       step-8 {101,109,117,125,133,141}+121, so f113/f129 are empty for 9 of
+#       10 pairs (18 cells).  feedgrid_pathfinder_20260815.md section 10.3 says
+#       these open with no bootstrap via the same level-2 seed proven at e5.94.
+#       RISK, registered: the f129 column ran 20 non_finite_flux of 89 chains
+#       (22%) in that campaign because its only seed was an f125 restart four
+#       feed-steps away.  resolver.promote() is now wired (produce.py:1320-1334,
+#       _maybe_promote), so the level-1 cache should absorb this after the
+#       cell's first converged chain -- this stratum is also the field test of
+#       that fix.
+# =========================================================================== #
+[[produce.strata]]
+name = "fxy_ood_T6T4_f109"
+campaign = "fxy_ood_T6T4_f109"
+library = "paramA"
+pairs = ["T6_T4"]
+feed = 109
+split_w1 = [0.40, 0.60]
+generators = { random = 0.7, heuristic = 0.3 }
+n_target = 40
+priority = 120
+notes = "OOD: record cell at an unseen feed; split held near 0.5 so FEED is the only variable"
+
+[[produce.strata]]
+name = "fxy_ood_e614_f129"
+campaign = "fxy_ood_e614_f129"
+library = "paramA"
+pairs = ["P6656Z1G10N16_P6656Z2G08N12"]
+feed = 129
+split_w1 = [0.3, 0.7]
+generators = { random = 0.7, heuristic = 0.3 }
+n_target = 40
+priority = 120
+allow_single_cycle_discharge = true
+notes = "OOD: one of the 18 unopened paramA f113/f129 cells; f129 -> N=32, 2*32-60 = 4 unconsumed fresh units, 0 depth-2 edges"

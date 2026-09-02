@@ -15,17 +15,19 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .schema import LATE_COLUMNS, PARQUET_SCHEMA, SCHEMA_COLUMNS, CanonicalRecord
+from .fuel_types import FuelLibrary, core_enrichment_split
+from .schema import LATE_COLUMNS, PARQUET_SCHEMA, SCHEMA_COLUMNS, CanonicalRecord, unpack_pattern
 
 RECORDS_NAME = "records.parquet"
 MAPS_NAME = "maps.npz"
+FUEL_TYPES_NAME = "fuel_types.parquet"
 
 
 # --------------------------------------------------------------------------- #
@@ -125,31 +127,56 @@ def _quality_rank(df: pd.DataFrame) -> np.ndarray:
     A converged label is always the best evidence for a ``record_id``; among rows
     of equal convergence a *valid* row (an honest non-convergence) outranks an
     *invalid* one (a ``non_finite_flux`` / harness ``error`` with all-None
-    targets); and among rows equal on BOTH, a row carrying the harvested flatness
-    columns outranks one that does not.  Encoded as
-    ``converged*4 + valid*2 + has_flatness`` so convergence dominates:
+    targets); and among rows equal on BOTH, a row carrying a harvested label
+    column outranks one that does not.  Encoded as
+    ``converged*8 + valid*4 + has_flatness*2 + has_fxy`` so convergence dominates:
 
-    * ``7`` converged & valid & mapped   (the richest label; never lose it)
-    * ``6`` converged & valid            (the label we must never lose)
-    * ``4``/``5`` converged & invalid    (defensive; ``outcome_to_record`` never emits it)
-    * ``2``/``3`` non-converged & valid
-    * ``0``/``1`` invalid (error / non_finite_flux)
+    * ``15`` converged & valid & mapped & F_xy-labelled (the richest; never lose it)
+    * ``12`` converged & valid                (the label we must never lose)
+    * ``8``-``11`` converged & invalid  (defensive; ``outcome_to_record`` never emits it)
+    * ``4``-``7`` non-converged & valid
+    * ``0``-``3`` invalid (error / non_finite_flux)
 
-    The flatness bit is the LOW-ORDER term and it decides only exact ties, where
-    the previous "keep the last write" rule let a re-write of the same
+    The two label bits are the LOW-ORDER terms and they decide only exact ties,
+    where the previous "keep the last write" rule let a re-write of the same
     ``record_id`` that carried no map silently null out an already-harvested
     ``node_peak`` / ``map_cov`` — the labels the flatness-first objective is
-    defined on (program §1.3).  Ties on all three bits still keep the last
-    occurrence, so an equal-quality write can still refresh auxiliary fields.
+    defined on (program §1.3).  ``f_xy`` / ``f_xya`` get their OWN bit rather than
+    joining the flatness OR: they come from a different file (``MAS_OUT``, not
+    ``MAS_SUM``) and can be present when the maps are not, so folding them
+    together would let a map-only row tie — and therefore overwrite — an
+    F_xy-labelled one, which is the exact defect this rank exists to prevent
+    (design 20260829 §3.3).  Rows that tie on all four bits are settled by
+    :func:`dedup_upsert`'s FIRST-wins rule, i.e. the incumbent survives.
     """
-    conv = df["converged"].fillna(False).astype(bool).to_numpy().astype(np.int8)
-    valid = df["valid"].fillna(False).astype(bool).to_numpy().astype(np.int8)
-    flat = np.zeros(len(df), dtype=np.int8)
-    for column in ("node_peak", "map_cov"):
-        if column in df.columns:
-            present = pd.to_numeric(df[column], errors="coerce").notna()
-            flat |= present.to_numpy().astype(np.int8)
-    return conv * 4 + valid * 2 + flat
+    def _flag(column: str) -> np.ndarray:
+        """Null-safe 0/1 flag: every null shape (None, NaN, ``pd.NA``) reads False.
+
+        Masking by hand rather than ``.fillna(False)``: on an OBJECT-dtype column
+        (a frame built straight from records, where the nulls are ``None`` /
+        ``pd.NA`` rather than a parquet bool column) ``fillna`` silently downcasts
+        and emits the pandas>=2.2 FutureWarning.  ``multi_pc._truthy`` is the
+        row-at-a-time twin of this and must keep matching it.
+        """
+        col = df[column]
+        values = col.to_numpy(copy=True)
+        values[~col.notna().to_numpy()] = False
+        return values.astype(bool).astype(np.int8)
+
+    conv = _flag("converged")
+    valid = _flag("valid")
+
+    def _any_present(columns: tuple[str, ...]) -> np.ndarray:
+        bit = np.zeros(len(df), dtype=np.int8)
+        for column in columns:
+            if column in df.columns:
+                present = pd.to_numeric(df[column], errors="coerce").notna()
+                bit |= present.to_numpy().astype(np.int8)
+        return bit
+
+    flat = _any_present(("node_peak", "map_cov"))
+    fxy = _any_present(("f_xy", "f_xya"))
+    return conv * 8 + valid * 4 + flat * 2 + fxy
 
 
 def dedup_upsert(df: pd.DataFrame) -> pd.DataFrame:
@@ -161,9 +188,22 @@ def dedup_upsert(df: pd.DataFrame) -> pd.DataFrame:
     REPLACES the stored one (e.g. a converged retry upgrades an earlier
     non-converged/failed row, and a mapped row upgrades an unmapped one); a
     strictly worse one is DISCARDED so a stale or racing write can NEVER downgrade
-    a converged label or drop its harvested flatness columns.  Ties (equal
-    quality) keep the last occurrence — the pre-existing store behaviour, which
-    also lets a later equal-quality write refresh auxiliary fields.
+    a converged label or drop its harvested flatness columns.
+
+    TIES KEEP THE FIRST OCCURRENCE (incumbent wins).  Callers concatenate
+    ``[existing, incoming]``, so on equal quality the row ALREADY IN THE STORE
+    survives: local truth is only ever replaced by strictly higher-quality
+    evidence.  This is the fix for the merge clobber measured 20260829 — the rank
+    covers ``converged`` / ``valid`` / the label bits and NOTHING else, so under
+    the old "ties keep the last write" rule every other column (``e_core``,
+    ``e_split``, ``parent_record_id``, …) was silently taken from the incoming
+    row on a tie.  Merging a remote kit whose store was a stale mirror of the
+    local one would therefore have reverted 397 corrected ``e_core`` values and
+    un-nulled 1,203 repaired ``parent_record_id``s while the CLI classified every
+    one of them as a harmless "duplicate (kept)".  An equal-quality write can no
+    longer refresh auxiliary fields; a caller that genuinely wants to overwrite a
+    stored row must write a strictly better one (or repair the store in place,
+    the way :func:`backfill_e_core` does).
 
     Rows are returned in stable arrival order (existing rows first, then new).
     """
@@ -172,17 +212,109 @@ def dedup_upsert(df: pd.DataFrame) -> pd.DataFrame:
     work = df.reset_index(drop=True)
     rank = _quality_rank(work)
     order = np.arange(len(work), dtype=np.int64)
-    # Best row per record_id = max (rank, arrival order): sort ascending and keep
-    # the last occurrence, so the highest rank wins and equal ranks keep the
-    # latest write.  Collect the winners' original positions and restore order.
+    # Best row per record_id = max rank, min arrival order.  Sort by rank
+    # ASCENDING and order DESCENDING and keep the last occurrence: the highest
+    # rank wins and equal ranks keep the EARLIEST (incumbent) write.  Collect the
+    # winners' original positions and restore arrival order.
     keyed = pd.DataFrame(
         {"rid": work["record_id"].to_numpy(), "rank": rank, "order": order}
     )
-    keyed = keyed.sort_values(["rank", "order"], kind="stable")
+    keyed = keyed.sort_values(["rank", "order"], ascending=[True, False],
+                              kind="stable")
     # np.sort (copy) — .to_numpy() may hand back a read-only view, on which the
     # in-place .sort() raises "sort array is read-only" (numpy 2.x)
     winners = np.sort(keyed.drop_duplicates("rid", keep="last")["order"].to_numpy())
     return work.iloc[winners].reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- #
+# derived enrichment columns (e_core / e_split)
+# --------------------------------------------------------------------------- #
+#: ``e_core`` / ``e_split`` are DERIVED columns, not free-form metadata: both are
+#: a pure function of ``(pattern, library_id)`` through the single shared recipe
+#: :func:`~.fuel_types.core_enrichment_split`.  Dataset-A/B extraction has always
+#: filled them that way, and inference reconstructs them the same way from a
+#: served pattern (``featurize`` / ``cell_calibrate``), which is what makes the
+#: train/serve conditioning parity contract hold.
+#:
+#: The produce/campaign write path, however, used to pass the CaseContext's
+#: *nominal* enrichment straight through ``outcome_to_record`` — the planned
+#: 50/50 (or 1/N) split value of the case, CONSTANT across a whole campaign and
+#: paired with ``e_split=None``.  A realized pattern almost never lands on the
+#: nominal split, so those rows carried an ``e_core`` describing a core that was
+#: never actually loaded (measured drift up to 0.068 w/o, ~1.4 e_core bins).
+#: Normalizing here — at the one choke point every writer funnels through —
+#: makes the column self-consistent no matter which caller produced the row.
+def derive_enrichment(
+    df: pd.DataFrame, fuel_library: "FuelLibrary"
+) -> tuple[pd.Series, pd.Series]:
+    """Recompute ``(e_core, e_split)`` from each row's ``(pattern, library_id)``.
+
+    Returns two float Series aligned to ``df.index``; an entry is ``NaN`` when the
+    recipe cannot resolve the row (unknown library, unresolvable batch id, or a
+    fed type with no enrichment) — exactly the ``(None, None)`` fallback
+    :func:`~.fuel_types.core_enrichment_split` gives extraction and inference, so
+    a caller-supplied value is kept rather than destroyed.
+
+    Results are memoized per ``(library_id, pattern)`` so a produce wave (many
+    rows, few distinct patterns) and a whole-store backfill both stay cheap.
+    """
+    cache: dict[tuple[str, str], tuple[float | None, float | None]] = {}
+    cores: list[float] = []
+    splits: list[float] = []
+    for lib, packed in zip(
+        df["library_id"].astype(str), df["pattern"].astype(str), strict=True
+    ):
+        key = (lib, packed)
+        hit = cache.get(key)
+        if hit is None:
+            try:
+                feed = unpack_pattern(packed).batch_feed()
+                hit = core_enrichment_split(fuel_library, lib, feed)
+            except Exception:
+                # A malformed/foreign pattern is a legitimate store state for a
+                # synthetic or partial row; never let it fail a records write.
+                hit = (None, None)
+            cache[key] = hit
+        cores.append(np.nan if hit[0] is None else float(hit[0]))
+        splits.append(np.nan if hit[1] is None else float(hit[1]))
+    return (
+        pd.Series(cores, index=df.index, dtype="float64"),
+        pd.Series(splits, index=df.index, dtype="float64"),
+    )
+
+
+def _load_fuel_library(store_dir: Path) -> "FuelLibrary | None":
+    """Best-effort ``fuel_types.parquet`` load from a store directory."""
+    path = Path(store_dir) / FUEL_TYPES_NAME
+    if not path.is_file():
+        return None
+    try:
+        return FuelLibrary.from_parquet(path)
+    except Exception:
+        return None
+
+
+def _normalize_enrichment(
+    df: pd.DataFrame, fuel_library: "FuelLibrary | None"
+) -> pd.DataFrame:
+    """Overwrite ``e_core``/``e_split`` with the pattern-derived values.
+
+    A row the recipe cannot resolve keeps whatever the caller supplied, so this is
+    a strict improvement: it can fill a null and correct a nominal, never blank an
+    otherwise-good value.  Returns ``df`` unchanged (same object) when there is
+    nothing to derive.
+    """
+    if fuel_library is None or df.empty:
+        return df
+    core, split = derive_enrichment(df, fuel_library)
+    have = core.notna()
+    if not have.any():
+        return df
+    out = df.copy()
+    out.loc[have, "e_core"] = core[have]
+    out.loc[have, "e_split"] = split[have]
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -195,6 +327,16 @@ class StoreWriter:
         self.store_dir = Path(store_dir)
         self.records_path = self.store_dir / RECORDS_NAME
         self.maps_path = self.store_dir / MAPS_NAME
+        self._fuel: FuelLibrary | None = None
+        self._fuel_loaded = False
+
+    @property
+    def fuel_library(self) -> "FuelLibrary | None":
+        """``fuel_types.parquet`` of this store, loaded once (``None`` if absent)."""
+        if not self._fuel_loaded:
+            self._fuel = _load_fuel_library(self.store_dir)
+            self._fuel_loaded = True
+        return self._fuel
 
     # -- records ------------------------------------------------------------ #
     def write_records(
@@ -202,16 +344,27 @@ class StoreWriter:
         records: Sequence[CanonicalRecord] | pd.DataFrame,
         *,
         append: bool = True,
+        derive_enrichment_columns: bool = True,
     ) -> dict[str, int]:
         """Write records, UPSERT-deduplicating by ``record_id``.
 
         On a ``record_id`` collision the higher-quality row wins (:func:`dedup_upsert`):
-        a converged label upgrades an earlier non-converged/failed one and a
-        strictly worse write can never downgrade it.  Returns
+        a converged label upgrades an earlier non-converged/failed one, and a
+        strictly worse OR EQUAL-quality write can never replace it.  Returns
         ``{"new": n_incoming, "total": n_after_dedup}``.
+
+        ``derive_enrichment_columns`` (default on) re-derives ``e_core``/``e_split``
+        from each incoming row's own ``(pattern, library_id)`` via
+        :func:`derive_enrichment`, so a caller that passes its case's *nominal*
+        enrichment (the produce/campaign path did, with ``e_split=None``) cannot
+        stamp a value that does not describe the pattern actually written.  Rows
+        the recipe cannot resolve keep the caller's value; pass ``False`` only to
+        write a frame verbatim (migrations that must be byte-preserving).
         """
         new_df = records if isinstance(records, pd.DataFrame) else records_to_frame(records)
         new_df = ensure_schema_columns(new_df)
+        if derive_enrichment_columns:
+            new_df = _normalize_enrichment(new_df, self.fuel_library)
         n_new = len(new_df)
 
         if append and self.records_path.exists():
@@ -223,8 +376,9 @@ class StoreWriter:
                 # not trip the pandas>=2.1 "all-NA concat" FutureWarning; the
                 # result is schema-normalized by frame_to_table regardless.
                 new_slice = new_slice.astype(existing.dtypes.to_dict())
-            # Existing rows FIRST so a strictly-better incoming row upgrades and an
-            # equal-quality one wins the tie (last), while a worse one is dropped.
+            # Existing rows FIRST so a strictly-better incoming row upgrades while
+            # an equal-quality one LOSES the tie (dedup_upsert keeps the first
+            # occurrence) and a worse one is dropped: local truth is authoritative.
             combined = pd.concat([existing, new_slice], ignore_index=True)
             combined = dedup_upsert(combined)
         else:
@@ -321,3 +475,98 @@ class StoreReader:
     def close(self) -> None:
         # The handle is already released by ``_npz``; this just drops the cache.
         self._maps = None
+
+
+# --------------------------------------------------------------------------- #
+# e_core / e_split backfill (one-shot repair of nominally-stamped rows)
+# --------------------------------------------------------------------------- #
+#: Default drift threshold [w/o] for "this row's e_core does not describe its own
+#: pattern".  0.005 is half the tightest curriculum ``e_core_band`` step and an
+#: order of magnitude above the float noise of the recipe (measured max residual
+#: on correctly-written rows: 2.7e-15).
+ECORE_BACKFILL_TOL = 0.005
+
+
+def backfill_e_core(
+    store_dir: str | Path,
+    *,
+    dry_run: bool = True,
+    tol: float = ECORE_BACKFILL_TOL,
+    backup_suffix: str | None = None,
+) -> dict[str, Any]:
+    """Re-derive ``e_core``/``e_split`` for rows written with a NOMINAL value.
+
+    DRY RUN BY DEFAULT — call with ``dry_run=False`` to write.
+
+    Rows whose ``e_core`` came from the extractor (Dataset A/B) already agree with
+    :func:`~.fuel_types.core_enrichment_split` to float precision and are left
+    byte-identical.  What this repairs are the produce/campaign rows that carried
+    the case's *nominal* enrichment (the planned 50/50 or 1/N split, constant
+    across a campaign, always paired with a null ``e_split``) instead of the value
+    implied by the pattern that was actually written; see :func:`derive_enrichment`.
+
+    Returns a report dict::
+
+        {"rows", "resolvable", "null_filled", "corrected", "unchanged",
+         "unresolvable", "max_abs_drift", "by_campaign", "applied", "backup"}
+
+    ``corrected`` counts rows whose non-null ``e_core`` moves by more than ``tol``;
+    ``by_campaign`` breaks those down by ``(library_id, campaign)``.  A write is
+    atomic (temp file + ``os.replace``) and takes a ``.bak_<suffix>`` copy of the
+    previous ``records.parquet`` first unless ``backup_suffix`` is ``None``.
+    """
+    store_dir = Path(store_dir)
+    records_path = store_dir / RECORDS_NAME
+    if not records_path.is_file():
+        raise FileNotFoundError(f"no records store at {records_path}")
+    fuel = _load_fuel_library(store_dir)
+    if fuel is None:
+        raise FileNotFoundError(f"no fuel table at {store_dir / FUEL_TYPES_NAME}")
+
+    df = ensure_schema_columns(pd.read_parquet(records_path))
+    core, split = derive_enrichment(df, fuel)
+    stored = pd.to_numeric(df["e_core"], errors="coerce")
+
+    resolvable = core.notna()
+    null_fill = resolvable & stored.isna()
+    drift = (core - stored).abs()
+    corrected = resolvable & stored.notna() & (drift > tol)
+    touched = resolvable & (null_fill | (drift > tol))
+
+    sub = df.loc[corrected]
+    by_campaign = (
+        sub.assign(_d=drift[corrected])
+        .groupby([sub["library_id"].astype(str), sub["campaign"].astype(str)])
+        .agg(n=("_d", "size"), max_abs_drift=("_d", "max"))
+        .sort_values("n", ascending=False)
+        .to_dict("index")
+    )
+
+    report: dict[str, Any] = {
+        "rows": int(len(df)),
+        "resolvable": int(resolvable.sum()),
+        "unresolvable": int((~resolvable).sum()),
+        "null_filled": int(null_fill.sum()),
+        "corrected": int(corrected.sum()),
+        "unchanged": int(len(df) - touched.sum()),
+        "max_abs_drift": float(drift[resolvable & stored.notna()].max())
+        if (resolvable & stored.notna()).any() else 0.0,
+        "by_campaign": {f"{k[0]}|{k[1]}": v for k, v in by_campaign.items()},
+        "applied": False,
+        "backup": None,
+    }
+    if dry_run or not touched.any():
+        return report
+
+    if backup_suffix:
+        backup = records_path.with_name(f"{records_path.name}.bak_{backup_suffix}")
+        backup.write_bytes(records_path.read_bytes())
+        report["backup"] = str(backup)
+
+    out = df.copy()
+    out.loc[resolvable, "e_core"] = core[resolvable]
+    out.loc[resolvable, "e_split"] = split[resolvable]
+    table = frame_to_table(out)
+    _atomic_write(records_path, lambda p: pq.write_table(table, p))
+    report["applied"] = True
+    return report

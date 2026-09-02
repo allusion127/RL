@@ -19,6 +19,37 @@ to three heads:
   at that width; the 7-target head is the cond_v3 default.
 * **conv head**   a single convergence logit.
 
+F_xy prior-residual head (phase P4 of the F_xy switch)
+------------------------------------------------------
+``--promote-fxy`` APPENDS ``f_xy`` (MASTER's FXYP, pin planar peaking) to the
+dataset target tuple, so it is simply one more row of the existing ``mu`` /
+``log_sigma`` heads — no new module, and the NaN mask already censors the ~98%
+of store rows that carry no FXYP label.  What IS new is that the row does not
+regress ``f_xy`` directly: with ``fxy_target_idx`` / ``fxy_ref_idx`` set, the
+head's output is the RESIDUAL against the measured ``F_xy ~ F_r`` affine prior
+(``F_xy = 1.12*F_r - 0.08``, residual sd 0.029 pooled over 192 measured cores —
+``data/reports/fxy_switch_design_20260829.md`` §3.4.4), evaluated on the model's
+OWN ``f_r`` prediction and composed inside :meth:`PosValNet._compose_fxy`:
+
+    mu[f_xy] = residual + (a * mu[f_r].detach() + b)          # z units
+
+Three consequences, all deliberate:
+
+1. With ~840 FXYP labels against 66k F_r labels, the prior lets the sparse head
+   inherit the dense F_r head's accuracy and learn only what F_r cannot express
+   (the plane-wise pin shape).  At init the residual is ~0, so the served f_xy
+   IS the prior — a finite, physically meaningful starting point.
+2. The prior is taken from the model's own prediction, not from the ``f_r``
+   LABEL, so train and serve see the identical quantity; there is no
+   label-at-train / prediction-at-serve mismatch to absorb.
+3. ``detach()`` on the reference row means the f_xy loss cannot move the F_r
+   head, so the no-regression gate on the seven legacy targets is protected
+   structurally rather than by measurement.
+
+The prior is NOT a gate: its worst measured residual is 0.08-0.10, and the
+design limit is ``F_xy <= 1.65``, so no feasibility claim may rest on the prior
+alone (design §3.4.4).
+
 Trunk: Conv stem ``C→W`` (GroupNorm + SiLU) → 6 residual blocks (GN/SiLU) with a
 FiLM(globals) modulation injected every two blocks.  The 19x19 grid is the
 mirror-expanded full core, so a plain masked mean over the fuel cells is already
@@ -221,6 +252,28 @@ class PosValNetConfig:
     #: ppm would be unlearnable under Adam); ``meta.json`` reports both.  ``0``
     #: (default) registers nothing.
     n_cbc_provenance_groups: int = 0
+    #: --- optional F_xy prior-residual composition (F_xy switch, phase P4) ----
+    #: ``fxy_target_idx`` is the head row that predicts ``f_xy`` and
+    #: ``fxy_ref_idx`` the row it takes its prior from (``f_r``); both ``-1``
+    #: (default) means no composition at all, so the module set, parameter count,
+    #: ``state_dict`` keys and ``forward`` output are byte-identical to the
+    #: pre-F_xy net.  When both are ``>= 0`` the f_xy row of ``out["mu"]`` becomes
+    #:
+    #:     mu[f_xy] <- mu[f_xy] + (a * mu[f_r].detach() + b)
+    #:
+    #: i.e. the head's own f_xy output is the RESIDUAL against the measured
+    #: ``F_xy ~ F_r`` affine, expressed in Z UNITS (the ``(a, b)`` stored here are
+    #: the z-space image of the physical fit — see
+    #: :func:`lpopt.model.physics_prior.fxy_prior_z`).  The reference row is
+    #: DETACHED, so the f_xy loss cannot move the F_r head: the seven legacy
+    #: targets are structurally protected from the new one.  No parameters are
+    #: registered — the residual head IS the ``mu_head`` / ``log_sigma_head`` row,
+    #: which is what makes the composition compatible with the freeze-finetune
+    #: recipe (frozen trunk, one new trainable head row).
+    fxy_target_idx: int = -1
+    fxy_ref_idx: int = -1
+    fxy_prior_a: float = 0.0
+    fxy_prior_b: float = 0.0
 
 
 class MultiScaleMapDecoder(nn.Module):
@@ -376,6 +429,23 @@ class PosValNet(nn.Module):
         if self.has_cbc_provenance:
             self.cbc_provenance_offset = nn.Parameter(
                 torch.zeros(self.n_cbc_provenance_groups - 1))
+        # Optional F_xy prior-residual composition.  PARAMETER-FREE: two stored
+        # scalars applied to the existing mu head, so a flag-off net is
+        # byte-identical and a flag-on net adds no state_dict key.
+        self.fxy_target_idx = int(cfg.fxy_target_idx)
+        self.fxy_ref_idx = int(cfg.fxy_ref_idx)
+        self.has_fxy_prior = self.fxy_target_idx >= 0 and self.fxy_ref_idx >= 0
+        if self.has_fxy_prior:
+            if max(self.fxy_target_idx, self.fxy_ref_idx) >= cfg.n_targets:
+                raise ValueError(
+                    f"fxy prior indices ({self.fxy_target_idx}, {self.fxy_ref_idx}) "
+                    f"are outside the {cfg.n_targets}-target head")
+            if self.fxy_target_idx == self.fxy_ref_idx:
+                raise ValueError(
+                    "fxy_target_idx and fxy_ref_idx must differ (a target cannot "
+                    "be its own prior)")
+        self.fxy_prior_a = float(cfg.fxy_prior_a)
+        self.fxy_prior_b = float(cfg.fxy_prior_b)
 
         se_r, se_c, q_r, q_c = _slot_indices()
         self.register_buffer("_se_r", se_r, persistent=False)
@@ -437,6 +507,22 @@ class PosValNet(nn.Module):
             out[rows, a] = quarter[:, chans].to(out.dtype)
         return out
 
+    def _compose_fxy(self, mu: torch.Tensor) -> torch.Tensor:
+        """Add the ``a*mu[f_r] + b`` z-space prior onto the f_xy row of ``mu``.
+
+        Identity (and allocation-free) when the composition is off.  The
+        reference row is ``detach()``-ed so gradient from the f_xy loss never
+        reaches the F_r head — the f_xy target is sparse (~2% of rows) and must
+        not be able to perturb the seven dense legacy targets.  The addition is
+        out-of-place (``mu + add``) so autograd sees a clean graph.
+        """
+        if not self.has_fxy_prior:
+            return mu
+        prior = self.fxy_prior_a * mu[:, self.fxy_ref_idx].detach() + self.fxy_prior_b
+        add = torch.zeros_like(mu)
+        add[:, self.fxy_target_idx] = prior
+        return mu + add
+
     def forward(self, cells: torch.Tensor, globals_: torch.Tensor,
                 traj_frac: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         fuel_mask = cells[:, 0:1]                        # channel 0 == fuel_mask
@@ -464,7 +550,7 @@ class PosValNet(nn.Module):
 
         feat = self.head_trunk(pooled)
         out = {
-            "mu": self.mu_head(feat),
+            "mu": self._compose_fxy(self.mu_head(feat)),
             "log_sigma": self.log_sigma_head(feat),
             "map": quarter,
             "conv_logit": self.conv_head(feat).squeeze(-1),

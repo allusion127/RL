@@ -61,6 +61,7 @@ from ._proc import no_window_flags
 from .config import (
     FR_GUARD_KNOB as _FR_GUARD_KNOB, LpoptConfig, StratumConfig,
     fr_guard_enforced, load_config)
+from .safelog import safe_logger
 from .search.genome import fresh_units_from_feed, random_genome
 from .vendor.masterrl.domain import CaseKey
 
@@ -1244,7 +1245,9 @@ class CurriculumDriver:
         self.curr = cfg.curriculum
         self.dry_run = bool(dry_run)
         self.progress = progress
-        self._log = log or (lambda m: print(m))
+        # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+        # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+        self._log = safe_logger(log)
         self.rng = rng or random.Random(cfg.flow.random_seed)
 
         self._base = cfg.source_path.parent if cfg.source_path else Path.cwd()
@@ -2074,6 +2077,7 @@ class CurriculumDriver:
         cfg.cyclen_physics_prior = bool(getattr(m, "cyclen_physics_prior", False))
         cfg.quantile_heads = bool(getattr(m, "quantile_heads", False))
         cfg.promote_max_asm_bu = bool(getattr(m, "promote_max_asm_bu", False))
+        cfg.promote_fxy = bool(getattr(m, "promote_fxy", False))
         cfg.auto_fit_cell_calibration = bool(
             getattr(m, "auto_fit_cell_calibration", True))
         # hires map-path structure — must travel WITH cond_schema (see the
@@ -2094,6 +2098,8 @@ class CurriculumDriver:
             flags.append("--quantile-heads")
         if getattr(m, "promote_max_asm_bu", False):
             flags.append("--promote-max-asm-bu")
+        if getattr(m, "promote_fxy", False):
+            flags.append("--promote-fxy")
         if not getattr(m, "auto_fit_cell_calibration", True):
             flags.append("--no-auto-cell-calibration")
         # hires map-path structure (arm A6).  Mirrors ``_v5_train_config`` exactly
@@ -2820,7 +2826,9 @@ def run_cell_produce(
     ``campaign=<cid>`` into the main store.
     """
     from .search.produce import ProduceDriver
-    log = log or (lambda m: print(m))
+    # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+    # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+    log = safe_logger(log)
 
     # tag the produce config for this cell
     cfg.produce.campaign = cid

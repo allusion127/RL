@@ -145,3 +145,148 @@ def test_report_is_json_serializable_and_counts_everything():
 def test_empty_input_is_an_empty_report():
     rep = D.select_delivery([])
     assert rep.ranked == [] and rep.excluded == [] and rep.n_rows == 0
+
+
+# --------------------------------------------------------------------------- #
+# F_xy compliance (user decision 2026-08-29)
+# --------------------------------------------------------------------------- #
+def test_compliance_margin_fxy():
+    from lpopt.search.delivery import LICENSING_FXY_LIMIT, compliance_margin_fxy
+
+    assert LICENSING_FXY_LIMIT == pytest.approx(1.65)
+    assert compliance_margin_fxy(1.60) == pytest.approx(0.05)
+    assert compliance_margin_fxy(1.70) == pytest.approx(-0.05)
+    assert compliance_margin_fxy(None) is None
+    assert compliance_margin_fxy(float("nan")) is None
+    # F_r keeps its OWN limit — the two axes are independent, not two spellings
+    # of one number.
+    from lpopt.search.delivery import LICENSING_FR_LIMIT
+    assert LICENSING_FR_LIMIT == pytest.approx(1.55)
+
+
+def test_select_delivery_ranks_by_fxy_margin_first():
+    from lpopt.search.delivery import select_delivery
+
+    rows = [
+        {"record_id": "best_fr", "node_peak": 1.40, "f_r": 1.50, "f_xy": 1.64},
+        {"record_id": "best_fxy", "node_peak": 1.41, "f_r": 1.54, "f_xy": 1.55},
+        {"record_id": "no_fxy", "node_peak": 1.42, "f_r": 1.49, "f_xy": None},
+    ]
+    report = select_delivery(rows, min_band_rows=99)      # too few rows -> no band
+    order = [c.record_id for c in report.ranked]
+    # F_xy headroom wins over F_r headroom…
+    assert order[0] == "best_fxy"
+    # …and a row with NO measured F_xy sorts LAST, never first.
+    assert order[-1] == "no_fxy"
+
+
+def test_select_delivery_with_no_fxy_labels_is_the_historical_fr_order():
+    from lpopt.search.delivery import select_delivery
+
+    rows = [{"record_id": "a", "node_peak": 1.40, "f_r": 1.52},
+            {"record_id": "b", "node_peak": 1.41, "f_r": 1.48},
+            {"record_id": "c", "node_peak": 1.42, "f_r": 1.50}]
+    report = select_delivery(rows, min_band_rows=99)
+    assert [c.record_id for c in report.ranked] == ["b", "c", "a"]
+
+
+# --------------------------------------------------------------------------- #
+# offline regeneration (incident 2026-08-30 recovery path)
+# --------------------------------------------------------------------------- #
+def _fake_run_dir(tmp_path, objective: str):
+    """A finished run dir with labels.jsonl + status.json and NO delivery.json."""
+    import json
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True)
+    rows = []
+    for i in range(8):
+        rows.append({
+            "record_id": f"rec{i:02d}", "converged": True,
+            "node_peak": 1.30 + 0.02 * i, "map_cov": 0.30,
+            "f_r": 1.50 - 0.005 * i, "f_xy": 1.60 - 0.005 * i,
+            "f_q": 2.20, "cbc_max": 1400.0, "ao_abs": 0.10,
+            "max_pin_burnup": 70.0, "cyclen": 620.0 + i,
+            "feed": 121, "e_core": 5.9,
+        })
+    with open(run_dir / "labels.jsonl", "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps({"record_id": r["record_id"], "record": r}) + chr(10))
+    (run_dir / "status.json").write_text(
+        json.dumps({"status": "complete", "objective": objective}), encoding="utf-8")
+    return run_dir
+
+
+def _deck_cfg(tmp_path, objective: str):
+    from lpopt.config import (
+        AcquisitionConfig, CaseConfig, DataConfig, ExtractConfig, FlowConfig,
+        FuelConfig, LpoptConfig, MasterConfig, ModelConfig, ProduceConfig,
+        RemoteConfig, SearchConfig, VerifyConfig,
+    )
+
+    deck = tmp_path / "lpopt.inp"
+    deck.write_text("# fake deck" + chr(10), encoding="utf-8")
+    acq = AcquisitionConfig(budget=8)
+    acq.objective = objective
+    return LpoptConfig(
+        flow=FlowConfig(), remote=RemoteConfig(), master=MasterConfig(),
+        verify=VerifyConfig(), data=DataConfig(),
+        case=CaseConfig(pair="K1_K2", feed=121), fuel=FuelConfig(),
+        extract=ExtractConfig(), produce=ProduceConfig(), search=SearchConfig(),
+        acquisition=acq, model=ModelConfig(), source_path=deck,
+    )
+
+
+def test_regenerate_delivery_rebuilds_the_dossier_without_master(tmp_path):
+    """A run whose _render_report died must be recoverable from labels.jsonl alone.
+
+    Incident 2026-08-30: a completed 100-call campaign lost report.md and
+    delivery.json to a UnicodeEncodeError.  Re-running would re-spend the whole
+    licensing budget; this path re-derives the artefacts from what is on disk.
+    """
+    import json
+
+    from lpopt.report.report import regenerate_delivery
+
+    run_dir = _fake_run_dir(tmp_path, "flat_power")
+    cfg = _deck_cfg(tmp_path, "flat_power")
+
+    path, reason = regenerate_delivery(run_dir, cfg)
+
+    assert reason == "ok" and path == run_dir / "delivery.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["ranked"], "in-band candidates must survive the round-trip"
+    # §8.5 fields are NOT EVALUATED on a regenerated dossier -- never a pass.
+    for entry in payload["ranked"]:
+        assert entry["ood_flag"] is None
+        assert entry["conformal_unfit_axes"] is None
+    assert payload["cell"] is not None
+
+
+def test_regenerate_delivery_refuses_a_non_flat_power_run(tmp_path):
+    """min_fxy / min_fr define no delivery ranking -- say so, do not fake one."""
+    from lpopt.report.report import regenerate_delivery
+
+    run_dir = _fake_run_dir(tmp_path, "min_fxy")
+    path, reason = regenerate_delivery(run_dir, _deck_cfg(tmp_path, "min_fxy"))
+
+    assert path is None
+    assert "min_fxy" in reason and "flat_power" in reason
+    assert not (run_dir / "delivery.json").exists()
+
+
+def test_regenerate_delivery_matches_what_the_live_driver_would_write(tmp_path):
+    """The offline path and _write_delivery share one payload builder."""
+    from lpopt.report.report import _read_labels
+    from lpopt.search.campaign import build_delivery_payload, feasibility_limits_for
+
+    run_dir = _fake_run_dir(tmp_path, "flat_power")
+    cfg = _deck_cfg(tmp_path, "flat_power")
+    rows = [r["record"] for r in _read_labels(run_dir)]
+    limits = dict(feasibility_limits_for(cfg.acquisition, "flat_power"))
+
+    direct = build_delivery_payload(
+        rows, objective="flat_power", limits=limits, cell="K1_K2_f121")
+    assert direct is not None and direct["ranked"]
+    assert build_delivery_payload(
+        rows, objective="min_fxy", limits=limits, cell=None) is None

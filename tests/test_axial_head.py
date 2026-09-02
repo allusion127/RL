@@ -356,8 +356,15 @@ def store_ids():
             if k.endswith(ax.AXIAL_SUFFIX)}
     if not have:
         pytest.skip("no axial labels in the store")
+    # CONVERGED rows only, with a finite ``ao_abs``: the axial-keyed maps store
+    # now leads with a block of non-converged rows whose ``ao_abs`` is NaN, and
+    # every contract below (the label round-trip, the mask flip) needs a row that
+    # actually carries a label to be meaningful.
+    recs = reader.records.drop_duplicates("record_id")
+    ok = {str(r.record_id) for r in recs.itertuples()
+          if bool(r.converged) and np.isfinite(float(r.ao_abs))}
     ids = reader.records["record_id"].astype(str)
-    with_ax = [r for r in ids if r in have][:6]
+    with_ax = [r for r in ids if r in have and r in ok][:6]
     without = [r for r in ids if r not in have][:6]
     return reader, fl, with_ax, without
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import random
+import shutil
 import sys
 import threading
 import time
@@ -769,3 +770,95 @@ def test_harvesting_evaluator_puts_maps_in_metadata_and_flows_to_maps_key():
     ev2 = HarvestingEquilibriumEvaluator(_RunnerNC())
     ev2.runner = _RunnerNC()
     assert "maps" not in ev2.evaluate(None, None).metadata
+
+
+# --------------------------------------------------------------------------- #
+# F_xy harvest (design 20260829 §3.2-B): the final cycle's MAS_OUT is the ONLY
+# source of FXYP, and it is on disk for free at exactly the same moment as the
+# EDIT5 map.  Same never-abort contract as ``maps``.
+# --------------------------------------------------------------------------- #
+def _mas_out_dir() -> Path:
+    hits = list(Path("runs").glob("*/master/master_work/*/*/MAS_OUT"))
+    return hits[0].parent if hits else None
+
+
+def test_fxy_harvest_from_real_mas_out_and_graceful_none(tmp_path: Path) -> None:
+    import types
+    from lpopt.search.verify import _fxy_from_equilibrium_result
+    d = _mas_out_dir()
+    if d is None:
+        pytest.skip("no MAS_OUT fixture under runs/")
+    res = types.SimpleNamespace(cycles=[types.SimpleNamespace(work_dir=d)],
+                                retained_work_dirs=())
+    peaks = _fxy_from_equilibrium_result(res)
+    assert peaks is not None and peaks.sane and 1.0 <= peaks.f_xy <= 3.0
+
+    # missing dir / shapeless result -> None, never raises.
+    bad = types.SimpleNamespace(cycles=[types.SimpleNamespace(work_dir=tmp_path / "no")],
+                                retained_work_dirs=())
+    assert _fxy_from_equilibrium_result(bad) is None
+    assert _fxy_from_equilibrium_result(types.SimpleNamespace()) is None
+
+    # a physics-killed dir is refused even though its MAS_OUT parses.
+    killed = tmp_path / "killed"
+    killed.mkdir()
+    shutil.copy2(d / "MAS_OUT", killed / "MAS_OUT")
+    (killed / "NONFINITE_FLUX").write_text("", encoding="ascii")
+    dead = types.SimpleNamespace(cycles=[types.SimpleNamespace(work_dir=killed)],
+                                 retained_work_dirs=())
+    assert _fxy_from_equilibrium_result(dead) is None
+
+
+def test_fxy_flows_metadata_to_outcome_to_record_columns() -> None:
+    import types
+    from dataclasses import replace as _rp
+    from lpopt.search.verify import HarvestingEquilibriumEvaluator
+    d = _mas_out_dir()
+    if d is None:
+        pytest.skip("no MAS_OUT fixture under runs/")
+
+    from lpopt.vendor.masterrl.domain import FOM
+    import dataclasses as _dc
+    fom_fields = {f.name: (0.0 if f.type in ("float", "float | None") else None)
+                  for f in _dc.fields(FOM)}
+    fom_fields["converged"] = True
+    fom = FOM(**fom_fields)
+    tol = types.SimpleNamespace(as_dict=lambda: {})
+    raw = types.SimpleNamespace(fom=fom, converged=True, master_process_calls=3,
+                                n_cycles=11, comparisons=[], tolerances=tol,
+                                cycles=[types.SimpleNamespace(work_dir=d)],
+                                retained_work_dirs=())
+
+    class _Runner:
+        def run(self, case, pattern):
+            return raw
+
+    result = HarvestingEquilibriumEvaluator(_Runner()).evaluate(None, None)
+    assert "fxy" in result.metadata
+    peaks = result.metadata["fxy"]
+    assert peaks.f_xy is not None and peaks.f_xya is not None
+
+    # ... and it lands in the record columns (same atomic write as f_r/cyclen).
+    rng = random.Random(11)
+    pat = random_genome(rng, "K1_K2", 30).to_pattern()
+    base = dict(status="converged", fom=None, n_cycles=11, tolerance_margin=0.1,
+                wall_s=1.0, restart_provenance="native:x", failure="",
+                converged_at_cap=False, case_key=CaseKey("K1_K2", 121), pattern=pat)
+    rec = outcome_to_record(WaveOutcome(**base, fxy=peaks), library_id="ga80")
+    assert rec.f_xy == peaks.f_xy and rec.f_xya == peaks.f_xya
+    # no harvest -> honest nulls, never a substituted F_r.
+    bare = outcome_to_record(WaveOutcome(**base), library_id="ga80")
+    assert bare.f_xy is None and bare.f_xya is None
+
+    # a NON-converged chain harvests nothing (its FXYP is not an equilibrium value)
+    raw_nc = types.SimpleNamespace(fom=_rp(fom, converged=False), converged=False,
+                                   master_process_calls=1, n_cycles=14,
+                                   comparisons=[], tolerances=tol,
+                                   cycles=[types.SimpleNamespace(work_dir=d)],
+                                   retained_work_dirs=())
+
+    class _RunnerNC:
+        def run(self, case, pattern):
+            return raw_nc
+    assert "fxy" not in HarvestingEquilibriumEvaluator(_RunnerNC()).evaluate(
+        None, None).metadata

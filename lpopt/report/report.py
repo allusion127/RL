@@ -27,9 +27,14 @@ from . import figures as F
 # restated: the restatement had already drifted (it omitted the pin-BU gate the
 # campaign applies, so a report could call a row feasible that the campaign had
 # rejected).  ``campaign`` imports this module lazily, so there is no cycle.
+from ..model.cell_calibrate import cyclen_cell_key as _cyclen_cell_key
 from ..search.campaign import (
+    _atomic_json,
+    build_delivery_payload as _campaign_delivery_payload,
     feasibility_limits_for as _campaign_feasibility_limits,
-    is_feasible as _campaign_is_feasible,
+    is_deliverable as _campaign_is_deliverable,
+    is_feasible_search as _campaign_is_feasible,
+    unknown_axes as _campaign_unknown_axes,
 )
 
 # Minimal SDM/MTC post-verification integration hook (plan 12.5, additive).
@@ -57,7 +62,7 @@ _FR_UNGATED_OBJECTIVES = frozenset(
 #: Objectives whose campaign feasibility set carries a max-pin-burnup gate, and
 #: the deck default it gates at.  Restating F_r but SILENTLY DROPPING this gate is
 #: how the report came to call rows feasible that the campaign had rejected; the
-#: predicate is now shared (:func:`campaign.is_feasible`), and these are the
+#: predicate is now shared (:func:`campaign.is_feasible_search`), and these are the
 #: values used when ``lpopt report`` runs with no deck to resolve them from.
 _PIN_BU_GATED_OBJECTIVES = frozenset({"flat_power", "fr_boundary", "min_fuel_cost",
                                       "min_fr_max_cycle"})
@@ -73,6 +78,23 @@ _MINFR_PIN_BU_LIMIT = 78.0
 #: of a min_fuel_cost run listed out-of-band rows the campaign had rejected.
 _DEFAULT_FUELCOST_CYCLEN_LO = 615.0
 _DEFAULT_FUELCOST_CYCLEN_HI = 635.0
+
+#: Objectives whose feasible set carries an **F_xy** gate — ``min_fxy`` (where
+#: F_xy is the objective AND the hard limit) and ``flat_power`` (safety gate).
+#: Every other mode reports F_xy as a column and never rejects on it.
+_FXY_GATED_OBJECTIVES = frozenset({"min_fxy", "flat_power"})
+#: The deck default those modes gate at, used when ``lpopt report`` runs with NO
+#: deck to resolve it from.  It exists for one reason: the deck-less path has now
+#: twice shipped a report that called rows feasible the campaign had rejected —
+#: once for the pin-BU gate, once for the min_fuel_cost cyclen band.  Not a third
+#: time for F_xy.
+_DEFAULT_FXY_LIMIT = 1.65
+
+#: Objectives whose report scalar is NOT comparable to the GA-600 baseline's.
+#: The GA log is a TARGET-CYCLE trajectory (−|cyclen−625| of its own feasible
+#: rows), so overlaying it on a flatness / F_r-boundary / F_xy curve would put two
+#: different scalars on one axis and one table column.
+_GA_INCOMPARABLE_OBJECTIVES = _FR_UNGATED_OBJECTIVES | {"min_fxy"}
 
 
 # --------------------------------------------------------------------------- #
@@ -156,8 +178,30 @@ def _fr_limit(limits: dict[str, Any]) -> float | None:
     return fv if math.isfinite(fv) else None
 
 
+def _deliverable(fom: dict[str, Any], limits: dict[str, Any]) -> bool:
+    """The CAMPAIGN's DELIVERY verdict (:func:`campaign.is_deliverable`).
+
+    Strictly narrower than :func:`_feasible`: every gated licensing axis must be
+    MEASURED and inside its limit, so a row whose ``f_xy`` or ``max_pin_burnup``
+    was never measured is UNKNOWN, not satisfied (review 2026-08-29 §6.4).  The
+    report uses THIS for the delivered top-k table and :func:`_feasible` for the
+    search statistics — the two are labelled distinctly wherever both appear.
+    """
+    resolved = dict(limits)
+    resolved["f_r"] = _fr_limit(limits)
+    return _campaign_is_deliverable(fom, resolved)
+
+
+def _unknown_axes(fom: dict[str, Any], limits: dict[str, Any]) -> tuple[str, ...]:
+    """Gated licensing axes of ``fom`` carrying NO measurement (UNKNOWN state)."""
+    resolved = dict(limits)
+    resolved["f_r"] = _fr_limit(limits)
+    return _campaign_unknown_axes(fom, resolved)
+
+
 def _feasible(fom: dict[str, Any], limits: dict[str, Any]) -> bool:
-    """The CAMPAIGN's feasibility predicate (:func:`campaign.is_feasible`).
+    """The CAMPAIGN's SEARCH feasibility predicate
+    (:func:`campaign.is_feasible_search`).
 
     Deliberately a one-line delegation.  Restating the rule here is what let the
     two definitions drift: the report judged CBC / F_q / |AO| / F_r and silently
@@ -179,7 +223,11 @@ def _record_fom(record: dict[str, Any]) -> dict[str, Any]:
                                        "n_cycles", "node_peak", "map_cov",
                                        # the campaign gates on it; a report that
                                        # never carried the column could not.
-                                       "max_pin_burnup")}
+                                       "max_pin_burnup",
+                                       # MEASURED F_xy (MASTER FXYP) + its
+                                       # assembly-planar sibling.  Gated in
+                                       # min_fxy / flat_power, reported always.
+                                       "f_xy", "f_xya")}
 
 
 def _report_objective(fom: dict[str, Any], objective: str, target: float
@@ -199,6 +247,18 @@ def _report_objective(fom: dict[str, Any], objective: str, target: float
             return None
         try:
             value = -float(peak)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+    if objective == "min_fxy":
+        # The lambda-objective check is MANDATORY on every frontier readout, and
+        # under this mode its axis is F_xy, not F_r (design §3.5.5).  Same strict
+        # lexicographic encoding ``campaign._campaign_objective`` uses:
+        # (F_xy asc, cyclen desc).  A row with no MEASURED f_xy is UNSCORABLE.
+        f_xy = fom.get("f_xy")
+        cyclen = fom.get("cyclen")
+        try:
+            value = -float(f_xy) * 1.0e6 + float(cyclen)
         except (TypeError, ValueError):
             return None
         return value if math.isfinite(value) else None
@@ -361,10 +421,15 @@ def build_report(
     ranking scalar.  ``None`` falls back to ``status.json``'s recorded objective,
     then to ``target_cycle``, so ``lpopt report`` on an old run is unchanged.
 
-    Feasibility itself is :func:`campaign.is_feasible` — the run's own predicate,
-    applied to the run's own limits (:func:`campaign.feasibility_limits_for`).
-    The report does not restate it: when it did, it dropped the ``max_pin_burnup``
-    gate and reported rows the campaign had rejected.
+    Feasibility itself is the campaign's own pair of predicates, applied to the
+    run's own limits (:func:`campaign.feasibility_limits_for`).  The report does
+    not restate them: when it did, it dropped the ``max_pin_burnup`` gate and
+    reported rows the campaign had rejected.  The two are used for different
+    things and LABELLED as such (review 2026-08-29 §6.4):
+    :func:`campaign.is_feasible_search` for the search statistics (wave table,
+    budget curve, GA overlay, the header count) and
+    :func:`campaign.is_deliverable` for the delivered top-k table, which also
+    requires every gated licensing axis to be MEASURED.
     """
 
     run_dir = Path(run_dir)
@@ -405,6 +470,11 @@ def build_report(
             limits["cyclen_hi"] = _DEFAULT_FUELCOST_CYCLEN_HI
         else:
             limits["cyclen_lo"] = limits["cyclen_hi"] = None
+        # …and the F_xy gate, the third axis of the same class.  A deck-less
+        # report that omitted it would call rows feasible at the ONE axis this
+        # mode exists to optimize.
+        limits["f_xy"] = (_DEFAULT_FXY_LIMIT
+                          if objective in _FXY_GATED_OBJECTIVES else None)
 
     # -- parity + reliability points ---------------------------------------- #
     points, pf_list, feas_list = [], [], []
@@ -429,7 +499,7 @@ def build_report(
     # The GA-600 baseline is a TARGET-CYCLE trajectory (−|cyclen−625| of its own
     # feasible rows).  Overlaying it on a flatness / F_r-boundary curve would put
     # two different scalars on one axis, so it is read only when comparable.
-    ga_comparable = objective not in _FR_UNGATED_OBJECTIVES
+    ga_comparable = objective not in _GA_INCOMPARABLE_OBJECTIVES
     ga_chains, ga_best, ga_first, ga_n, ga_feas = ([], [], None, 0, 0)
     if ga_log is not None and ga_comparable:
         ga_chains, ga_best, ga_first, ga_n, ga_feas = read_ga_600(ga_log, target_efpd, limits)
@@ -459,6 +529,16 @@ def build_report(
             continue
         verified.append((row, record, fom, obj))
     verified.sort(key=lambda t: t[3], reverse=True)
+    # SEARCH-feasible (above) vs DELIVERABLE (here).  The delivered top-k is the
+    # narrower set: every gated licensing axis MEASURED and inside its limit
+    # (review 2026-08-29 §6.4).  Both counts are reported, labelled distinctly —
+    # calling the search set "feasible" in a delivery table is exactly the claim
+    # the three-state split exists to stop.
+    deliverable = [t for t in verified if _deliverable(t[2], limits)]
+    unknown_tally: dict[str, int] = {}
+    for _row, _rec, _fom, _obj in verified:
+        for axis in _unknown_axes(_fom, limits):
+            unknown_tally[axis] = unknown_tally.get(axis, 0) + 1
 
     if verified:
         best_row, best_record, best_fom, _ = verified[0]
@@ -481,23 +561,51 @@ def build_report(
                  f"{status.get('budget_spent', len(labels))}/{status.get('budget', '?')}  ")
     lines.append(f"- objective: {_objective_line(objective, target_efpd, cycle_tolerance)}  ")
     lines.append(f"- feasibility: {_feasibility_line(limits)}  ")
-    lines.append(f"- verified feasible LPs: **{len(verified)}** / {len(labels)} evaluations  ")
+    lines.append(f"- verified feasible LPs: **{len(verified)}** / {len(labels)} "
+                 f"evaluations (SEARCH-feasible set)  ")
+    lines.append(f"- DELIVERABLE (every gated axis measured & within limit): "
+                 f"**{len(deliverable)}**  ")
+    if unknown_tally:
+        detail = ", ".join(f"`{k}` {v}" for k, v in sorted(unknown_tally.items()))
+        lines.append(
+            f"- UNKNOWN axes among the search-feasible rows: {detail} "
+            f"(unmeasured, therefore NOT satisfied — review §6.4 three-state rule)  ")
+    src = _fxy_source_line(run_dir, objective)
+    if src:
+        lines.append(f"- {src}  ")
     lines.extend(_sdm_mtc_section(run_dir, status))
     lines.append("")
 
-    lines.append("## Best verified loading patterns")
+    lines.append("## Best verified loading patterns (DELIVERABLE)")
     lines.append("")
-    if not verified:
-        lines.append("_No verified feasible LP within limits was found this campaign._")
+    lines.append("> This table is the DELIVERABLE set, not the search-feasible "
+                 "set: every gated licensing axis is MEASURED and inside its "
+                 "limit. The wave table and the budget curve below report the "
+                 "SEARCH-feasible set, which is wider (an unmeasured axis passes "
+                 "there so the search is not starved).")
+    lines.append("")
+    if not deliverable:
+        if verified:
+            lines.append(
+                f"_No DELIVERABLE verified LP this campaign — "
+                f"{len(verified)} row(s) are search-feasible but at least one "
+                f"gated axis is UNMEASURED on each._")
+        else:
+            lines.append(
+                "_No verified feasible LP within limits was found this campaign._")
         lines.append("")
     else:
         flat = objective == "flat_power"
+        show_fxy = objective in _FXY_GATED_OBJECTIVES or any(
+            t[2].get("f_xy") is not None for t in deliverable[:5])
         # REPORT-ONLY L-03 axis; emitted only when the maps are actually there.
-        top_rows = verified[:5]
+        top_rows = deliverable[:5]
         rm5 = _peripheral_shares(
             store_dir, [str(rec.get("record_id")) for _r, rec, _f, _o in top_rows]
         ) if flat else {}
         head = ["Rank", "cyclen", "\\|Δ625\\|"]
+        if show_fxy:
+            head += ["F_xy (margin)", "F_xya"]
         if flat:
             head += ["node_peak", "map_cov"]
         if rm5:
@@ -506,7 +614,7 @@ def build_report(
                  "\\|AO\\| (margin)", "n_cyc", "record_id"]
         lines.append("| " + " | ".join(head) + " |")
         lines.append("|" + "---|" * len(head))
-        for rank, (row, record, fom, _) in enumerate(verified[:5], start=1):
+        for rank, (row, record, fom, _) in enumerate(deliverable[:5], start=1):
             def _m(name: str) -> str:
                 """``value (+margin)`` against whatever limit applies to ``name``.
 
@@ -519,6 +627,13 @@ def build_report(
                     return "n/a"
                 limit = limits.get(name)
                 if limit is None or not math.isfinite(float(limit)):
+                    if name == "f_xy":
+                        # F_xy is a LICENSING axis even where the mode does not
+                        # gate it, so print the margin to 1.65 tagged ``lic`` —
+                        # the same rule F_r has followed since program §10 KEEP.
+                        margin = _DEFAULT_FXY_LIMIT - float(v)
+                        return (f"{_fmt(v)} (lic "
+                                f"{'+' if margin >= 0 else ''}{_fmt(margin)})")
                     if name != "f_r":
                         return _fmt(v)
                     margin = _LIMITS["f_r"] - float(v)
@@ -527,6 +642,8 @@ def build_report(
             cyclen = fom.get("cyclen")
             dist = _fmt(abs(float(cyclen) - target_efpd)) if cyclen is not None else "n/a"
             cells = [str(rank), _fmt(cyclen, 1), dist]
+            if show_fxy:
+                cells += [_m("f_xy"), _fmt(fom.get("f_xya"))]
             if flat:
                 cells += [_fmt(fom.get("node_peak")), _fmt(fom.get("map_cov"), 4)]
             if rm5:
@@ -552,8 +669,9 @@ def build_report(
                 "identity, not skill."
             )
             lines.append("")
-        lines.append(f"Feasible verified LPs are archived (3_GA-compatible) under "
-                     f"`{run_dir.name}/candidates/`.")
+        lines.append(f"Search-feasible verified LPs are archived "
+                     f"(3_GA-compatible) under `{run_dir.name}/candidates/`; the "
+                     f"table above is the DELIVERABLE subset of them.")
         lines.append("")
 
     # serve-time feature / geometry OOD guard (review sec. 4b) — advisory only.
@@ -678,6 +796,8 @@ _OBJECTIVE_TEXT = {
     "max_cycle_min_fr": "max_cycle_min_fr — maximise cyclen, minimise F_r "
                         "(F_r ungated)",
     "min_fr_max_cycle": "min_fr_max_cycle — minimise F_r, then maximise cyclen",
+    "min_fxy": "min_fxy — minimise F_xy (MASTER FXYP, pin planar) under the hard "
+               "limit 1.65, then maximise cyclen; F_r stays a constraint at 1.55",
     "min_fuel_cost": "min_fuel_cost — minimise fresh-fuel charge within the "
                      "cyclen band",
 }
@@ -687,6 +807,8 @@ def _objective_axis_label(objective: str, target_efpd: float) -> str:
     """Short name of the scalar :func:`_report_objective` returns (figure axes)."""
     if objective == "flat_power":
         return "−node_peak"
+    if objective == "min_fxy":
+        return "−F_xy·1e6 + cyclen"
     if objective == "fr_boundary":
         return "−F_r"
     return f"−|cyclen−{target_efpd:.0f}|"
@@ -713,6 +835,9 @@ def _feasibility_line(limits: dict[str, Any]) -> str:
     parts.append(f"|AO| ≤ {float(limits['ao_abs']):.2f}")
     # printed only where the mode gates on it — the axis the report used to apply
     # nowhere while the campaign applied it in three modes.
+    fxy = limits.get("f_xy")
+    if fxy is not None:
+        parts.append(f"F_xy ≤ {float(fxy):.2f}")
     pin_bu = limits.get("max_pin_burnup")
     if pin_bu is not None:
         parts.append(f"max pin BU ≤ {float(pin_bu):.0f} MWd/kgU")
@@ -720,6 +845,40 @@ def _feasibility_line(limits: dict[str, Any]) -> str:
     if lo is not None and hi is not None:
         parts.append(f"cyclen ∈ [{float(lo):.0f}, {float(hi):.0f}] EFPD")
     return ", ".join(parts)
+
+
+def _fxy_source_line(run_dir: Path, objective: str) -> str | None:
+    """Report line naming where the run's F_xy PREDICTIONS came from.
+
+    Each wave's ``selection.json`` records ``fxy_source`` — ``"head"`` (a real
+    ``predict_fxy``) or ``"proxy"`` (the interim F_r regression).  A proxy run may
+    NOT be described as having optimized F_xy (design §3.6), so the distinction
+    belongs in the report header, not in a log line nobody keeps.  ``None`` when
+    the mode never read F_xy or no wave recorded a source.
+    """
+    if objective not in _FXY_GATED_OBJECTIVES:
+        return None
+    sources: list[str] = []
+    for path in sorted((run_dir / "waves").glob("wave_*/selection.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        src = str(data.get("fxy_source") or "")
+        if src and src not in sources:
+            sources.append(src)
+    if not sources:
+        return None
+    if sources == ["proxy"]:
+        return ("F_xy predictions: **interim PROXY** (a regression on predicted "
+                "F_r, no F_xy head) — this run performed an F_r-surrogate search "
+                "with F_xy MEASURED after the fact; it did NOT optimise a "
+                "predicted F_xy")
+    if sources == ["head"]:
+        return "F_xy predictions: dedicated **head** (`predict_fxy`)"
+    return ("F_xy predictions: MIXED across waves (" + ", ".join(sources) +
+            ") — the served model changed mid-run; read the per-wave "
+            "`selection.json` before comparing waves")
 
 
 def _wave_summaries(run_dir: Path, limits: dict[str, Any] | None = None
@@ -989,7 +1148,85 @@ def regenerate_report(run_dir: str | Path, cfg: Any = None, *, log=None) -> Path
     )
 
 
+def regenerate_delivery(
+    run_dir: str | Path, cfg: Any = None, *, log=None
+) -> tuple[Path | None, str]:
+    """Rebuild ``delivery.json`` for a finished run dir — no MASTER call.
+
+    The 2026-08-30 incident left a completed 100-call campaign with a
+    ``status.json`` saying ``complete`` and neither ``report.md`` nor
+    ``delivery.json`` on disk, because a log line killed ``_render_report``
+    after the budget was spent.  Re-running the campaign to recover the
+    artefacts would cost the whole licensing budget again; everything the
+    dossier needs is already in ``labels.jsonl``.
+
+    Returns ``(path_or_None, reason)``.  ``None`` is a legitimate outcome: only
+    ``flat_power`` defines a delivery ranking, so a ``min_fxy`` / ``min_fr`` run
+    HAS no ``delivery.json`` and the reason says so rather than writing an empty
+    one.  The regenerated dossier's §8.5 uncertainty fields are ``None`` (NOT
+    EVALUATED) — the per-row OOD/conformal verdicts live only in the live
+    driver's memory, and a regenerated file must not claim they passed.
+    """
+
+    run_dir = Path(run_dir)
+    say = log or (lambda m: None)
+    status = _read_json(run_dir / "status.json")
+    objective = str(
+        (getattr(cfg.acquisition, "objective", None) if cfg is not None else None)
+        or status.get("objective")
+        or "target_cycle"
+    )
+    rows = [
+        r.get("record") or {}
+        for r in _read_labels(run_dir)
+        if isinstance(r.get("record"), dict)
+    ]
+    if not rows:
+        return None, f"no labels.jsonl rows under {run_dir}"
+    if cfg is not None:
+        limits = dict(_campaign_feasibility_limits(
+            cfg.acquisition, objective,
+            fr_gate=_recorded_fr_gate(status, objective)))
+    else:
+        return None, "delivery regeneration needs the campaign deck (--input)"
+    cell = None
+    for row in rows:
+        feed, e_core = row.get("feed"), row.get("e_core")
+        if feed is not None and e_core is not None:
+            cell = _cyclen_cell_key(int(feed), float(e_core))
+            break
+    payload = _campaign_delivery_payload(
+        rows, objective=objective, limits=limits, cell=cell, safety=None,
+    )
+    if payload is None:
+        return None, (
+            f"objective={objective!r} defines no delivery ranking "
+            "(only flat_power does); nothing to write"
+        )
+    out = run_dir / "delivery.json"
+    _atomic_json(out, payload)
+    say(f"[report] delivery.json regenerated: {len(payload.get('ranked') or [])} "
+        f"ranked / {len(payload.get('excluded') or [])} excluded "
+        f"from {len(rows)} verified row(s)")
+    return out, "ok"
+
+
+def regenerate_run_artifacts(
+    run_dir: str | Path, cfg: Any = None, *, log=None
+) -> tuple[Path, Path | None, str]:
+    """``report.md`` + ``delivery.json`` for an existing run dir, no MASTER call.
+
+    The recovery path for a run whose ``_render_report`` aborted after the
+    budget was spent.  Returns ``(report_path, delivery_path_or_None, reason)``.
+    """
+
+    report_path = regenerate_report(run_dir, cfg, log=log)
+    delivery_path, reason = regenerate_delivery(run_dir, cfg, log=log)
+    return report_path, delivery_path, reason
+
+
 __all__ = [
-    "build_report", "post_verify_topk", "read_ga_600", "regenerate_report",
-    "write_campaign_report", "write_verdict_table",
+    "build_report", "post_verify_topk", "read_ga_600", "regenerate_delivery",
+    "regenerate_report", "regenerate_run_artifacts", "write_campaign_report",
+    "write_verdict_table",
 ]

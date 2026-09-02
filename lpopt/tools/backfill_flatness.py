@@ -45,6 +45,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from ..data.flatness import record_flatness
+from ..safelog import safe_logger
 from ..data.schema import LATE_COLUMNS
 from ..data.store import (
     RECORDS_NAME, StoreReader, _atomic_write, ensure_schema_columns, frame_to_table,
@@ -139,7 +140,9 @@ def _needs_write(stored: Any, computed: float | None) -> bool:
 def backfill(store_dir: str | Path, *, dry_run: bool = False,
              log: Callable[[str], None] | None = None) -> BackfillReport:
     """Compute and persist the flatness columns for every row that has a map."""
-    log = log or (lambda m: print(m, flush=True))
+    # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+    # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+    log = safe_logger(log or (lambda m: print(m, flush=True)))
     reader = StoreReader(store_dir)
     # Read-only view: nothing below mutates ``df``, only the slice handed to the
     # writer, so the 50k-row frame is never copied whole.

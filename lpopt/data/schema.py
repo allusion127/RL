@@ -127,8 +127,12 @@ class CanonicalRecord:
     failure: str
     maps_key: str | None              # record_id when EDIT5 maps harvested, else None
     # ---- map-derived flatness scalars (appended 2026-07-26, see LATE_COLUMNS) ----
-    #: ``max_i p_i`` over the 69 quarter slots of the BOC assembly-power map
-    #: (== F_xy).  ``None`` when the record carries no map.
+    #: ``max_i p_i`` over the 69 quarter slots of the BOC assembly-power map:
+    #: the BOC **assembly radial** peak (assembly-level 2-D, FRA family).  It is
+    #: NOT MASTER's FXYP (pin planar) -- that is the separate ``f_xy`` column
+    #: below; measured corr(node_peak, f_xy) is only 0.74-0.85 (design
+    #: 20260829 SS1.1/SS3.4.4), so neither substitutes for the other.
+    #: ``None`` when the record carries no map.
     node_peak: float | None = None
     #: Multiplicity-WEIGHTED CoV of the same map (:mod:`.flatness` §1.1).
     map_cov: float | None = None
@@ -139,6 +143,16 @@ class CanonicalRecord:
     #: M2 rod-average measurement; ``None`` until a keep_success=true replay
     #: measures it (see data/reports/pinbu_rodavg_true_20260820.md).
     max_rod_avg_burnup: float | None = None
+    #: MASTER ``MAS_OUT`` ``MAXIMUM PIN PLANAR POWER (FXYP)``, maximised over
+    #: every depletion step of the FINAL equilibrium cycle (:mod:`.fxy`).  The
+    #: optimisation target of the 2026-08-29 F_xy switch and a hard licensing
+    #: gate at 1.65.  Absent from MAS_SUM, so ``None`` until a run that retained
+    #: its final ``MAS_OUT`` was harvested (or backfilled).
+    f_xy: float | None = None
+    #: Companion ``MAXIMUM ASSMBLY PLANAR POWER (FXYA)`` from the same scan
+    #: (report-only: the FXYP/FXYA ratio separates pattern-level assembly tilt
+    #: from within-lattice pin peaking).
+    f_xya: float | None = None
 
     def to_record(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -157,7 +171,8 @@ SCHEMA_COLUMNS: list[str] = [f.name for f in fields(CanonicalRecord)]
 #: names with nulls at every read boundary, so an old ``records.parquet`` (or an
 #: old multi-PC kit) still merges and still loads.  Never insert in the middle,
 #: never reorder, never make one non-nullable.
-LATE_COLUMNS: tuple[str, ...] = ("node_peak", "map_cov", "max_rod_avg_burnup")
+LATE_COLUMNS: tuple[str, ...] = ("node_peak", "map_cov", "max_rod_avg_burnup",
+                                 "f_xy", "f_xya")
 
 #: The 36-column prefix that predates :data:`LATE_COLUMNS` (position-dependent
 #: readers key on this).
@@ -208,6 +223,8 @@ PARQUET_SCHEMA = pa.schema(
         ("node_peak", pa.float64()),
         ("map_cov", pa.float64()),
         ("max_rod_avg_burnup", pa.float64()),
+        ("f_xy", pa.float64()),
+        ("f_xya", pa.float64()),
     ]
 )
 

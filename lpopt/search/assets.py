@@ -53,6 +53,7 @@ reference and the ``%LPD_SHF`` body change.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace as _dc_replace
+import json
 import os
 from pathlib import Path
 import re
@@ -63,7 +64,7 @@ from ..data.fuel_types import case_e_core as _case_e_core
 from .genome import MAX_FRESH_TYPES
 from ..vendor.masterrl.domain import CaseKey, Pattern
 from ..vendor.masterrl.equilibrium import advance_cycle_deck, deck_cycle
-from ..vendor.masterrl.master import replace_lpd_shf
+from ..vendor.masterrl.master import extract_lpd_shf, replace_lpd_shf
 
 
 # --------------------------------------------------------------------------- #
@@ -257,8 +258,47 @@ def _is_reload_deck(deck: str) -> bool:
     )
 
 
+#: MASTER's fresh-loading card is ``f"F {batch:<2}  {rot}"``
+#: (:meth:`lpopt.vendor.masterrl.domain.FuelItem.to_card`): the batch field is
+#: TWO characters wide and ``:<2`` is a *minimum* width, so a longer id is
+#: emitted verbatim and MASTER absorbs it without a diagnostic (defect 20260830).
+_MAX_BATCH_ID_LEN = 2
+
+#: ``F <batch> <rot>`` cells inside a ``%LPD_SHF`` body (comma-separated cards).
+_SHF_FRESH_RE = re.compile(r"\bF\s+(\S+)\s+\d+", re.IGNORECASE)
+
+
+def parse_lpd_bc_batch_ids(deck: str) -> tuple[str, ...]:
+    """Batch ids declared in the deck's ``%LPD_B&C`` roster, in file order.
+
+    ``&`` is not a ``%card`` name character, so the block is located by a prefix
+    scan (as :func:`_parse_lpd_cx_fuel_order` does) rather than by
+    :data:`_DECK_CARD_RE`.  Returns ``()`` when the deck declares no roster.
+    """
+
+    lines = deck.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.lstrip().upper().startswith("%LPD_B&C")),
+        None,
+    )
+    if start is None:
+        return ()
+    ids: list[str] = []
+    for ln in lines[start + 1:]:
+        if ln.lstrip().startswith("%"):
+            break
+        toks = ln.split("#", 1)[0].split()
+        if toks and toks[0] != "/":
+            ids.append(toks[0])
+    return tuple(ids)
+
+
 def validate_reload_deck(
-    deck: str, restart_basename: str, *, expected_dims: tuple[int, int] = LIBRARY_DIMS
+    deck: str,
+    restart_basename: str,
+    *,
+    expected_dims: tuple[int, int] = LIBRARY_DIMS,
+    allowed_batch_ids: Iterable[str] | None = None,
 ) -> None:
     """Raise :class:`DeckValidationError` unless ``deck`` is a well-formed reload
     deck for ``restart_basename``.
@@ -272,7 +312,17 @@ def validate_reload_deck(
     * ``%JOB_TYP`` present with ``irrst=1`` and *exactly one* ``MAS_RST.*``
       restart reference whose basename equals ``restart_basename``;
     * no ``%LPD_BCH`` (a fresh-core batch map has no place in a reload deck);
-    * ``%GEN_DIM`` ``nbatch``/``ncomp`` equal to ``expected_dims`` (the library).
+    * ``%GEN_DIM`` ``nbatch``/``ncomp`` equal to ``expected_dims`` (the library);
+    * **every ``F <id>`` fresh card in ``%LPD_SHF`` names a batch id the deck
+      itself declares** — a 2-char id present in ``%LPD_B&C`` (or in
+      ``allowed_batch_ids`` when the roster is supplied out of band).
+
+    The last check is the guard the HGD569 defect needed (memo 20260830 §6/R1):
+    a verifier whose resolver carries an EMPTY ``type_id -> alias`` bridge leaves
+    the pattern's full ``type_id`` labels in the SHF, MASTER finds no such batch
+    in ``%LPD_B&C``, silently resolves every position to an unrelated batch, and
+    a whole wave of decks is computed on a core nobody designed.  MASTER emits no
+    error for this, so the deck must be refused HERE, before Popen.
     """
 
     problems: list[str] = []
@@ -333,10 +383,67 @@ def validate_reload_deck(
                         f"cores/<folder>/bootstrap)"
                     )
 
+    problems.extend(_shf_batch_problems(deck, allowed_batch_ids))
+
     if problems:
         raise DeckValidationError(
             "prepared reload deck failed sanity gate: " + "; ".join(problems)
         )
+
+
+def _shf_batch_problems(
+    deck: str, allowed_batch_ids: Iterable[str] | None
+) -> list[str]:
+    """``%LPD_SHF`` fresh-batch roster problems (see :func:`validate_reload_deck`).
+
+    Two rules, deliberately independent:
+
+    * an id longer than :data:`_MAX_BATCH_ID_LEN` is ALWAYS a defect — it cannot
+      be a MASTER batch id, so it needs no roster to be recognised as one (this
+      is the rule that fires on an untranslated ``type_id``);
+    * an id absent from the roster is a defect whenever a roster is knowable
+      (explicit ``allowed_batch_ids``, else the deck's own ``%LPD_B&C``).
+    """
+
+    if _card_count(deck, "LPD_SHF") != 1:
+        return []                      # already reported by the caller
+    try:
+        body = extract_lpd_shf(deck)
+    except Exception:                  # noqa: BLE001 — malformed span; caller reports
+        return []
+    fresh = [m.group(1) for m in _SHF_FRESH_RE.finditer(body)]
+    if not fresh:
+        return []
+
+    roster = (
+        tuple(str(b) for b in allowed_batch_ids)
+        if allowed_batch_ids is not None
+        else parse_lpd_bc_batch_ids(deck)
+    )
+    roster_set = {b.upper() for b in roster}
+
+    oversized = sorted({b for b in fresh if len(b) > _MAX_BATCH_ID_LEN})
+    unknown = sorted(
+        {b for b in fresh if roster_set and b.upper() not in roster_set}
+    ) if roster_set else []
+
+    problems: list[str] = []
+    if oversized:
+        problems.append(
+            f"%LPD_SHF fresh batch id(s) {oversized} exceed the {_MAX_BATCH_ID_LEN}-"
+            f"character MASTER batch field: these are untranslated fuel type_ids, "
+            f"not deck aliases — the emitting CaseAssetResolver has an EMPTY "
+            f"registry alias bridge (pass registry_aliases= / build it from the "
+            f"package's registry.json).  MASTER would absorb them silently"
+        )
+    if unknown:
+        problems.append(
+            f"%LPD_SHF fresh batch id(s) {unknown} are absent from the deck's "
+            f"%LPD_B&C roster ({len(roster_set)} batch ids); MASTER resolves an "
+            f"unknown batch id without a diagnostic, so the core would not be the "
+            f"one this pattern describes"
+        )
+    return problems
 
 
 # --------------------------------------------------------------------------- #
@@ -418,6 +525,37 @@ def _atomic_write_text(path: Path, text: str) -> None:
 # --------------------------------------------------------------------------- #
 # resolver
 # --------------------------------------------------------------------------- #
+#: Package manifest carrying the ``{type_id: alias}`` bridge of a per-library
+#: (paramA) design package.  ga80's FEASIBLE_PACKAGE has none (type_id == alias).
+REGISTRY_FILENAME = "registry.json"
+
+
+def registry_aliases_from_package(package_root: str | Path) -> dict[str, str]:
+    """``{type_id: alias}`` from ``<package_root>/registry.json`` (``{}`` if absent).
+
+    The single implementation of the alias bridge lookup:
+    :func:`lpopt.search.resolver.paramA_registry_aliases` delegates here, and
+    :class:`CaseAssetResolver` calls it for any caller that did not pass
+    ``registry_aliases`` explicitly.  Unreadable / malformed manifests yield
+    ``{}`` — a ga80 package legitimately has no registry, and a paramA package
+    with a broken one is caught downstream by :func:`validate_reload_deck`, which
+    refuses the emitted deck rather than trusting this map.
+    """
+
+    try:
+        data = json.loads(
+            (Path(package_root) / REGISTRY_FILENAME).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return {}
+    aliases = data.get("aliases", {}) if isinstance(data, dict) else {}
+    return (
+        {str(t): str(a) for t, a in aliases.items()}
+        if isinstance(aliases, dict)
+        else {}
+    )
+
+
 class CaseAssetResolver:
     """Resolve restart + template deck for any ``(pair, feed)`` produce case."""
 
@@ -464,6 +602,18 @@ class CaseAssetResolver:
         # to the deck's %LPD_B&C ids at deck-emission; ``alias_to_type`` lets the
         # level-3 e_core scorer resolve an alias-named base folder against the
         # (type_id-keyed) fuel library.
+        #
+        # ``None`` (the DEFAULT, i.e. a caller that did not think about aliases)
+        # now DERIVES the bridge from the package it was pointed at, because the
+        # bridge is a property of that package and nothing else: it is exactly
+        # ``package_root/registry.json``'s ``aliases`` map, which is what every
+        # correct caller (``resolver.build_case_resolver``) was passing by hand.
+        # Leaving it empty is what silently emitted 13-character type_ids into
+        # %LPD_SHF for a whole wave (memo 20260830 §3; the verifier's own
+        # fallback resolver was the caller that forgot).  An explicit ``{}``
+        # still means "no bridge" for a caller that means it.
+        if registry_aliases is None:
+            registry_aliases = registry_aliases_from_package(self.package_root)
         self.type_to_alias: dict[str, str] = dict(registry_aliases) if registry_aliases else {}
         self.alias_to_type: dict[str, str] = {a: t for t, a in self.type_to_alias.items()}
         #: MASTER library (nbatch, ncomp) for this cell's library — read by the
@@ -937,7 +1087,10 @@ __all__ = [
     "CaseAssetResolver",
     "DeckValidationError",
     "LIBRARY_DIMS",
+    "REGISTRY_FILENAME",
     "ResolvedAssets",
+    "parse_lpd_bc_batch_ids",
+    "registry_aliases_from_package",
     "synth_roster_for",
     "validate_reload_deck",
 ]

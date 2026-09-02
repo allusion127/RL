@@ -1,6 +1,6 @@
 # 05 — 리포트 색인
 
-`lpopt` 프로그램이 2026-07-16 → 2026-08-20에 생산한 **모든 markdown 리포트**의 색인이다.
+`lpopt` 프로그램이 2026-07-16 → 2026-08-31에 생산한 **모든 markdown 리포트**의 색인이다.
 연대기는 [04_timeline_and_results.md](04_timeline_and_results.md)를 보라.
 
 **표기 규약**
@@ -9,8 +9,9 @@
 - **유형** — `사전등록`(라벨 존재 전에 규칙을 동결한 문서) · `결과`(사전등록에 대해 채점한 문서) ·
   `판정`(verdict / 채택·기각 결론) · `설계`(계획·설계서, 실행 전) · `메모`(분석 노트·참고) · `감사`(적대적 검토·포렌식).
 - 계산기 박스는 공개 저장소 규칙상 **HOST_238**(학습 GPU) · **HOST_199 / HOST_198 / HOST_181 / HOST_104**(MASTER 생산 PC).
-- 총 **118건** — `data/reports/` 103건(하위 디렉터리 9건 포함; 최상위만 세면 94건) +
+- 총 **138건** — `data/reports/` 123건(하위 디렉터리 9건 포함; 최상위만 세면 114건) +
   저장소 내 기타 5건 + 저장소 미포함 캠페인 리포트 10건.
+- **§10**이 2026-08-29 목적축 전환(`F_r` → `F_xy`) 이후의 20건을 따로 모아 시간순으로 싣는다.
 
 ---
 
@@ -167,7 +168,57 @@
 | [data/reference/kngr_18m_cy01_08/README.md](../data/reference/kngr_18m_cy01_08/README.md) | 08-17 (추정) | 메모 | KNGR 18개월 다주기 계산서(cy1–cy8) PDF 추출 산출물 안내 | cy1–cy8 셔플 맵 CSV + 사이클 요약 — **전이주기 엔지니어(장기 목표)의 참조 자산** |
 | [data/reference/kngr_18m_cy01_08/methodology_notes.md](../data/reference/kngr_18m_cy01_08/methodology_notes.md) | 08-17 (추정) | 메모 | 같은 계산서의 방법론 발췌(코드·설계요건·결과표 인덱스) | 엔진은 ROCS 3-D 노달; 설계요건 Fxy 1.55 / 468 EFPD / MTC(HFP) < 0 |
 
-## 10. 캠페인 산출 리포트 (저장소 미포함, 10건)
+## 10. `F_xy` 목적축 전환 (20건, 2026-08-29 ~ 08-31)
+
+2026-08-29 사용자 확정으로 목적함수가 `F_r` → **`F_xy`**(한계 1.65)로 바뀐 뒤 생산된 문서다.
+설계 → 데이터층 → 헤드 arm 3회 → 캠페인 4건 → 결함 포렌식 1건의 순서로 읽으면 시간순이 된다.
+
+**설계 · 데이터층 · 안전**
+
+| 파일 | 날짜 | 유형 | 한 줄 요약 | 핵심 판정 |
+|---|---|---|---|---|
+| [fxy_switch_design_20260829.md](../data/reports/fxy_switch_design_20260829.md) | 08-29 | 설계 | 목적축 전환 설계서 — `F_xy` 정의·출처(`MAS_OUT` FXYP)·`F_r` 관계 실측·소급라벨 물량·P1~P5 실행단계 | `F_xy/F_r = 1.0694 ± 0.0181`이나 **게이트는 대체 불가**(F_r 통과 52 중 18이 F_xy 탈락). **`node_peak ≠ F_xy` 코드 오기 정정**. 조인 키는 `Pattern.digest16`(`record_id[:16]` 일치 0건) |
+| [phaseA2_ood_conformal_20260829.md](../data/reports/phaseA2_ood_conformal_20260829.md) | 08-29 | 결과 | 검토 P0-04 응답 — OOD 정책 3종 + conformal 경성 게이트를 랭킹·풀·`delivery.json`에 연결 | `ood_guard.py`/`conformal.py` **무편집**. **기본값에서 실드가 실행조차 되지 않아 웨이브 바이트 동일**(테스트 29건이 단언). `f_xy`는 conformal 밖 |
+| [servefix_calibration_refit_20260829.md](../data/reports/servefix_calibration_refit_20260829.md) | 08-29 | 감사 | ★서빙 경로 피처화 결함(`library_provenance` 유물)과 per-cell 보정 **18/18 재적합** | `g_sym_class` 하나가 raw F_r bias −0.0719의 **사실상 전부**. 재적합 후 `s1i` F_r MAE 0.1026 → **0.0499**, cyclen 2.40 → **1.62**, CBC 16.61 → **12.48**. **등록 규칙 R1: 코드와 보정은 한 세트로 이동** |
+
+**`f_xy` 헤드 — 사전등록과 3 arm**
+
+| 파일 | 날짜 | 유형 | 한 줄 요약 | 핵심 판정 |
+|---|---|---|---|---|
+| [fxy_head_prereg_20260829_DRAFT.md](../data/reports/fxy_head_prereg_20260829_DRAFT.md) | 08-29 | 사전등록 | 헤드 사전등록 초안 | 초안 — 아무것도 결정하지 않는다 |
+| [fxy_head_prereg_20260829.md](../data/reports/fxy_head_prereg_20260829.md) | 08-29 | 사전등록 | G1~G4 + Amendment A(스플릿 S1j·바 재유도) / B(서빙경로 야드스틱) / C(arm 3 채점 경로) | **G2 MAE < 0.0463 · G3 ρ̄ ≥ 0.8944**(측정 F_r 위) → arm 2부터 **G2′ < 0.0767 AND G3′ > 0.7263**(서빙 프록시) 구속. A.5/A.6은 **폐기 아님, 병기** |
+| [fxy_head_results_20260829.md](../data/reports/fxy_head_results_20260829.md) | 08-29 | 결과 | arm 1 — 합성 prior 잔차 헤드 | **G2/G3/G4 전부 FAIL**(0.105 / 0.742 / 0.99). 원인 3건 특정. MAE 분해로 **"측정 F_r → 예측 F_r 대체"가 오차의 전부**임을 확립 |
+| [fxy_head_results_arm2_20260829.md](../data/reports/fxy_head_results_arm2_20260829.md) | 08-29 | 결과 | arm 2 — 원인 4건 수정(select-weight·warmup·보정·prior-on-predicted) | **G2′ FAIL 0.1086** / G3′ PASS 0.768 / **G4 PASS 0.634**(σ 보정 최초 성공). 잔여 편향의 **93%**가 서빙 경로 결함으로 설명됨 → §8 발견의 출발점 |
+| [fxy_head_results_arm3_20260829.md](../data/reports/fxy_head_results_arm3_20260829.md) | 08-30 | 결과 | arm 3 — `--fxy-direct`, **`s1j` 승격 판정** | **G1·G2′(0.0663)·G3′(0.790) PASS · G4 FAIL(0.831)** → **승격 + `f_xy` σ 서빙 금지**. arm 2c와 **통계적 동률**(BCa CI가 0 포함) — "direct가 낫다"를 주장하지 않는다 |
+
+**캠페인 — 사전등록과 결과**
+
+| 파일 | 날짜 | 유형 | 한 줄 요약 | 핵심 판정 |
+|---|---|---|---|---|
+| [produce_fxyera_r1_prereg_20260829.md](../data/reports/produce_fxyera_r1_prereg_20260829.md) | 08-29 | 사전등록 | `F_xy` 시대 첫 생산 라운드 — 19 strata × 40, `MAS_OUT` 보존 = 라벨 그 자체 | 설계 단계 실측이 이미 벽을 예고: 541 보존 디렉터리에서 `F_xy ≤ 1.65` **0기**, 최소 1.6502 → 벽은 대략 `F_r ≈ 1.549` |
+| [pinbu_wave_fxyera_r1_prereg_20260830.md](../data/reports/pinbu_wave_fxyera_r1_prereg_20260830.md) | 08-30 | 사전등록 | phase-2 40체인 — 핀BU 실측 + `F_xy` 결정성 QC | M1 핀 ≥80% · M2 \|ΔF_xy\| ≤ 0.002 · M3 provenance |
+| [pinbu_wave_fxyera_r1_results_20260830.md](../data/reports/pinbu_wave_fxyera_r1_results_20260830.md) | 08-30 | 결과 | 같은 웨이브의 판정 | **M2 `ΔF_xy = 0.000000` 40/40 → `F_xy` 완전 결정론적**. **M1 기각 14/20**(feed 109 **0/5** vs feed 121 5/5 — 핀 헤드 bias가 feed로 갈린다). 처분: **바인딩 제약은 핀이 아니라 `F_xy`** |
+| [minfxy_T6T4_f121_r1_prereg_20260829.md](../data/reports/minfxy_T6T4_f121_r1_prereg_20260829.md) | 08-29 | 사전등록 | 첫 `min_fxy` 캠페인 — PRIMARY ≤1.5441 / STRETCH ≤1.5295 / NULL 귀속 사전 고정 | `F_r` 추격이 `F_xy`를 악화시킨 이력(r3 1.5491 → r6 1.5829), 프록시는 셀내 기울기 0.48로 무력 → **헤드 필요** |
+| [minfxy_T6T4_f121_r1_results_20260830.md](../data/reports/minfxy_T6T4_f121_r1_results_20260830.md) | 08-30 | 결과 | 100/100 콜, 13웨이브 | **PRIMARY 달성 F_xy 1.5322 @ 콜 57**, STRETCH 미달(+0.0027). **CBC 패리티 FAIL 3.572 · `f_xy` 헤드 패리티 FAIL 0.0543**. 프런티어가 움직인 콜 **4회**, 이후 43% 무개선. **헤드의 랭킹 우위 미확인**. D1~D6 편차 기록(**D3 = 재개 시 σ-bar 소실**) |
+| [pinbu_wave_minfxy_r1_prereg_20260830.md](../data/reports/pinbu_wave_minfxy_r1_prereg_20260830.md) | 08-30 | 사전등록 | 25체인 — r1 top-20 핀 실측 + `F_r` 기록군 5기의 `F_xy` 첫 측정 | 전 타깃 native restart(promoted 드리프트 구조적 부재), M1~M8 |
+| [pinbu_wave_minfxy_r1_results_20260830.md](../data/reports/pinbu_wave_minfxy_r1_results_20260830.md) | 08-30 | 결과 | ★**프로그램 최초의 `is_deliverable = True` 노심** | `bf3a70b2`: F_xy 1.5322 · **핀 63.760 실측** · 전 축 한계 내. 스토어 deliverable **0 → 25행**. **M4가 헤드라인 정정** — `F_r` 기록 코어의 `F_xy` = **1.5402** → r1 실질 이득 **0.008**. **모델-프리 비율(MAE 0.008)이 헤드(0.042)를 5배** 이김 |
+| [intervention_wave_r1_prereg_20260829.md](../data/reports/intervention_wave_r1_prereg_20260829.md) | 08-29 | 사전등록 | Campaign A — Causal Move Atlas. 5셀 × 20부모 × 8무브 = 800 유료 체인 | 외부 검토 §7.2 D1이 요구한 **의사결정 데이터**의 첫 층. H1~H4 + P1~P6 |
+| [intervention_wave_r1_results_20260830.md](../data/reports/intervention_wave_r1_results_20260830.md) | 08-30 (+Amendment 1·2, 08-31) | 결과 | 판정 + HGD569 오염 정정 + v2 재실행 재평가 | **H1 cell-conditional 강등**(부호 5/5, 유의 3/5) · **H1b 08-15 크기 3.37배 과대추정 철회** · **H3 성립 — 전달계수 1.23–1.42(농축·반경) vs 0.55–0.73(Gd·격자)** · **H4 Gd/격자 기술자 결손 확립**. Amendment 2에서 공통모드 **+35.05 → +0.08 EFPD**, 축퇴 **20/20 → 0/19** |
+
+**결함 포렌식**
+
+| 파일 | 날짜 | 유형 | 한 줄 요약 | 핵심 판정 |
+|---|---|---|---|---|
+| [hgd569_degeneracy_memo_20260830.md](../data/reports/hgd569_degeneracy_memo_20260830.md) | 08-30 | 감사 | ★`WaveVerifier` resolver 미배선 → alias no-op → MASTER가 batch id를 앞 2자로 흡수 | 폭발반경은 **`intervention_HGD569_f125` 160행뿐**. `T6_T4`가 무사했던 것은 **버그의 반증이 아니다**. R1~R6 권고 — **`%LPD_SHF` 로스터 검사 한 줄이 160체인을 첫 체인에서 멈췄을 것** |
+
+**정책 · 종결**
+
+| 파일 | 날짜 | 유형 | 한 줄 요약 | 핵심 판정 |
+|---|---|---|---|---|
+| [policy_v2_serving_ab_prereg_20260829_DRAFT.md](../data/reports/policy_v2_serving_ab_prereg_20260829_DRAFT.md) | 08-29 | 사전등록 | 검토 P0-01 응답 — v2 서빙 A/B(arm A `off` / B `v1` / C `v2`) | **`_DRAFT` = 미등록.** τ를 arm별로 다르게 준다(0.25 vs **0.08** — spread 0.573 vs 0.189). Stage 0 `shadow_v2`는 **0콜**. 비용 576콜이 유일한 미결. Addendum: 발사 전 scorer provenance 결함 수정(paramA max \|ΔP\| 0.087 → 2.2e-04) |
+| [tripletype_f125_r2_results_20260829.md](../data/reports/tripletype_f125_r2_results_20260829.md) | 08-29 | 결과 | 3종 계단화 라운드 2 — 08-20 사전등록의 결과 문서 | **NULL 발화**: 클린 프런티어 1.5999에서 정지, raw는 1.5864까지 가지만 그 사이 8계단 전부 CBC 위반 → **3종 `F_r`-only 라인 폐쇄**, 라운드 3 등록상 금지. 웨이브 미세조정 게이트 **8/8 거부** |
+
+## 11. 캠페인 산출 리포트 (저장소 미포함, 10건)
 
 초기 `data/campaigns/` 캠페인이 자동 생성한 리포트다.
 **캠페인 아티팩트는 용량 때문에 이 공개 저장소에 포함되지 않는다** — 경로만 기록한다.

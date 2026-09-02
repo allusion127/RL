@@ -46,7 +46,7 @@ set PYTHONIOENCODING=utf-8
 set PYTHONUNBUFFERED=1
 cd /d "%~dp0"
 python -u rule_acid_run.py ^
-  --candidates "C:\Users\USER\AppData\Local\Temp\claude\c--Users-USER-Desktop-CT-RPL-2-Project-KNF-LEU------------------2026-2---\8888f052-fa4d-46f0-a439-ef3441b3b061\scratchpad\rules\acid_batch\candidates.json" ^
+  --candidates "C:\Users\USER\AppData\Local\Temp\claude\USER\8888f052-fa4d-46f0-a439-ef3441b3b061\scratchpad\rules\acid_batch\candidates.json" ^
   --run-dir runs/rule_acid ^
   --package ../3_GA_Surrogate/FEASIBLE_PACKAGE ^
   --exe D:/DeCART_MASTER/BIN/master4.0m4_r1.exe ^

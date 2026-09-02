@@ -81,7 +81,7 @@ DEFAULT_TOLERANCES: dict[str, float] = {
     "f_r": 0.05,            # -
     "f_q": 0.08,            # -
     "ao_abs": 0.010,        # -
-    "node_peak": 0.05,      # - (F_xy)
+    "node_peak": 0.05,      # - (BOC assembly radial peak, NOT MASTER FXYP)
     "map_cov": 0.02,        # -
 }
 

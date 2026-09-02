@@ -17,18 +17,31 @@ Registered procedure (`data/reports/tripletype_f125_prereg_20260817.md` §3):
 Nothing here writes to the store or the deck; it prints a table and a verdict.
 
     python tripletype_midpick.py --model data/models/s1h
+    python tripletype_midpick.py --model data/models/s1h --objective min_fxy
+
+THE OBJECTIVE AXIS (design ``data/reports/fxy_switch_design_20260829.md`` §3.5.5).
+Pin burnup decides this pick and is axis-free; the TIE-BREAK — step 4 of the
+registered rule, "decided on predicted F_r p50" — is the objective reading, and it
+follows the deck.  Under ``objective = "min_fxy"`` the tie-break is the model's
+served F_xy (``PosValCnnBackend.predict_fxy``), and if the champion carries no
+F_xy head this script REFUSES rather than tie-breaking on F_r under an F_xy
+headline (design §3.6 forbids claiming an F_xy prediction that does not exist).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO))
+
+import readout_axis as RA                                     # noqa: E402
 
 HOT = "P6253Z1G06N24"       # S3, e 5.7861, n_gd 24
 COLD = "P6253Z2G10N24"      # S5, e 5.6023, n_gd 24
@@ -46,7 +59,9 @@ def main() -> int:
     ap.add_argument("--store", default="data/store")
     ap.add_argument("--seed", type=int, default=5695)
     ap.add_argument("--out", default="data/reports/tripletype_midpick_20260817.json")
+    RA.add_axis_args(ap)
     args = ap.parse_args()
+    axis = RA.axis_from_args(args)
 
     from lpopt.data.schema import unpack_pattern
     from lpopt.model.model_api import PosValCnnBackend
@@ -64,6 +79,14 @@ def main() -> int:
         Path(args.model), store_dir=args.store, library_id="paramA", device="cpu")
     print(f"model {args.model}: cond_schema={model.cond_schema} "
           f"targets={model.target_names}")
+    if axis.is_fxy:
+        print(f"axis: {axis.provenance()}")
+        if axis.key not in model.target_names:
+            raise SystemExit(
+                f"--objective min_fxy needs a champion with an {axis.label} head; "
+                f"{args.model} serves {model.target_names}.  Refusing to run: the "
+                f"tie-break would silently fall back to F_r under an {axis.label} "
+                f"headline (design 20260829 sec. 3.6).")
 
     parents = []
     for _, row in sub.iterrows():
@@ -74,6 +97,10 @@ def main() -> int:
             continue
 
     results: dict[str, dict] = {}
+    #: alias -> p50 of the TIE-BREAK axis (F_r column 0, or the served
+    #: F_xy head).  Kept beside `results` so the JSON artefact only gains
+    #: keys when the axis actually moved.
+    tb_p50: dict[str, float] = {}
     for alias, mid in MIDS.items():
         batches = tuple(sorted((HOT, mid, COLD)))
         rng = random.Random(args.seed)          # SAME seed for both arms
@@ -98,6 +125,17 @@ def main() -> int:
         pin = np.asarray(pred.mean)[:, 6]
         fr = np.asarray(pred.mean)[:, 0]
         cbc = np.asarray(pred.mean)[:, 1]
+        # The tie-break axis.  On F_r this IS column 0, so the numbers and the
+        # `f_r_*` keys below are unchanged; on F_xy it comes from the head served
+        # OUTSIDE the frozen 7-column surrogate contract (predict_fxy), never by
+        # reusing another column's slot.
+        if axis.is_fxy:
+            served = model.predict_fxy(pats, case)
+            if served is None:                       # head vanished between checks
+                raise SystemExit(f"{args.model} served no {axis.label} column")
+            tb = np.asarray(served[0], dtype=float)
+        else:
+            tb = fr
         ok = np.isfinite(pin)
         results[alias] = {
             "mid_type": mid, "case": case.pair, "n_seeds": int(len(pats)),
@@ -111,30 +149,42 @@ def main() -> int:
                                              for _, _, c in tagged])),
         }
         r = results[alias]
+        if axis.is_fxy:
+            # Written ONLY off the default axis, so the registered
+            # tripletype_midpick_20260817.json keeps its exact key set.
+            r["axis"] = axis.label
+            r["axis_min"] = float(np.nanmin(tb))
+            r["axis_p50"] = float(np.nanmedian(tb))
+        tb_p50[alias] = float(np.nanmedian(tb))
         print(f"\n{alias} ({mid})  n={r['n_seeds']}")
         print(f"  pred pin BU   min {r['pin_min']:.3f}  p50 {r['pin_p50']:.3f}  "
               f"max {r['pin_max']:.3f}   under {PIN_GATE}: "
               f"{100*r['pin_frac_under_gate']:.1f}%")
-        print(f"  pred F_r      min {r['f_r_min']:.4f}  p50 {r['f_r_p50']:.4f}")
+        print(f"  pred {axis.label:<9}min {float(np.nanmin(tb)):.4f}  "
+              f"p50 {tb_p50[alias]:.4f}")
         print(f"  pred CBC p50  {r['cbc_p50']:.2f}      mid feed frac p50 "
               f"{r['mid_frac_p50']:.3f}")
 
     if len(results) == 2:
         a, b = "P5", "T1"
         # DECISION RULE, fixed here in code before the numbers were seen: the mid
-        # that protects the thin axis wins on p50 predicted pin; F_r breaks a tie
-        # only when the pin p50 gap is below the pin head's own in-cell MAE (1.84).
+        # that protects the thin axis wins on p50 predicted pin; the OBJECTIVE
+        # axis breaks a tie only when the pin p50 gap is below the pin head's own
+        # in-cell MAE (1.84).
         dpin = results[a]["pin_p50"] - results[b]["pin_p50"]
         if abs(dpin) >= 1.84:
             winner = a if dpin < 0 else b
             why = f"pin p50 gap {dpin:+.3f} exceeds the pin head's in-cell MAE 1.84"
         else:
-            winner = a if results[a]["f_r_p50"] < results[b]["f_r_p50"] else b
+            winner = a if tb_p50[a] < tb_p50[b] else b
             why = (f"pin p50 gap {dpin:+.3f} is INSIDE the pin head's in-cell MAE "
-                   f"1.84 — not resolvable on pin; decided on predicted F_r p50")
+                   f"1.84 — not resolvable on pin; decided on predicted "
+                   f"{axis.label} p50")
         results["verdict"] = {"winner": winner, "mid_type": MIDS[winner],
                               "case": f"{HOT}_{MIDS[winner]}_{COLD}", "why": why,
                               "pin_p50_delta_P5_minus_T1": dpin}
+        if axis.is_fxy:
+            results["verdict"]["axis"] = axis.label
         print(f"\nVERDICT: mid = {winner} ({MIDS[winner]})\n  {why}")
 
     out = REPO / args.out

@@ -254,6 +254,12 @@ class AcquisitionConfig:
     #: secondary tie-break, and F_r <= f_r_limit REJOINS the hard constraint set
     #: (F_r, F_q, CBC, |AO| all gated).  A deck that never sets ``objective`` is
     #: byte-identical to the pre-change target_cycle campaign.
+    #: ``"min_fxy"`` — MINIMIZE **F_xy** (MASTER ``FXYP``, the pin PLANAR peaking
+    #: factor) as the PRIMARY objective with cyclen the secondary tie-break, under
+    #: the hard limit ``f_xy_limit`` (1.65, user decision 2026-08-29).  F_r STAYS a
+    #: hard constraint at ``f_r_limit`` (1.55) — measured cores exist that pass one
+    #: axis and fail the other (design fxy_switch_20260829 §1.3), so F_r is not a
+    #: sufficient proxy and dropping it would silently RELAX the feasible set.
     objective: str = "target_cycle"
     #: ``max_cycle_min_fr`` scalarization weight λ [EFPD per unit F_r]: the exploit
     #: score is ``cyclen_LCB − λ·F_r_UCB`` (both risk-adjusted at ``risk_z``).
@@ -299,6 +305,25 @@ class AcquisitionConfig:
     #: the rod-average peak in one run), not ship on the prediction alone.
     #: DEFAULT DELIBERATELY UNCHANGED at 78.0.
     minfr_pin_bu_limit: float = 78.0
+    #: ``min_fxy`` scalarization weight λ_Fxy [EFPD per unit F_xy]: the exploit
+    #: score is ``cyclen_LCB − λ_Fxy·F_xy_UCB``, the SAME λ structure
+    #: ``minfr_lambda`` gives ``min_fr_max_cycle``.  Default 1000.0 sizes F_xy to
+    #: strictly dominate cyclen (a 0.01 F_xy reduction is worth a full 10 EFPD).
+    #: The measured within-cell F_xy spread is the same order as F_r's, so the
+    #: F_r default carries over unchanged (design §3.5.1).  Ignored outside min_fxy.
+    minfxy_lambda: float = 1000.0
+    #: ``min_fxy`` predicted max-pin-burnup hard gate [GWd/MTU] — mirrors
+    #: ``minfr_pin_bu_limit`` (78.0 = LEU+ 80 minus the 2.0 model margin of the
+    #: pin head).  Ignored outside min_fxy.
+    minfxy_pin_bu_limit: float = 78.0
+    #: ``min_fxy`` OPTIONAL cyclen acceptance band [EFPD] (``None`` = no band, the
+    #: default: cyclen is then a pure secondary tie-break, exactly as in
+    #: ``min_fr_max_cycle``).  Set BOTH edges to make cyclen a hard constraint in
+    #: the ``min_fuel_cost`` shape.
+    minfxy_cyclen_lo: float | None = None
+    minfxy_cyclen_hi: float | None = None
+    #: ``min_fxy`` cyclen-band penalty normalizer [EFPD]; inert when no band is set.
+    minfxy_cyclen_width: float = 10.0
     #: ``min_fuel_cost`` — MINIMIZE the fresh fuel-economics metric FE (total fresh
     #: U-235 charge = Σ_fresh u_mass×enrichment) as the PRIMARY objective, F_r the
     #: secondary tie-break, subject to ALL SIX hard constraints (cyclen band both
@@ -347,6 +372,14 @@ class AcquisitionConfig:
     #: |AO|, predicted max_pin_burnup ≤ ``flatpower_pin_bu_limit``; cyclen
     #: record-only.  Ignored outside flat_power.
     flatpower_fr_limit: float = 1.7
+    #: ``flat_power`` F_xy SAFETY GATE [-] (design §3.5.3).  Binary veto in the
+    #: same shape as ``flatpower_fr_limit``: it can reject a candidate, it never
+    #: grades one.  Needed because ``node_peak`` (the flatness objective) is a
+    #: BOC assembly radial peak whose measured correlation with MASTER's FXYP is
+    #: only 0.74-0.85 — a flat pattern carries NO guarantee of F_xy compliance.
+    #: ``0.0`` (or a non-finite value) disables the gate, restoring the previous
+    #: flat_power behaviour exactly.
+    flatpower_fxy_limit: float = 1.65
     flatpower_pin_bu_limit: float = 80.0
     #: SECONDARY-term weight ``w_cov`` (decision D4 default 0.5).  The declared
     #: ratio is only honest under per-cell normalization — see below.
@@ -417,9 +450,28 @@ class AcquisitionConfig:
     #: ECE 0.111/0.200), and it only ever ranks edits WITHIN one parent — which
     #: is the readout that passed.  It does NOT replace the board scorer in
     #: ``_score_completions``: section 4 shows the two win at different things.
+    #: ``"v1"`` is ``"both"`` under the version-explicit name; ``"v2"`` serves the
+    #: v2 ensemble (:class:`lpopt.policy.scorer.MoveScorerV2`) from
+    #: :attr:`policy_prior_model_dir_v2`; ``"shadow_v2"`` builds the pool exactly
+    #: as ``"off"`` does — same rng sequence, same candidates — and only RECORDS
+    #: v2's score for every elite child in the wave metadata
+    #: (``policy_shadow_scores``).  Shadow is the arm that collects the review's
+    #: prospective A/B data without letting an ungated policy touch selection.
     policy_prior: str = "off"
     #: Checkpoint directory (5 ``cnn_seed*`` members + their ``meta.json``).
     policy_prior_model_dir: str = "data/models/policy_v1"
+    #: Checkpoint directory for the v2 modes (``v2`` / ``shadow_v2``).  Separate
+    #: from :attr:`policy_prior_model_dir` so an A/B deck can name both arms'
+    #: checkpoints at once and switch arms by ``policy_prior`` alone.
+    policy_prior_model_dir_v2: str = "data/models/policy_v2"
+    #: FAIL-CLOSED switch (review section 6.12).  ``false`` (default) is research
+    #: behaviour: a policy that will not load prints a WARNING, the elite arm
+    #: falls back to unscored random mutation, and the wave metadata records
+    #: ``policy_fallback = true`` so no readout can mistake the fallback for
+    #: policy-on.  ``true`` is production behaviour: the deck asked for a policy,
+    #: so a policy that will not load RAISES at pool construction rather than
+    #: running a silent control arm under a policy-on label.
+    policy_prior_strict: bool = False
     #: Softmax temperature over the selected head's probability.  The report's
     #: first safety rail: SAMPLE, never argmax — a hard argmax on a scorer with
     #: 0.650 era AUC collapses pool diversity.  0.25 leaves a ~11x sampling-odds
@@ -427,6 +479,15 @@ class AcquisitionConfig:
     #: so the policy reorders the neighbourhood without owning it.  Smaller is
     #: greedier; at 0 the pick degenerates to argmax and the rail is gone.
     policy_prior_temperature: float = 0.25
+    #: Softmax temperature for the v2 modes.  NOT inheritable from the v1 value
+    #: and that is the whole reason this field exists: v2's output is a
+    #: normalized clipped expected improvement, not v1's probability, and its
+    #: gate-fold p90−p10 spread is 0.189 (``fr``) against v1's 0.573.  At v1's
+    #: τ = 0.25 the v2 softmax is nearly uniform and the prior would do almost
+    #: nothing — a treatment arm that is its own control.  0.08 reproduces v1's
+    #: ~10x sampling-odds ratio on v2's scale
+    #: (``data/reports/policy_v2_results_20260817.md`` section 8, item 3).
+    policy_prior_temperature_v2: float = 0.08
     #: Edits proposed per scored parent expansion before the softmax pick
     #: (report section 7: "generate N ~ 16 mutations ... and admit the top m").
     policy_prior_candidates: int = 16
@@ -461,9 +522,54 @@ class AcquisitionConfig:
     cycle_tolerance_efpd: float = 2.0
     risk_z: float = 0.25
     f_r_limit: float = 1.55
+    #: HARD limit on **F_xy** (MASTER ``FXYP`` — pin PLANAR peaking), user decision
+    #: 2026-08-29.  It is the PRIMARY objective's gate under ``objective =
+    #: "min_fxy"`` and the deliverability gate everywhere the objective screens
+    #: F_xy.  It lives HERE and not in ``[constraints]``: that section is the
+    #: SDM/MTC post-verification knob surface, while ``f_r_limit`` / ``cbc_limit`` /
+    #: ``f_q_limit`` — the axes F_xy joins — have always lived in ``[acquisition]``.
+    f_xy_limit: float = 1.65
     cbc_limit: float = 1550.0
     f_q_limit: float = 2.41
     ao_abs_limit: float = 0.30
+    # -- SAFETY SHIELD (external review §6.5 P0-04 / §8.5) ------------------- #
+    #: What the serve-time feature/geometry OOD guard
+    #: (:mod:`lpopt.model.ood_guard`, surfaced by
+    #: ``PosValCnnBackend.feature_ood_types``) is allowed to DO to the search.
+    #:
+    #: ``"warn"`` (DEFAULT) — today's behaviour EXACTLY: the guard is a warning
+    #: surface, no candidate is demoted or dropped, and a deck that never sets
+    #: this key produces a byte-identical wave.
+    #: ``"escalate"`` — a candidate whose fresh types fall outside the training
+    #: envelope loses its EXPLOIT score (demoted to ``-inf``, i.e. out of the
+    #: exploit tier and out of the next wave's elite seeds) but stays eligible for
+    #: the explore/control slots, which is where an off-manifold board belongs:
+    #: the review's rule is "no surrogate-only exploit on an OOD point", not
+    #: "never look at it".
+    #: ``"reject"`` — the candidate is dropped from the pool entirely and the wave
+    #: summary carries the count.
+    #:
+    #: The guard is the front line precisely BECAUSE ensemble σ is not: every
+    #: member trained on the same manifold agrees while being jointly wrong
+    #: (``ood_guard`` module docstring), so an OOD point's exploit score is
+    #: confidently wrong rather than visibly uncertain.
+    ood_policy: str = "warn"
+    #: Use the split-conformal UPPER bound (:mod:`lpopt.model.conformal`, served by
+    #: ``PosValCnnBackend.predict_interval``) as a HARD chance constraint
+    #: ``U_c(x) <= L_c`` on the gated licensing axes, instead of leaving the
+    #: mean+κ·σ UCB screen as the only bound (review §6.5 improvement 3).
+    #: ``false`` (DEFAULT) keeps the conformal artifact report-only — the shipped
+    #: behaviour.  ``true`` drops any candidate whose conformal upper bound on a
+    #: gated axis exceeds that axis's limit and reports the per-axis count.
+    #: An axis with NO fitted interval for a candidate is not screened by this
+    #: gate (its mean+κ·σ UCB screen stands) and is reported as an unfit axis.
+    conformal_gate: bool = False
+    #: Miscoverage level the gate reads the interval at.  Must be one of the
+    #: levels the artifact was FIT at (:data:`lpopt.model.conformal.DEFAULT_ALPHAS`
+    #: — 0.10 for a 90 % interval, 0.32 for 68 %); asking for an unfitted level
+    #: would silently serve a vacuous ``+inf`` bound.  Default 0.10, the primary
+    #: level every fit selects its score type at.
+    conformal_alpha: float = 0.10
     # wave online-update gate (plan sec. 4.6)
     replay_size: int = 512
     finetune_epochs: int = 3
@@ -552,6 +658,12 @@ class ModelConfig:
     #: Promote ``max_assembly_burnup`` to a first-class regression target
     #: (surrogate column 5 stops being NaN); masked wherever the label is absent.
     promote_max_asm_bu: bool = False
+    #: Promote ``f_xy`` (MASTER's FXYP, pin planar peaking) to a first-class
+    #: regression target APPENDED after the legacy rows, served outside the frozen
+    #: seven-column surrogate contract via ``predict_fxy``; masked wherever the
+    #: label is absent.  Pre-registered in
+    #: ``data/reports/fxy_head_prereg_20260829.md`` (F_xy switch P4).
+    promote_fxy: bool = False
     #: Fit the per-cell cyclen + F_r affine calibrations into the new model dir at
     #: the end of every retrain, instead of by hand.  DEFAULT TRUE: a retrained
     #: champion that serves uncalibrated while being gated against a calibrated
@@ -1422,6 +1534,8 @@ def load_config(path: str | Path) -> LpoptConfig:
     _validate_inference(sections["model"].inference, path)
     _validate_objective(sections["acquisition"].objective, path)
     _validate_policy_prior(sections["acquisition"].policy_prior, path)
+    _validate_ood_policy(sections["acquisition"].ood_policy, path)
+    _validate_conformal_alpha(sections["acquisition"].conformal_alpha, path)
 
     return LpoptConfig(source_path=path, **sections)
 
@@ -1561,7 +1675,7 @@ def fr_guard_from_deck(deck: "str | Path | None" = FR_GUARD_DEFAULT_DECK,
 
 #: Accepted ``[acquisition] objective`` values.
 _VALID_OBJECTIVES = {"target_cycle", "max_cycle_min_fr", "min_fr_max_cycle",
-                     "min_fuel_cost", "fr_boundary", "flat_power"}
+                     "min_fuel_cost", "fr_boundary", "flat_power", "min_fxy"}
 
 
 def _validate_objective(value: str, path: Path) -> None:
@@ -1572,9 +1686,15 @@ def _validate_objective(value: str, path: Path) -> None:
         )
 
 
-#: Accepted ``[acquisition] policy_prior`` values (the two heads the v1 policy
-#: was trained with, their mean, and off).
-_VALID_POLICY_PRIORS = {"off", "fr", "flat", "both"}
+#: Accepted ``[acquisition] policy_prior`` values.  ``"fr"`` / ``"flat"`` /
+#: ``"both"`` are v1's two heads and their mean, kept verbatim so every existing
+#: deck keeps its meaning; ``"v1"`` is the version-explicit spelling of
+#: ``"both"``; ``"v2"`` and ``"shadow_v2"`` select the v2 ensemble, the latter
+#: for recording only.  Mapped to (family, head) by
+#: :data:`lpopt.search.construct.POLICY_MODES`, which is the single source of
+#: truth; ``tests/test_config.py`` asserts the two lists agree (the import is
+#: deliberately NOT taken here — ``lpopt.search`` imports this module).
+_VALID_POLICY_PRIORS = {"off", "fr", "flat", "both", "v1", "v2", "shadow_v2"}
 
 
 def _validate_policy_prior(value: str, path: Path) -> None:
@@ -1582,6 +1702,42 @@ def _validate_policy_prior(value: str, path: Path) -> None:
         raise ConfigError(
             f"[acquisition] policy_prior {value!r} invalid; expected one of "
             f"{sorted(_VALID_POLICY_PRIORS)}  (in {path})"
+        )
+
+
+#: Accepted ``[acquisition] ood_policy`` values (review §6.5: OOD_OK /
+#: OOD_ESCALATE / OOD_REJECT).  ``"warn"`` is the shipped report-only behaviour.
+_VALID_OOD_POLICIES = {"warn", "escalate", "reject"}
+
+
+def _validate_ood_policy(value: str, path: Path) -> None:
+    if str(value).strip().lower() not in _VALID_OOD_POLICIES:
+        raise ConfigError(
+            f"[acquisition] ood_policy {value!r} invalid; expected one of "
+            f"{sorted(_VALID_OOD_POLICIES)}  (in {path})"
+        )
+
+
+def _valid_conformal_alphas() -> set[float]:
+    """Miscoverage levels a conformal artifact is actually FIT at.
+
+    Sourced from :mod:`lpopt.model.conformal` so the deck knob and the fitter can
+    never drift apart; an import hiccup falls back to the module's own defaults
+    rather than masking a real deck error.
+    """
+    try:
+        from .model.conformal import DEFAULT_ALPHAS
+        return {float(a) for a in DEFAULT_ALPHAS}
+    except Exception:  # noqa: BLE001
+        return {0.10, 0.32}
+
+
+def _validate_conformal_alpha(value: float, path: Path) -> None:
+    valid = _valid_conformal_alphas()
+    if not any(abs(float(value) - a) <= 1.0e-9 for a in valid):
+        raise ConfigError(
+            f"[acquisition] conformal_alpha {value!r} invalid; the artifact is "
+            f"fit only at {sorted(valid)}  (in {path})"
         )
 
 

@@ -87,6 +87,13 @@ def champion_recipe(model_dir: str | Path) -> dict:
         "distill_min_match_frac": float(tc.get("distill_min_match_frac", 0.5)),
         "distill_targets": tc.get("distill_targets"),
         "promote_max_asm_bu": bool(tc.get("promote_max_asm_bu", False)),
+        # F_xy prior-residual head.  ``target_names`` WINS (it is what the weights
+        # were built with), so a champion carrying the head can never be
+        # "reproduced" without it — the same silent-drop class the cond_schema /
+        # head_hidden fix closed.  A stale ``promote_fxy: false`` in an older
+        # train_config cannot override the head that is actually in the tensor.
+        "promote_fxy": (bool(tc.get("promote_fxy", False))
+                        or "f_xy" in list(meta.get("target_names", []))),
         "auto_fit_cell_calibration": bool(tc.get("auto_fit_cell_calibration", True)),
         "cyclen_rank_weight": float(tc.get("cyclen_rank_weight", 0.1)),
         "num_workers": int(tc.get("num_workers", 8)),
@@ -119,6 +126,8 @@ def recipe_to_train_args(
     distill_cache: str | Path | None,
     fr_rank_weight: float = 0.1,
     map_fr_consistency_weight: float = 0.0,
+    init_from: str | Path | None = None,
+    freeze_trunk_cyclen: bool = False,
 ) -> list[str]:
     """Compose the ``lpopt.model.train`` CLI args that reproduce ``recipe``.
 
@@ -167,6 +176,15 @@ def recipe_to_train_args(
                  str(float(recipe["quantile_weight"]))]
     if recipe.get("promote_max_asm_bu"):
         args.append("--promote-max-asm-bu")
+    if recipe.get("promote_fxy"):
+        args.append("--promote-fxy")
+    # Freeze-finetune: champion weights in, trunk frozen, new head row trained.
+    # ``--freeze-trunk-cyclen`` REQUIRES ``--init-from`` (train.py raises
+    # otherwise), so they are emitted together and never independently.
+    if init_from is not None:
+        args += ["--init-from", str(init_from)]
+        if freeze_trunk_cyclen:
+            args.append("--freeze-trunk-cyclen")
     if distill_cache is not None and float(recipe.get("distill_weight", 0.0)) > 0.0:
         args += ["--distill-targets", str(distill_cache),
                  "--distill-weight", str(float(recipe["distill_weight"])),
@@ -274,19 +292,33 @@ def plan_al_retrain(
     fr_rank_weight: float = 0.1,
     map_fr_consistency_weight: float = 0.0,
     refresh_teacher: bool = True,
+    add_fxy_head: bool = False,
 ) -> dict:
     """Compose the champion-faithful AL retrain plan (no side effects).
 
     Returns the recovered recipe, the distillation-teacher refresh step (teacher :=
     ``champion_dir``), the composed ``lpopt.model.train`` args, and the full remote
     invocation.  Callers dry-run by printing; a live run executes the refresh then
-    ``push`` + the remote invocation."""
+    ``push`` + the remote invocation.
+
+    ``add_fxy_head`` composes the F_xy switch's phase-P4 recipe instead of a plain
+    retrain: ``--init-from <champion> --freeze-trunk-cyclen --promote-fxy``.  The
+    trunk (and cyclen) stay byte-identical to the champion while ONE new head row
+    learns f_xy against its fitted F_r prior — so the seven legacy targets cannot
+    regress by construction, which is what makes the honest gate cheap to pass
+    with ~840 labels.  It is deliberately a plan-level switch, not a recipe field:
+    the champion did not have the head, and pretending its recipe did would be the
+    same drift the ``cond_schema`` fix closed."""
     recipe = champion_recipe(champion_dir)
+    if add_fxy_head:
+        recipe = {**recipe, "promote_fxy": True}
     uses_distill = float(recipe.get("distill_weight", 0.0)) > 0.0
     cache = str(distill_cache) if uses_distill else None
     train_args = recipe_to_train_args(
         recipe, distill_cache=cache, fr_rank_weight=fr_rank_weight,
-        map_fr_consistency_weight=map_fr_consistency_weight)
+        map_fr_consistency_weight=map_fr_consistency_weight,
+        init_from=(str(champion_dir) if add_fxy_head else None),
+        freeze_trunk_cyclen=bool(add_fxy_head))
     refresh_cmd = (
         f"python -c \"from lpopt.model.al_retrain import refresh_distill_cache; "
         f"refresh_distill_cache({str(champion_dir)!r}, out_path={str(distill_cache)!r})\""
@@ -320,6 +352,7 @@ def _print_plan(plan: dict) -> None:
     print(f"  switches: physics_prior={r['cyclen_physics_prior']} "
           f"quantile_heads={r['quantile_heads']}(w={r['quantile_weight']}) "
           f"distill_w={r['distill_weight']} promote_asm_bu={r['promote_max_asm_bu']} "
+          f"promote_fxy={r['promote_fxy']} "
           f"cyclen_rank={r['cyclen_rank_weight']} auto_cell_cal={r['auto_fit_cell_calibration']}")
     tr = plan["distill_teacher_refresh"]
     print(f"  distill teacher refresh: enabled={tr['enabled']} teacher={Path(tr['teacher']).name if tr['teacher'] else None} "
@@ -339,6 +372,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--map-fr-consistency-weight", type=float, default=0.0)
     ap.add_argument("--no-refresh-teacher", dest="refresh_teacher",
                     action="store_false", default=True)
+    ap.add_argument("--add-fxy-head", action="store_true",
+                    help="compose the F_xy phase-P4 freeze-finetune recipe: "
+                         "--init-from <champion> --freeze-trunk-cyclen "
+                         "--promote-fxy (frozen trunk, one new head row)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the composed invocation only (no refresh, no train)")
     ap.add_argument("--execute-refresh", action="store_true",
@@ -349,7 +386,8 @@ def main(argv: list[str] | None = None) -> int:
         args.champion, input_deck=args.input, distill_cache=args.distill_cache,
         fr_rank_weight=args.f_r_rank_weight,
         map_fr_consistency_weight=args.map_fr_consistency_weight,
-        refresh_teacher=args.refresh_teacher)
+        refresh_teacher=args.refresh_teacher,
+        add_fxy_head=args.add_fxy_head)
     _print_plan(plan)
 
     if args.execute_refresh and plan["distill_teacher_refresh"]["enabled"]:

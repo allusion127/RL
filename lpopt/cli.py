@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ConfigError, LpoptConfig, load_config
+from .safelog import configure_stdio, safe_logger
 
 _READ_PROBE_BYTES = 64 * 1024
 _VENDOR_DIR = Path(__file__).resolve().parent / "vendor" / "masterrl"
@@ -645,7 +646,13 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    """Regenerate ``report.md`` + figures for an existing ``runs/<ts>``."""
+    """Regenerate ``report.md`` + figures + ``delivery.json`` for a ``runs/<ts>``.
+
+    The recovery path for a campaign whose ``_render_report`` aborted after the
+    MASTER budget was already spent (incident 2026-08-30): everything the
+    artefacts need is in ``labels.jsonl``/``status.json``, so nothing here calls
+    MASTER.  ``--no-delivery`` restores the old report-only behaviour.
+    """
     run_dir = Path(args.run_dir)
     if not run_dir.exists():
         print(f"[ERROR] run dir not found: {run_dir}")
@@ -656,9 +663,17 @@ def cmd_report(args: argparse.Namespace) -> int:
             cfg = load_config(Path(args.input))
         except ConfigError as exc:
             print(f"[WARNING] deck not loaded ({exc}); using report defaults")
-    from .report.report import regenerate_report
-    path = regenerate_report(run_dir, cfg, log=lambda m: print(m))
+    log = safe_logger(None)
+    from .report.report import regenerate_delivery, regenerate_report
+    path = regenerate_report(run_dir, cfg, log=log)
     print(f"RESULT: OK — wrote {path}")
+    if not getattr(args, "delivery", True):
+        return 0
+    dpath, reason = regenerate_delivery(run_dir, cfg, log=log)
+    if dpath is not None:
+        print(f"RESULT: OK — wrote {dpath}")
+    else:
+        print(f"[NOTE] no delivery.json regenerated: {reason}")
     return 0
 
 
@@ -847,6 +862,38 @@ def cmd_optimize(args: argparse.Namespace) -> int:
                         f"calls); best-overall F_r {ov['f_r']:.3f} "
                         f"(margin to 1.55: {ov.get('f_r_margin_to_limit'):+.3f}) @ cyclen "
                         f"{ov['cyclen']:.1f} EFPD"
+                    )
+                else:
+                    best_txt = "no converged LP found"
+        elif objective == "min_fxy":
+            # Same shape as the min_fr branch, but the limit is FORMATTED from
+            # the deck (``f_xy_limit``) instead of hard-coded: the min_fr branch
+            # above prints a literal "1.55" that a deck override would silently
+            # contradict, and the new mode does not inherit that defect.
+            fxy_lim = float(getattr(cfg.acquisition, "f_xy_limit", 1.65))
+            def _fx(entry, key, fmt=".4f"):
+                try:
+                    return format(float(entry.get(key)), fmt)
+                except (TypeError, ValueError):
+                    return "n/a"
+            if best:
+                best_txt = (
+                    f"best FEASIBLE F_xy {_fx(best, 'f_xy')} (<= {fxy_lim:.3f}) "
+                    f"@ cyclen {_fx(best, 'cyclen', '.1f')} EFPD, F_r "
+                    f"{_fx(best, 'f_r', '.3f')}"
+                    + ("" if best.get("deliverable") else
+                       "  [NOT deliverable: unmeasured "
+                       + ", ".join(best.get("unknown_axes") or ["?"]) + "]")
+                )
+            else:
+                ov = getattr(result, "best_overall", None)
+                if ov:
+                    best_txt = (
+                        f"NO feasible LP (F_xy <= {fxy_lim:.3f} not reached in "
+                        f"{result.budget_spent} calls); best-overall F_xy "
+                        f"{_fx(ov, 'f_xy')} (margin to {fxy_lim:.3f}: "
+                        f"{_fx(ov, 'f_xy_margin_to_limit', '+.4f')}) @ cyclen "
+                        f"{_fx(ov, 'cyclen', '.1f')} EFPD"
                     )
                 else:
                     best_txt = "no converged LP found"
@@ -1107,6 +1154,7 @@ def cmd_merge_store(args: argparse.Namespace) -> int:
     try:
         report = merge_store(cfg, args.from_dir, dry_run=bool(args.dry_run),
                              store_dir=args.store_dir, ledger=args.ledger,
+                             new_only=bool(args.new_only),
                              log=lambda m: print(m))
     except KitError as exc:
         print(f"[ERROR] {exc}")
@@ -1115,12 +1163,26 @@ def cmd_merge_store(args: argparse.Namespace) -> int:
     print()
     print(report.text())
     print()
+    # The change audit is the anti-clobber gate: a kit that would rewrite rows the
+    # local store already holds must say so loudly, in both dry-run and real mode.
+    if report.changed_rows and not report.new_only:
+        print(
+            f"[WARN] {report.changed_rows} already-stored row(s) differ from the "
+            f"kit's copy ({report.changed_rows_applied} would be rewritten by a "
+            f"strict upgrade, {report.changed_rows_blocked} kept locally). "
+            "If this kit shipped with a COPY of the local store, re-run with "
+            "--new-only."
+        )
     if report.dry_run:
         print("RESULT: OK — dry-run (no store/ledger written)")
     else:
+        mode = " [new-only]" if report.new_only else ""
+        skipped = (f", {report.filtered_existing} existing-id row(s) skipped"
+                   if report.new_only else "")
         print(
-            f"RESULT: OK — merged {report.new_rows} new / {report.upgraded_rows} "
-            f"upgraded / {report.duplicate_rows} duplicate rows "
+            f"RESULT: OK{mode} — merged {report.new_rows} new / "
+            f"{0 if report.new_only else report.upgraded_rows} upgraded / "
+            f"{report.duplicate_rows} duplicate rows{skipped} "
             f"(+{report.ledger.get('appended', 0)} ledger lines)"
         )
     return 0
@@ -1837,10 +1899,15 @@ def build_parser() -> argparse.ArgumentParser:
                        help="disable the restart-bearing-pair guard (stub dry-runs only)")
     p_fcs.set_defaults(func=cmd_fuelcost_search)
 
-    p_report = sub.add_parser("report", help="regenerate report.md + figures for a runs/<ts>")
+    p_report = sub.add_parser(
+        "report",
+        help="regenerate report.md + figures + delivery.json for a runs/<ts> (no MASTER)")
     p_report.add_argument("run_dir", help="the runs/<ts> directory")
     p_report.add_argument("--input", "-i", default="lpopt.inp", help="campaign TOML deck (for case/limits/GA log)")
-    p_report.set_defaults(func=cmd_report)
+    p_report.add_argument(
+        "--no-delivery", dest="delivery", action="store_false",
+        help="report.md only; skip the delivery.json rebuild")
+    p_report.set_defaults(func=cmd_report, delivery=True)
 
     # sdm-mtc: SDM/MTC post-verification of a run's top-K feasible candidates (plan 12.5)
     p_sm = sub.add_parser("sdm-mtc", help="SDM/MTC post-verify top-K feasible candidates of a run")
@@ -1912,6 +1979,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ms.add_argument("--ledger", default=None,
                       help="override [produce].ledger (merge into this ledger instead; "
                            "relative = cwd)")
+    p_ms.add_argument("--new-only", action="store_true",
+                      help="harvest ONLY record_ids the local store has never seen: "
+                           "kit rows (and map stacks) whose record_id is already "
+                           "stored are dropped before the upsert. Use this whenever "
+                           "the kit shipped with a COPY of the local store, so its "
+                           "stale mirror of already-corrected rows cannot come back.")
     p_ms.set_defaults(func=cmd_merge_store)
 
     # design: parametric fuel-design production chain (plan section 12)
@@ -2059,6 +2132,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Every sub-command below prints user-facing strings that carry non-ASCII
+    # (em-dash, <=, sigma, Delta).  The launchers redirect stdout to a log file,
+    # which on Windows picks the ANSI codepage (cp949 here), and a single
+    # em-dash then raised UnicodeEncodeError -- on 2026-08-30 that killed a
+    # finished 100-call campaign before report.md/delivery.json were written.
+    # Reconfiguring once here covers ~60 bare print() sites; the library drivers
+    # additionally wrap their loggers (lpopt.safelog.safe_logger) because they
+    # are also driven from scripts that never reach this entry point.
+    configure_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):

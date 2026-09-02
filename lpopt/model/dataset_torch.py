@@ -88,10 +88,29 @@ TARGETS: tuple[str, ...] = (
 #: carries it for ~94% of rows; the remainder are masked by the standard NaN rule.
 TARGETS_WITH_ASM_BU: tuple[str, ...] = TARGETS + ("max_assembly_burnup",)
 
+#: The ``promote_fxy`` target order (F_xy switch phase P4) — :data:`TARGETS` with
+#: ``f_xy`` APPENDED, exactly as ``max_assembly_burnup`` was, so every existing
+#: index is unchanged and a 7- or 8-target checkpoint stays readable.  ``f_xy`` is
+#: MASTER's FXYP (pin PLANAR peaking, MAS_OUT only) — a different physical
+#: quantity from ``f_r`` (FRP, pin radial) and from ``node_peak`` (BOC ASSEMBLY
+#: radial peak, measured corr only 0.74-0.85), which is why it needs its own head
+#: row rather than reusing either.  The store carries it for ~2% of rows today;
+#: the remainder are masked by the standard NaN rule with no special case.
+TARGETS_WITH_FXY: tuple[str, ...] = TARGETS + ("f_xy",)
 
-def targets_for(promote_max_asm_bu: bool = False) -> tuple[str, ...]:
-    """The active dataset target tuple for a ``promote_max_asm_bu`` setting."""
-    return TARGETS_WITH_ASM_BU if promote_max_asm_bu else TARGETS
+
+def targets_for(promote_max_asm_bu: bool = False,
+                promote_fxy: bool = False) -> tuple[str, ...]:
+    """The active dataset target tuple for the ``promote_*`` settings.
+
+    Both promotions APPEND, and ``max_assembly_burnup`` is appended FIRST, so the
+    four reachable tuples are strict prefixes of one another
+    (7 -> 8 asm_bu -> 9 asm_bu+f_xy, and 7 -> 8 f_xy).  That prefix property is
+    what lets ``--init-from`` graft a 7/8-target champion's head rows into a
+    wider head (see ``train._graft_appended_target_rows``).
+    """
+    names = TARGETS_WITH_ASM_BU if promote_max_asm_bu else TARGETS
+    return names + ("f_xy",) if promote_fxy else names
 
 
 def _resolve_ids(split_manifest: Any, df: pd.DataFrame, fold: str) -> list[str]:
@@ -124,6 +143,7 @@ class LPDataset(Dataset):
         seed: int = 0,
         censor_dataset_a_pin_labels: bool = True,
         promote_max_asm_bu: bool = False,
+        promote_fxy: bool = False,
         include_axial: bool = False,
         axial_anchors: Sequence[str] = AXIAL_ANCHORS,
         include_traj: bool = False,
@@ -146,7 +166,9 @@ class LPDataset(Dataset):
         #: Active target inventory.  Default (flag off) is exactly :data:`TARGETS`,
         #: so every tensor width and index is unchanged.
         self.promote_max_asm_bu = bool(promote_max_asm_bu)
-        self.targets: tuple[str, ...] = targets_for(self.promote_max_asm_bu)
+        self.promote_fxy = bool(promote_fxy)
+        self.targets: tuple[str, ...] = targets_for(self.promote_max_asm_bu,
+                                                    self.promote_fxy)
         self._rng = np.random.default_rng(seed)
 
         df = store_reader.records
@@ -176,9 +198,12 @@ class LPDataset(Dataset):
             v = row.get(name)
             fv = float(v) if v is not None else float("nan")
             vals[k] = fv
-            # max_assembly_burnup is masked wherever the label is absent by this
-            # SAME standard NaN rule — no special case needed, and a row that
-            # never carried it simply trains on its other targets.
+            # max_assembly_burnup / f_xy are masked wherever the label is absent
+            # by this SAME standard NaN rule — no special case needed, and a row
+            # that never carried them simply trains on its other targets.  For
+            # f_xy that is the overwhelming majority (~98% of the store), which is
+            # why the head is guarded by a minimum label count in train.py rather
+            # than by anything here.
             valid = converged and not math.isnan(fv)
             if name == "cbc_max" and boc_only:
                 valid = False               # cbc_max unreliable on boc_only rows

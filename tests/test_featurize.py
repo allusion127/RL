@@ -11,8 +11,12 @@ import numpy as np
 import pytest
 
 from lpopt.data.fuel_types import FuelLibrary, core_enrichment_split
-from lpopt.data.schema import unpack_pattern
+from lpopt.data.schema import SYM_CLASS, unpack_pattern
 from lpopt.model.featurize import (
+    SERVE_DATASET,
+    SERVE_SYM_CLASS,
+    _DATASET_A_LIBRARIES,
+    serve_provenance,
     CHANNELS,
     CHANNELS_BY_SCHEMA,
     CHANNELS_V4,
@@ -120,9 +124,50 @@ def test_channels_globals_lengths_match_arrays(store) -> None:
 
 def test_library_provenance_mapping() -> None:
     # ga80 letter library is Dataset B (free-69 orbit); everything else is A/rot61.
+    # This is the HISTORICAL-extractor map and is deliberately frozen; the SERVE
+    # path uses ``serve_provenance`` (below) instead.
     assert library_provenance("ga80") == ("B", "free69")
     for lib in ("260624", "5.8_5.1", "CPHA", "legacy_a", "unresolved:X"):
         assert library_provenance(lib) == ("A", "rot61")
+
+
+def test_serve_provenance_is_the_campaign_write_stamp() -> None:
+    """The serve path must stamp what ``verify.outcome_to_record`` will write."""
+    assert SERVE_DATASET == "P" and SERVE_SYM_CLASS == SYM_CLASS == "rot61"
+    # every campaign library (and any library added later) -> ("P", "rot61")
+    for lib in ("ga80", "paramA", "CPHA", "some_future_library"):
+        assert serve_provenance(lib) == ("P", "rot61")
+    # the extract_a libraries keep their Dataset-A answer, byte-identical
+    for lib in ("260624", "5.8_5.1", "legacy_a"):
+        assert serve_provenance(lib) == ("A", "rot61")
+        assert serve_provenance(lib)[0] == library_provenance(lib)[0]
+    # the two flips this fixes (2026-08-29 train/serve forensic)
+    assert library_provenance("ga80")[1] != serve_provenance("ga80")[1]
+    assert library_provenance("paramA")[0] != serve_provenance("paramA")[0]
+
+
+def test_dataset_a_libraries_matches_the_live_store() -> None:
+    """``_DATASET_A_LIBRARIES`` is a hard-coded set; re-derive it from the store so
+    it cannot go stale.  The invariant is that NO library mixes ``dataset == "A"``
+    with a non-``"A"`` dataset, so the split is exactly a partition of libraries."""
+    pd = pytest.importorskip("pandas")
+    if not RECORDS.is_file():
+        pytest.skip("store not present")
+    df = pd.read_parquet(RECORDS, columns=["library_id", "dataset", "sym_class"])
+    by_lib = df.groupby("library_id")["dataset"].agg(lambda s: set(s.astype(str)))
+    a_libs, other = set(), set()
+    for lib, kinds in by_lib.items():
+        assert not (kinds == {"A"}) ^ ("A" in kinds), \
+            f"library {lib!r} MIXES Dataset-A and campaign rows: {sorted(kinds)}"
+        (a_libs if kinds == {"A"} else other).add(str(lib))
+    assert a_libs <= _DATASET_A_LIBRARIES, \
+        f"store has Dataset-A libraries not in the constant: {sorted(a_libs - _DATASET_A_LIBRARIES)}"
+    assert not (other & _DATASET_A_LIBRARIES), \
+        f"constant claims campaign libraries are Dataset A: {sorted(other & _DATASET_A_LIBRARIES)}"
+    # and 'rot61' is what a campaign row carries — the free69 label is confined to
+    # the historical extract_b ga80 harvest and never to a campaign row.
+    assert set(df[df["dataset"] == "P"]["sym_class"].astype(str)) == {SYM_CLASS}
+    assert set(df[df["sym_class"] != SYM_CLASS]["dataset"].astype(str)) <= {"B"}
 
 
 def test_core_enrichment_split_reproduces_stored_e_core(store) -> None:

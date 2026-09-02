@@ -10,6 +10,15 @@ APR1400 평형주기 장전모형(loading pattern, LP) 최적화 시스템의 �
 **무브-제안 정책망**(policy v1/v2)을 학습시키고, 이 모든 단계를 셀 단위로 자동 실행하는
 **자동 엔지니어**(autoeng)와 설계공간 지도(그물망, mesh)로 이어진다.
 
+> **2026-08-31 개정.** 2026-08-29 목적축 전환(`F_r` → `F_xy`)과 외부 기술 검토 대응으로
+> 새 모듈 7개가 들어왔다: `lpopt/safelog.py`(인코딩-안전 로깅), `lpopt/data/fxy.py`
+> (`MAS_OUT` FXYP/FXYA 파서), `lpopt/tools/backfill_fxy.py`(소급 라벨), 
+> `lpopt/tools/quarantine_campaign.py`(결함 캠페인 격리), `lpopt/tools/repair_parent_ids.py`
+> (계보 외래키 수리), 그리고 최상위 `intervention_wave.py`(개입 웨이브 = Campaign A) ·
+> `readout_axis.py`(목적축 인식 프런티어 판독). 기존 모듈 쪽 변경은 `policy/scorer.py`의
+> `MoveScorerV2` 서빙, `search/campaign.py`의 `is_feasible_search`/`is_deliverable` 분리와
+> 안전 실드(OOD/conformal) 배선이다.
+
 - 패키지 진입점: `lpopt` 콘솔 스크립트 (`lpopt.cli:main`) 또는 `python -m lpopt`
 - Python >= 3.11 (`tomllib` 사용). `torch`는 **의도적으로 의존성에서 제외**되어 있다 —
   벤더링된 `master_rl` 폐포와 M0 테스트 스위트를 torch 없이 돌리기 위해서이며,
@@ -140,8 +149,19 @@ sequenceDiagram
 | [`lpopt/cli.py`](../lpopt/cli.py) | 2,071줄의 argparse CLI (§2.2). |
 | [`lpopt/config.py`](../lpopt/config.py) | TOML `.inp` 덱 → 타입 있는 dataclass (§2.3). |
 | [`lpopt/curriculum.py`](../lpopt/curriculum.py) | 셀 순차 커리큘럼 드라이버 (2,894줄). |
+| [`lpopt/safelog.py`](../lpopt/safelog.py) | **인코딩-안전 로깅**(138줄). `configure_stdio`(CLI 진입에서 1회 — 모든 맨 `print()`가 좁은 콘솔 인코딩에서 살아남는다) · `safe_logger`/`safe_print`(라이브러리 드라이버용, 호출자가 준 `log=`도 감싼다) · `fold_to_encoding`(`—`→`-`, `≤`→`<=`, `σ`→`sigma` 음역 우선, 최후에 `errors="replace"`). |
 | [`lpopt/multi_pc.py`](../lpopt/multi_pc.py) | 다중 PC 생산 키트 export/merge (1,438줄). |
 | [`lpopt/remote.py`](../lpopt/remote.py) | 원격 GPU 학습 인프라 (597줄). |
+
+**`safelog.py`가 존재하는 이유 (2026-08-30 사고).** 완주한 100콜 캠페인
+(`fpcamp_minfxy_t6t4_f121_r1`, HOST_199)이 `CampaignDriver._render_report`에서
+`UnicodeEncodeError: 'cp949' codec can't encode character '—'`로 죽었다 — 런처가
+stdout을 로그 파일로 리다이렉트하면 Windows가 ANSI 코드페이지(cp949)를 고르는데 게이트
+메시지 하나에 em-dash가 있었다. **MASTER 예산은 이미 다 썼고 `report.md`·`delivery.json`은
+끝내 쓰이지 않았다.** 이 모듈이 인코딩하는 규칙: **로그 한 줄이 런을 침몰시킬 수 있어서는
+안 된다.** 같은 수정에서 `_render_report`의 post-verify 예외를 격리해 report/status는 항상
+기록되게 했고, `lpopt report <run> -i <deck>`로 오프라인 재생성 경로를 열었으며, 루트
+`.bat` 12개에 `PYTHONIOENCODING`/`chcp`를 넣었다.
 
 **`curriculum.py`** — `(e_core 밴드 × feed)` 셀 격자를 지지 앵커에서 바깥으로 걸어 나가며
 셀마다 크래시 안전 상태기계를 돌린다: `ensure_types → blind_probe → produce_cell →
@@ -218,8 +238,8 @@ matmul 스모크/디스크), `push`(tar-over-scp로 소스 + `data/store` + `dat
 | `[search]` | `SearchConfig` | `pool_size`, `pool_cap`, `elite_frac`/`guided_frac`/`diversity_frac`, `beam_width`, `n_moves_early`/`n_moves_late`, `elite_top_k`, `near_miss_f_r`, `near_miss_top_k`, `elite_seed_cases`, `require_all_fresh_types`, `dry_run_pool_size` |
 | `[search.trust_region]` | `TrustRegionConfig` | `enabled`, `feed_step`(=4), `e_core_band`, `n_min`, `promote_after`, `frontier_sigma_inflation`, `frontier_slots_per_wave` |
 | `[search.local_search]` | `LocalSearchConfig` | `top_m`, `neighbors`, `depth`, `max_predictions`, `n_moves` |
-| `[acquisition]` | `AcquisitionConfig` | 60+ 필드. `budget`, `wave_size`, `exploit`/`explore`/`control`/`reserve`, `objective`, `risk_z`, 제약 상한(`f_r_limit`/`cbc_limit`/`f_q_limit`/`ao_abs_limit`), 목적별 파라미터(`mcmf_*`, `minfr_*`, `fuelcost_*`, `fr_boundary_*`, `flatpower_*`), `policy_prior*`, 게이트(`gate_epsilon`, `gate_skill_*`, `no_improve_waves`) |
-| `[model]` | `ModelConfig` | `backend`, `model_dir`, `device`, `library_id`, `store_dir`, `cond_schema`, `map_head_mode`, `map_prior_residual`, `map_spectral_weight`, `inference`(`local_cpu`\|`remote_gpu`), `remote_screening*`, `cyclen_physics_prior`, `quantile_heads`, `promote_max_asm_bu`, `auto_fit_cell_calibration` |
+| `[acquisition]` | `AcquisitionConfig` | 60+ 필드. `budget`, `wave_size`, `exploit`/`explore`/`control`/`reserve`, `objective`, `risk_z`, 제약 상한(`f_r_limit`/**`f_xy_limit`**(=1.65)/`cbc_limit`/`f_q_limit`/`ao_abs_limit`), 목적별 파라미터(`mcmf_*`, `minfr_*`, **`minfxy_*`**, `fuelcost_*`, `fr_boundary_*`, `flatpower_*`(+`flatpower_fxy_limit`)), `policy_prior*`(+`policy_prior_strict`), **안전 실드(`ood_policy`, `conformal_gate`, `conformal_alpha`)**, 게이트(`gate_epsilon`, `gate_skill_*`, `no_improve_waves`) |
+| `[model]` | `ModelConfig` | `backend`, `model_dir`, `device`, `library_id`, `store_dir`, `cond_schema`, `map_head_mode`, `map_prior_residual`, `map_spectral_weight`, `inference`(`local_cpu`\|`remote_gpu`), `remote_screening*`, `cyclen_physics_prior`, `quantile_heads`, `promote_max_asm_bu`, **`promote_fxy`**(`f_xy` 헤드 서빙), `auto_fit_cell_calibration` |
 | `[design]` | `DesignConfig` | `decart_exe`, `master_exe`, `apr1400_root`, `paramA_root`, `package_root`, `n_types`, `max_parallel`, `decart_timeout`, `bootstrap_max_cycles`, `enable_pin_burnup`, `mas_ref`, `prolog_exe`, `totalbatcher_exe` |
 | `[curriculum]` | `CurriculumConfig` | `state_dir`, `e_core_bands`, `feeds`, `anchor_band`/`anchor_feed`, `cell_order`, `probe_size`, `n_target`, `retrain_mode`, `retrain_split`, 게이트 파라미터(`gate_noreg_*`, `gate_tail_*`, `gate_new_cell_min_spearman`), `band_libraries` |
 | `[criteria]` | `CriteriaConfig` | `user_criteria` 자유탐색: `e_core_target`/`tol`, `split_range`, `cyclen_target`/`tol`, `discharge_target`/`tol`, 제약 상한, `search_mode`, `lean_*`, `outer_*`, `power_mw`, `hm_mtu` |
@@ -227,13 +247,23 @@ matmul 스모크/디스크), `push`(tar-over-scp로 소스 + `data/store` + `dat
 | `[sdm_mtc]` | `SdmMtcConfig` | `top_k`, MTC/SDM 한계, `cea_allowance_pcm`, `scram_banks`, `stuck_candidate_banks`, `branch_timeout_s`, `sidecar_path` |
 | `[debug_panel]` | `DebugPanelConfig` | `campaigns`, `tolerances` |
 
-검증 헬퍼: `_validate_objective`(6종 목적함수만 허용), `_validate_policy_prior`
-(`off`/`fr`/`flat`/`both`), `_validate_cond_schema`(피처 모듈의
+검증 헬퍼: `_validate_objective`(허용 목적함수만), `_validate_policy_prior`
+(`off`/`fr`/`flat`/`both`/`v1`/`v2`/`shadow_v2`), `_validate_cond_schema`(피처 모듈의
 `CHANNELS_BY_SCHEMA`에서 직접 조회 — 설정과 인코더가 서로 어긋날 수 없다),
-`_validate_inference`. 그리고 `fr_guard_enforced` / `fr_guard_from_deck`.
+`_validate_inference`, **`_validate_ood_policy`**(`warn`/`escalate`/`reject`),
+**`_validate_conformal_alpha`**(적합된 아티팩트가 실제로 갖고 있는 α만 허용 — 없는 α를
+요구하면 조용히 다른 분위수를 쓰는 대신 하드 에러). 그리고 `fr_guard_enforced` /
+`fr_guard_from_deck`.
 
 **허용 목적함수(objective)** — `target_cycle`, `max_cycle_min_fr`, `min_fr_max_cycle`,
-`min_fuel_cost`, `fr_boundary`, `flat_power`.
+**`min_fxy`**, `min_fuel_cost`, `fr_boundary`, `flat_power`.
+
+**2026-08-29에 추가된 축.** `min_fxy`에서 `f_xy`는 **목적이자 경성 한계**(1.65)이고
+`F_r`은 **제약으로 남는다**(`f_r_limit` 1.55) — 두 축은 실제 노심에서 순서가 바뀌므로
+어느 쪽도 다른 쪽을 함의하지 않기 때문이다. `flat_power`에도 `flatpower_fxy_limit`
+안전게이트가 추가됐다(`node_peak`은 `F_xy`가 **아니다** — 상관 0.74–0.85).
+안전 실드 3종의 **기본값은 전부 기존 동작**이다(`ood_policy = "warn"`,
+`conformal_gate = false`) — 켜는 것은 덱의 선택이다.
 
 ### 2.4 `lpopt/data/` — 추출·스키마·스토어·라벨 정의
 
@@ -246,6 +276,7 @@ matmul 스모크/디스크), `push`(tar-over-scp로 소스 + `data/store` + `dat
 | [`fuel_types.py`](../lpopt/data/fuel_types.py) | **물리 연료 피처 테이블**(2,244줄, 시스템에서 가장 큰 데이터 모듈). `(library_id, type_id)`당 1행. 소스 우선순위: `FA_*.out` MASS → 농축도/U질량, `FA_*.sum`, HGC(2군 단면적·pin form function 최대치·ADF·핀연소도), `dec_FA` 덱(재료/기하/존 인구조사). 핵심 함수: `kconv_curve_shape`(k-inf(BU) 곡선 형상 인자 — 독봉 불가지론 채널), `parse_hgc_boc_xs_adf`, `parse_fa_sum_pin_bu`, `geom_derived`, `ga80_rows`, `paramA_rows`, `build_fuel_table`, `augment_fuel_table_{pin_bu,geometry,kinf_shape}`, `pair_e_core`/`mix_e_core`/`case_e_core`, `FuelLibrary`. |
 | [`geometry.py`](../lpopt/data/geometry.py) | 정준 1/4 노심 기하. MOCHA rot61 캐시 키(61개 독립 최적화 셀) ↔ mirror-69 벤더 `Pattern`(69 슬롯) 상호 변환. `QuarterCell`, `slot_index_of`, `to_canonical_from_cache_key`, `to_canonical_from_shf`, `transpose`. |
 | [`edit5.py`](../lpopt/data/edit5.py) | MASTER4 `MAS_SUM` EDIT2/EDIT5 파서. `2_LP/MOCHA/master_sum.py`에서 파싱 로직을 **그대로** 이식(상류 파일은 편집 금지). `parse_mas_sum`, `Summary`, `AssemblyMaps`, `cbc_boc`/`cbc_max`, `extract_maps`, `stack_maps`, `stack_step_maps`, `stack_axial`. |
+| [`fxy.py`](../lpopt/data/fxy.py) | **MASTER4 `MAS_OUT` PLANAR 첨두 파서**(245줄) — `FXYP`(핀) / `FXYA`(집합체). `edit5.py`(MAS_SUM)·`pinppi.py`(MAS_PPI)에 이은 **세 번째 비벤더 MASTER 출력 파서**다. `F_xy`가 왜 별도 파일이냐 — **`MAS_SUM`에 없다**(EDIT3는 `FQN FRN FQP FRP`만 싣는다). MASTER는 감손 스텝마다 `$P2D_n` 블록을 찍고 그 안에 평면 인자를 정확히 한 번 인쇄한다. 값의 정의는 **평형 최종 사이클의 전 감손 스텝 최댓값**(설계 한계가 주기 내내 적용되고, 스토어의 `max_frp`/`max_fqp`가 이미 같은 규약이므로 다른 규약을 쓰면 축 간 비교가 깨진다). 어느 작업 디렉터리가 최종 사이클인지 고르는 것은 **호출자의 일**이다. 파싱 정규식과 "사이클 최댓값" 규약은 `2_LP/MOCHA/master_sum.py`에서 이식했고 상류 파일은 편집·임포트하지 않는다. 함정 하나가 실제로 걸렸다 — `PIN     PLANAR` 사이의 **공백 연속** 때문에 단일 공백 리터럴 grep은 아무것도 못 찾는다(모든 간격이 `\s+`). |
 | [`flatness.py`](../lpopt/data/flatness.py) | **`node_peak`·`map_cov`의 단일 정의**(다중도 가중). 수확 경로·백필·A/B 채점·출력맵 프라이어 적합이 전부 여기서 import한다(정의가 두 벌이 되어 숫자가 어긋났던 사고의 교정). `node_peak`, `map_cov`, `flatness_pair`, `gradient_stats`, `radial_weighted_power`, `record_flatness`. |
 | [`flat_scale.py`](../lpopt/data/flat_scale.py) | 평탄도 목적함수의 정규화 스케일. `z_peak = node_peak/PEAK_SCALE`, `z_cov = map_cov/COV_SCALE`, `scalar = −(z_peak + w_cov·z_cov)`. 선언된 1:0.5 가중비가 의미를 갖게 하는 상수와 그 아티팩트를 소유. `CellScale`, `FlatScale`, `load_gate_correction`. |
 | [`map_calibration.py`](../lpopt/data/map_calibration.py) | 셀별 맵-헤드 **레벨** 보정(`map_calibration.json`). 맵 헤드는 정직한 fold-C 슬라이스에서 낙관 편향을 갖고, 인수 함수의 유일한 비관 항(`risk_z × 앙상블 산포`)은 인식론적 불일치 통계라 외삽 편향을 표현할 수 없다. `MapCalibration`, `TargetCalibration`, `model_fingerprint`, `gate_shift`, `ModelMismatchError`. |
@@ -360,7 +391,7 @@ matmul 스모크/디스크), `push`(tar-over-scp로 소스 + `data/store` + `dat
 
 | 모듈 | 요약 |
 | --- | --- |
-| [`campaign.py`](../lpopt/search/campaign.py) | 캠페인 드라이버(4,105줄, `lpopt optimize`). `run_campaign`이 웨이브 루프를 돈다: 풀 구성 → 서로게이트 스코어 + trust-region 게이트 → local search 정제 → 8슬롯 웨이브 구성(exploit 5/explore 2/control 1) → `WaveVerifier` 검증 → 스토어 append → 파인튜닝 게이트. `CampaignDriver`, `UserCriteriaDriver`, `WaveReport`, `CampaignResult`, `feasibility_limits_for`, `MapHarvestAbort`. |
+| [`campaign.py`](../lpopt/search/campaign.py) | 캠페인 드라이버(4,105줄, `lpopt optimize`). `run_campaign`이 웨이브 루프를 돈다: 풀 구성 → 서로게이트 스코어 + trust-region 게이트 → local search 정제 → 8슬롯 웨이브 구성(exploit 5/explore 2/control 1) → `WaveVerifier` 검증 → 스토어 append → 파인튜닝 게이트. `CampaignDriver`, `UserCriteriaDriver`, `WaveReport`, `CampaignResult`, `feasibility_limits_for`, **`is_feasible_search`/`is_deliverable`/`unknown_axes`/`deliverable_limits`**, `MapHarvestAbort`. |
 | [`genome.py`](../lpopt/search/genome.py) | **feed-일반 orbit-unit 게놈**. 벤더 `OrbitGenome`은 feed 121(=1+4·30)의 depth-1 완전 매칭(신연료 30 + 연소 30)만 표현한다. `GeneralOrbitGenome`은 burned 유닛이 다른 burned 유닛에서 셔플되는 **depth-2 소스체인**을 허용해 1+4N 격자의 임의 feed(혼합 2/3-batch 노심)로 확장한다. `graded_morph`(2종 부모 → 3종 이상 자식), `mutate`, `random_genome`, `fresh_units_from_feed`. |
 | [`construct.py`](../lpopt/search/construct.py) | 후보 풀 구성. 세 소스의 계획 비율: **엘리트 변이 ~60%**(케이스의 상위 검증 행 + 직전 웨이브 상위 예측 후보를 작은 `n_moves`로 변이, 웨이브가 갈수록 넓어짐), **유도 ~30%**, **다양성 ~10%**. `[acquisition] policy_prior`(기본 `off`)가 켜지면 각 부모의 무브 후보를 정책망이 랭킹한다. `build_pool`, `CaseContext`, `screen_e_core_band`, `build_pair_universe`. |
 | [`acquisition.py`](../lpopt/search/acquisition.py) | 인수·trust region·local search·웨이브 구성(2,685줄). 스코어링 스택은 **의도적으로 벤더의 것**이다: `build_reward_model`이 벤더 `RewardModel`을 `target_cycle` 모드로 만들고 그 `score`/`acquisition`이 `SurrogatePrediction`을 무수정 소비한다. `p_feasible`은 `Π Φ((limit−μ)/σ_total)` × 수렴확률. 목적함수별 스코어러: `score_max_cycle_min_fr`, `score_min_fr_max_cycle`, `score_min_fuel_cost`, `score_fr_boundary`, `score_flat_power`. `TrustRegion`, `ScoredPool`, `local_search`, `WaveSlot`, `rank_with_tiebreak`. |
@@ -377,6 +408,35 @@ matmul 스모크/디스크), `push`(tar-over-scp로 소스 + `data/store` + `dat
 | [`delivery.py`](../lpopt/search/delivery.py) | 납품 후보 선정. **탐색 목적함수의 일부가 아니다** — 탐색은 평탄도이고 F_r을 포함하지 않는다. 이미 존재하는 행들 위에서 "만든 평탄한 패턴 중 무엇을 인허가 검토에 넘길 것인가"라는 다른 질문에 답한다. `select_delivery`, `DeliveryCandidate`, `compliance_margin`. |
 | [`stub.py`](../lpopt/search/stub.py) | 결정론적 가짜 MASTER 평가기. `StubEvaluator`가 벤더 `PatternEvaluator` 프로토콜을 만족시켜 웨이브 디스패치/원장/재개/스토어 행/QC 카운터 전체를 실행파일·네트워크 없이 end-to-end로 돌게 한다(`produce --dry-run`, 테스트). |
 
+**두 개의 실현가능성 술어 (2026-08-29, 외부 검토 §6.4 / P0-03).** 하나였던
+`is_feasible`이 둘로 갈라졌다.
+
+| 술어 | 계약 | 쓰이는 곳 |
+|---|---|---|
+| `is_feasible_search` | **탐색 계약** — `max_pin_burnup`과 `f_xy`는 **결측이면 통과**, 나머지 게이트 축(`cbc_max`/`f_q`/`ao_abs`/`f_r`/`cyclen`)은 **결측이면 거부** | 후보 랭킹, 엘리트 풀, best-tracking, 외곽 가중, `n_feasible`, 리포트 통계 |
+| `is_deliverable` | **납품 계약** — 게이트된 **모든 축이 측정되어 있고** 전부 인허가 한계 안. `unknown_axes`가 무엇이 없는지 이름을 댄다 | 납품 판정, `delivery.json`, 검토 Phase-A 종료 기준("UNKNOWN 납품 0건") |
+
+관대한 쪽이 필요한 이유는 실제적이다 — 새 축의 첫 라벨이 도착하기 전에 엄격히 거부하면
+실현가능 집합이 0이 되어 **탐색이 굶는다**. 목적축이 바뀐 순간 스토어의 **98.2%에 `F_xy`
+라벨이 아예 없었으므로**, 엄격한 거부였다면 첫 `min_fxy` 캠페인은 **시작조차 못 했다**.
+엄격한 쪽이 필요한 이유도 실제적이다 — **측정되지 않은 인허가 축을 만족했다고 부를 수 없다.**
+`NaN == 결측 == None`은 2026-07-31에 고정된 계약이다(메모리의 행은 `None`, parquet에서
+읽어온 같은 행은 `NaN`이며 둘은 한 사실이다).
+
+**안전 실드 (Phase A-2, 2026-08-29).** 검토 §6.5 / P0-04은 "OOD 가드와 conformal 구간이
+계산·인쇄된 뒤 **무시된다**"고 지적했다. 이제 셋이 배선되어 있다.
+
+| 노브 | 값 | 효과 |
+|---|---|---|
+| `ood_policy` | `warn`(기본) / `escalate` / `reject` | 가드의 판정이 **순위**(escalate) 또는 **풀**(reject)에 도달한다 |
+| `conformal_gate` | `false`(기본) / `true` | conformal 상한이 `U_c(x) ≤ L_c` **경성 스크린**이 된다 |
+| `conformal_alpha` | 0.10(기본) | 적합된 아티팩트에 실제로 있는 α만 허용(하드 에러) |
+
+두 상태는 **웨이브 원장과 납품 도시에까지 흘러간다** — `delivery.json`의 항목마다
+`ood_flag`와 `conformal_unfit_axes`가 찍혀서, 인계받는 사람이 플래그가 붙었거나
+보정되지 않은 후보를 깨끗한 것으로 읽을 수 없다. 순위와 납품 술어 자체는 건드리지 않았고,
+**모든 기본값은 출하 동작 그대로**임을 테스트가 단언한다(`tests/test_safety_shield.py`).
+
 ### 2.7 `lpopt/policy/` — 무브-제안 정책망
 
 `lpopt.model`이 **보드**의 FOM을 예측한다면, 이 패키지는 **무브**를 채점한다:
@@ -391,7 +451,21 @@ matmul 스모크/디스크), `push`(tar-over-scp로 소스 + `data/store` + `dat
 | [`policy/train.py`](../lpopt/policy/train.py) | v1 학습·판정. 게이트가 필요한 전부가 `metrics.json`에: 헤드별 AUC, 배포 지표(256 후보 중 precision@32)를 사전등록 베이스라인 3종과 쌍체 부트스트랩 CI로 비교, parent-blocked AUC, 캘리브레이션, 홀드아웃 패밀리 3종 readout. |
 | [`policy/v2.py`](../lpopt/policy/v2.py) | v1 사후분석이 처방한 교정: (1) **현행 시대 데이터 + 현행 시대 게이트**(v1은 레거시 SA 코퍼스에서 통과했으나 균형 잡힌 ga80/paramA 무브에 전향 시험 시 parent-blocked AUC 0.492 = 우연), (2) 타깃을 개선 분율이 아닌 **정규화·클리핑된 기대 개선량**으로, (3) `d_fresh_enr_mass` 반응도 공변량. `targets`, `build_splits_v2`, `era_weights`, `scalar_features_v2`. |
 | [`policy/train_v2.py`](../lpopt/policy/train_v2.py) | v2 학습·판정(Huber 손실, 시대를 입력으로 양 시대 학습 + 현행 시대 손실 질량 절반 재가중, 게이트는 홀드아웃 현행-시대 fold **하나뿐**). |
-| [`policy/scorer.py`](../lpopt/policy/scorer.py) | 제안 시점 서빙. `scorer.score(parent, children, ctx) -> np.ndarray[n,2]`. `construct.build_pool`이 `mutate` 시점에 이미 들고 있는 `(genome, pattern)` 쌍을 그대로 받아 두 번 디코딩하지 않는다. **피처는 학습 피처여야 하며 두 번째 구현이어서는 안 된다** — 모든 서술자를 코퍼스를 만든 코드가 생산한다. `MoveScorer`, `get_scorer`. |
+
+**v2 서빙 배선 (2026-08-29, 검토 P0-01 대응).** 검토는 "최신 정책이 운영 경로에 없다 —
+서빙은 v1 전용이고 `policy_prior` 기본값도 `off`"를 최우선 결함으로 꼽았다. 그래서
+`MoveScorerV2`가 추가되고 `policy_prior`의 값 공간이 **`off` \| `fr` \| `flat` \| `both` \|
+`v1` \| `v2` \| `shadow_v2`**로 넓어졌다(`shadow_v2` = v2가 채점만 하고 선택은 하지 않는
+그림자 모드). `policy_prior_strict`는 정책 로딩 실패 시 **조용한 random 폴백을 금지**한다
+(검토 P1-05 "failover가 일부 fail-open"). 웨이브의 `selection.json`에는
+`policy_mode`/`version`/`fallback`/`shadow` 가 기록되어, 어떤 웨이브가 어떤 정책으로
+선택됐는지 사후에 세울 수 있다. **여전히 발사되지 않았다** — A/B는 사전등록 초안
+(`policy_v2_serving_ab_prereg_20260829_DRAFT.md`) 단계다.
+
+> **운영 함정 (2026-08-29 실측).** `torch` 임포트가 **matplotlib 이후**의 프로세스에서
+> 깨질 수 있다(WinError 127). 정책 A/B 덱은 **새 프로세스에서 torch 임포트를 확인**하고
+> 발사한다.
+| [`policy/scorer.py`](../lpopt/policy/scorer.py) | 제안 시점 서빙. `scorer.score(parent, children, ctx) -> np.ndarray[n,2]`. `construct.build_pool`이 `mutate` 시점에 이미 들고 있는 `(genome, pattern)` 쌍을 그대로 받아 두 번 디코딩하지 않는다. **피처는 학습 피처여야 하며 두 번째 구현이어서는 안 된다** — 모든 서술자를 코퍼스를 만든 코드가 생산한다. `MoveScorer`, **`MoveScorerV2`**, `get_scorer`. |
 
 ### 2.8 `lpopt/design/` — 파라메트릭 연료설계 생산 체인
 
@@ -429,6 +503,9 @@ spec.FuelDesign            5축 설계 + 안정 MASTER alias 레지스트리
 | [`tools/fit_map_calibration.py`](../lpopt/tools/fit_map_calibration.py) | `map_calibration.json` 적합. 평탄도 목적함수 실행의 **선행조건**(없으면 F_r 안전게이트의 편향 보정이 무력화된다). |
 | [`tools/audit_c2_split.py`](../lpopt/tools/audit_c2_split.py) | 평탄도 프로그램 판정 스플릿 감사/무효화/재생성(`--invalidate`는 판정을 `S2.json`에 각인). |
 | [`tools/debug_panel.py`](../lpopt/tools/debug_panel.py) | 챔피언을 MASTER 검증 진실에 대해 **중성자물리 단위**로 채점. "합성 검증점수 0.76 / 케이스내 Spearman 0.88"은 `cbc_max` 42 ppm, `cyclen` 4.4 EFPD 오차와 완벽히 양립하므로, 인허가 엔지니어가 논쟁하는 단위로 매번 확인한다. |
+| [`tools/backfill_fxy.py`](../lpopt/tools/backfill_fxy.py) | **`f_xy`/`f_xya` 소급 라벨**(881줄). `scan`(runs 트리를 걸으며 MASTER 작업 디렉터리당 CSV 1행) / `apply`(그 CSV를 `records.parquet`에 조인해 두 nullable 컬럼을 채움). **두 반쪽이 나뉜 이유**: `scan`은 캠페인 박스(HOST_199)로 배송해 ~620 MB의 MAS_OUT 대신 ~100 kB CSV만 회수하기 위한 것이라 **스토어를 건드리지 않고 pandas/pyarrow/numpy도 임포트하지 않는다**. **어느 작업 디렉터리가 평형 최종 사이클인가**를 자기 자신과 형제들의 증거로 판정하고(`nonfinite` / `no_mas_sum` / `no_digest` / `first_cycle` …), 최종임이 증명되지 않으면 이유와 함께 기록하되 **쓰지 않는다** — 로컬 runs 트리는 실패한 `rmtree`가 남긴 다른 사이클로 가득하다(400디렉터리 표본의 54%가 체인의 **첫** 사이클이었다). 조인 키는 `record_id`가 아니라 **`Pattern.digest16`**(작업 디렉터리 이름). |
+| [`tools/quarantine_campaign.py`](../lpopt/tools/quarantine_campaign.py) | **라벨이 틀렸음이 확정된 캠페인의 스토어 행 격리**(280줄). 하네스 결함은 **형식이 멀쩡하고 수렴까지 한** 행을 만들 수 있다 — 아무도 설계하지 않은 노심을 기술하면서. 첫 사례가 `intervention_HGD569_f125`(§3.3). `records.parquet`에는 `valid=False` + `failure=<reason>`을 찍고 **행은 절대 삭제하지 않는다**: `valid=False`가 "이 행은 증거가 아니다"라는 스키마 자신의 표현이고, 행을 남겨 두어야 `record_id`가 점유된 채로 있어 **교정 재계산이 경쟁 행이 아니라 제자리 업그레이드로 도착**한다. `steps.parquet`에서는 해당 엣지를 **삭제**한다(플래그 컬럼은 `cmd_corpus`의 스키마 검사가 거부한다). `--unconverge`는 `converged=False`도 함께 찍는다(엘리트·학습 필터가 `valid`를 안 보기 때문). 기본은 **dry-run**. |
+| [`tools/repair_parent_ids.py`](../lpopt/tools/repair_parent_ids.py) | **매달린 `parent_record_id` 외래키 수리**(351줄). 세 생산자가 이 컬럼에 **미검증 풀 후보의 `record_id`**를 찍고 있었다 — 서로게이트로 채점되고 MASTER에 닿지도 못한 채 버려진 보드의 잘 형성된 64-hex 프리이미지라 그런 행은 스토어에 없다(`acquisition.local_search`의 `current` 보드 27/2,200 해소 · `CampaignDriver._lean_local_search` · `prev_top` 864/1,219 해소). **원인은 `verify.lineage_anchor`에서 이미 고쳐졌고** 이 도구는 이미 쓰인 행에 대한 **일회성 패스**다. 부모 보드가 다른 키(예: 자기 셀에 사는 교차-셀 도너) 아래 살아 있을 때만 복구 가능하므로 `digest_of_packed`(셀 간 불변인 패턴 전용 16-hex 키)로 먼저 시험하고, 복구 불가능한 것은 `--null-phantom`으로 null 처리한다(팬텀 2,528건). 기본은 **dry-run**. |
 | [`tools/probe_assets.py`](../lpopt/tools/probe_assets.py) | 덱이 스테이징할 모든 `(pair, feed)`를 MASTER 없이·스테이징 없이 해석. `produce --dry-run`은 `stage_decks=False`라 `MissingCaseAssetError` 가드를 통째로 건너뛰어 모든 체인이 "통과"하므로 이 도구가 따로 필요하다. |
 
 `lpopt/tools/`의 모든 모듈은 `python -m lpopt.tools.<name>`로 실행 가능하고 **멱등**이다
@@ -535,6 +612,8 @@ spec.FuelDesign            5축 설계 + 안정 MASTER alias 레지스트리
 | [`rule_construct.py`](../rule_construct.py) / [`rule_acid_run.py`](../rule_acid_run.py) | **규칙만으로 LP 구성**(북극성의 산성 시험). 검증된 채굴 규칙만으로 완전·합법·신규 feed-121 패턴을 만든다 — 구성 루프 안에 서로게이트도, MASTER도, 엘리트 시딩도 없다. 러너가 정확히 8회 MASTER 체인으로 "100콜 캠페인 결과에 얼마나 근접하는가"를 잰다. |
 | [`cbc_wall.py`](../cbc_wall.py) | 고농축 영역을 실제로 닫는 제약이 무엇인지 기존 라벨로 검정(가정은 F_r, 실측 결론은 붕산 농도 `CBC_max`). |
 | [`pinbu_wave.py`](../pinbu_wave.py) / [`pinbu_analyze.py`](../pinbu_analyze.py) | **측정된 핀연소도** 재평가 웨이브. `max_pin_burnup`은 평형 러너를 `enable_pin_burnup=True`로 만들 때만(`%EDT_OPT ipin=1` PPI 편집) 기록되는데 캠페인 노심에는 측정치가 0개였다. 납품 판정 = 측정 `max_pin_burnup` ≤ 80 GWd/tU, 인수 게이트 78은 병기. |
+| [`intervention_wave.py`](../intervention_wave.py) | **Campaign A — Causal Move Atlas**(1,832줄). 08-15 어블레이션 웨이브가 **한 셀**(`T6_T4/f121/paramA`)에서 답한 방향 질문을 `F_xy` 프런티어 **전체**에 묻는다: 한 부모에서 어떤 무브와 그 **대칭 형제**를 함께 계산해, 부모 난이도가 차분으로 사라지고 피처의 부호가 관측 상관이 아니라 **검증**된다. 프로그램 최초로 **1차 응답이 `F_xy`인 캠페인**이라 모든 체인이 `harvest_maps=True`(→ `keep_success`)로 돌고 값은 `lpopt.data.fxy`에서만 온다(여기서 재유도하지 않는다). **재사용, 중복이 아니다** — 열거자·주석기·러너·키트빌더는 전부 `ablation_wave`의 것을 임포트하며 `ablation_wave.py`는 **편집하지 않는다**(그 sha256이 08-15 사전등록에 못박혀 있고, HOST_199에서 실제로 돈 아티팩트다). `analyze`/`corpus` 서브커맨드가 효과표와 정책 코퍼스 증분을 낸다. |
+| [`readout_axis.py`](../readout_axis.py) | **목적축 인식 프런티어 판독**(314줄). 최상위 판독기들은 `F_r`을 하드코딩하고 있었다 — 스토어 컬럼 `f_r`, 인허가 한계 `1.55`, 헤드라인 단어 `F_r`. 이 모듈이 그 셋을 **하나의 해결된 객체**로 만들어, 같은 판독을 어느 축으로도 읽을 수 있게 하고 **헤드라인이 실제로 계산하지 않은 축의 이름을 댈 수 없게** 한다. **기본값은 불변** — `--deck`/`--objective` 없이, 그리고 모든 `min_fr*` 덱에서 `resolve_axis`는 `F_R_AXIS`(label `"F_r"`, limit `1.55`)를 돌려주므로 기존 출력이 **바이트 단위로 재현**된다. `min_fxy` 덱만 축을 옮긴다. **미라벨 규칙**: `F_xy`는 스토어의 ~92%에 없으므로(`MAS_OUT`에서 파싱되지 `MAS_SUM`이 아니다) `split_labelled`가 미라벨 행을 **드롭하고 그 수를 반환**하며 `unlabelled_note`가 헤드라인 블록에 렌더한다 — 조용히 드롭하면 수확된 8%만의 "프런티어"를 보고하게 된다. |
 | [`regen_chain.py`](../regen_chain.py) | 스토어 장전모형의 **cy1 → 평형 전체 체인** 재생성. 모든 하네스가 FOM 수확 후 케이스 디렉터리를 purge하므로 디스크에는 대개 마지막 사이클만 남고, 다주기 문제에는 시퀀스가 필요하다. |
 | [`realize_lat1600.py`](../realize_lat1600.py) | CBC 게이트 1550→1600 완화 결정에 따라 선정된 저-FF 격자 4종(Y1–Y4)을 실 생산 paramA 패키지로 실현. |
 | [`calib_multitype_hgd569.py`](../calib_multitype_hgd569.py) · [`tripletype_midpick.py`](../tripletype_midpick.py) | 3종 신연료 캠페인의 교정 셀 선정과 중간 타입 선정(등록된 절차를 기계적으로 실행). |
@@ -676,12 +755,22 @@ flowchart LR
 > 제외되어 있다(실측: `data/store` 2.1 GB, `data/models` 5.6 GB, `data/design` 3.8 GB).
 > [`data/README.md`](../data/README.md)가 `.gitkeep` 역할을 하며 기대 레이아웃만 기술한다.
 > `runs/`(캠페인 실행 산출물, 171개 항목)도 마찬가지로 제외된다.
+>
+> **저장 위치 정책 (2026-08-30).** 로컬 `C:`가 포화되어 `runs/`는 **대용량 드라이브(`E:`)로의
+> 정션**이고 스토어 백업·모델 아카이브도 그쪽에 산다. 생산 PC에도 같은 규칙이 굳었다 —
+> **발사 전 `C:` 여유 ≥ 30 GB**, **수확 후 run 디렉터리는 즉시 이관**. 근거는 실측이다:
+> `F_xy` 시대 생산 라운드의 run 디렉터리가 **31.8 GB**(≈30 MB/체인 — 최종 사이클 맵 보존
+> 때문에 사전등록 추정 9.5 MB의 3배)였고, 디스크가 0.2 GB로 떨어지자 캠페인 프로세스가
+> **traceback도 rc 파일도 남기지 못하고 소멸**했다(로그 기록 자체가 실패). 경로만 조금 다른
+> 두 번째 증상은 재개 시 `torch`의 `c10.dll` 접근위반(0xc0000005)이었다.
 
 ```text
 data/
 ├─ README.md                     # 유일하게 버전관리되는 파일
 ├─ store/                        # 통합 스토어 (~2.1 GB)
-│  ├─ records.parquet            # 1행 = 1개 고유 LP 평가. 74,657행 × 39열 (2026-08-20 스냅샷 실측)
+│  ├─ records.parquet            # 1행 = 1개 고유 LP 평가. 76,693행 (2026-08-31 실측)
+│  │                             #   LATE 컬럼에 f_xy / f_xya 추가 (2026-08-29) — 라벨 7,667행
+│  │                             #   max_pin_burnup 40,870행
 │  ├─ maps.npz                   # EDIT5 집합체 맵 float16 스택 (~211 MB)
 │  │                             #   <record_id>          레거시 4-plane(BOC/EOC 끝점)
 │  │                             #   <record_id>__traj    [n_steps, 3, 9, 9] 연소 궤적
@@ -739,7 +828,7 @@ FOM: `f_r`, `f_q`, `cbc_max`, `cbc_boc`, `cbc_kind`, `cyclen`, `ao_abs`, `cycle_
 
 ## 6. 테스트
 
-[`tests/`](../tests/) — **95개 테스트 파일, 1,837개 테스트 함수**(실측).
+[`tests/`](../tests/) — **104개 테스트 파일, 2,135개 테스트 함수**(2026-08-31 실측).
 `pytest` 설정은 [`pyproject.toml`](../pyproject.toml)의 `testpaths = ["tests"]`.
 픽스처는 `tests/data/`(예: `mas_ppi_k10_fixture.txt`, `v5_golden_rows.parquet`).
 
@@ -770,6 +859,18 @@ torch 없이 돌아가는 층과 torch가 필요한 층이 나뉘어 있다 — 
 | 설계 체인 | `test_design.py`, `test_geomcheck.py` |
 | 오케스트레이션 | `test_autoeng.py`, `test_multi_pc.py`, `test_ablation_resume.py`, `test_regen_chain.py` |
 | 리포트·진단 | `test_report_feasibility.py`, `test_debug_panel.py`, `test_hires_bundle.py` |
+| **`F_xy` 축** | `test_fxy.py`(MAS_OUT 파서·최종사이클 판정), `test_fxy_head.py`(직접 헤드·σ-bar), `test_backfill_fxy.py`(scan/apply·digest 조인) |
+| **안전 실드·납품** | `test_safety_shield.py`(OOD 정책 3종·conformal 게이트, **기본값 = 출하 동작** 단언), `test_delivery.py`, `test_report_feasibility.py` |
+| **계보·격리** | `test_lineage_anchor.py`(부모 앵커 수정), `test_repair_parent_ids.py`, `test_quarantine_campaign.py`, `test_deck_alias_guard.py`(2-char alias 가드) |
+| **개입 웨이브** | `test_intervention_wave.py` |
+
+**08-29~31에 추가된 테스트가 지키는 불변식** — `MAS_OUT` 작업 디렉터리가 평형 **최종
+사이클**임을 스스로 증명하지 못하면 라벨로 쓰이지 않는다 · **서빙 피처화 패리티**(실제 스토어
+50행, ga80 25 + paramA 25, 1e-6 이내 — 수정 전 코드를 주입하면 `['g_sym_class']`로 FAIL) ·
+`f_xy` σ가 **막힌 상태에서 프록시 σ가 대신 서빙된다** · 웨이브 체크포인트 재개가 **σ-bar를
+잃지 않는다**(`FxySigmaBarLost`) · 덱에 쓰이기 전에 `%LPD_SHF`의 alias가 **2글자**임을
+`validate_reload_deck`이 확인한다(체인 1에서 fail-fast) · 안전 실드의 **모든 기본값이 기존
+동작**이다.
 
 테스트가 지키는 **불변식** 예시: 스토어 쓰기의 원자성, 재학습 전후 서빙 결과의
 train/serve 패리티, 옵션 헤드가 꺼졌을 때의 체크포인트 바이트 동일성, 스플릿 재생성 시

@@ -84,10 +84,14 @@ FORBIDDEN_COLUMNS: frozenset[str] = frozenset({
     "d_map_cov",
     "improved_fr", "improved_flat", "improved_cbc", "improved_cyclen",
     "feasible_child", "both_converged", "in_cyclen_band_child",
+    # F_xy, the F_xy-era primary response (corpus columns added 2026-08-30).
+    # Listed on the same footing as the other outcomes so a v3 F_xy head cannot
+    # reach its own label through the scalar block.
+    "child_f_xy", "d_f_xy", "improved_fxy",
     # parent FOMs: available at proposal time but excluded by decision (above)
     "parent_f_r", "parent_cyclen", "parent_cbc_max", "parent_f_q",
     "parent_ao_abs", "parent_node_peak", "parent_map_cov", "parent_converged",
-    "feasible_parent",
+    "parent_f_xy", "feasible_parent",
     # provenance: not available for a move the policy invents
     "lineage_source", "campaign", "generator", "sa_accepted", "source_move",
     "single_move_evidence", "dataset_split",
@@ -308,9 +312,56 @@ class PatternCache:
                    globals_names=[str(g) for g in z["globals_names"]])
 
 
+def corpus_provenance(library_id: str) -> tuple[str, str]:
+    """``(dataset, sym_class)`` the POLICY CORPUS featurized ``library_id`` with.
+
+    This is the single definition of the policy's provenance conditioning: it is
+    called by :func:`build_pattern_cache` (train) and by
+    ``lpopt.policy.scorer.MoveScorer._board`` (serve), so the two cannot drift.
+    It is deliberately NOT :func:`..model.featurize.serve_provenance` — the two
+    halves have different owners:
+
+    * ``dataset`` — the corpus took this from each step row's own ``dataset``
+      column, i.e. the STORE's real value (``mine_policy_corpus`` line "dataset":
+      ``children["dataset"]``).  Only A/not-A reaches the encoder
+      (``g_dataset_flag = 0.0 if dataset == "A" else 1.0``), and no library mixes
+      the two, so the row-wise value is exactly
+      :func:`~..model.featurize.serve_provenance`'s answer:  ``"A"`` for the
+      extract_a libraries, ``"P"`` for the campaign ones.  Serving used
+      :func:`~..model.featurize.library_provenance` here, which predates
+      ``dataset="P"`` and answers ``"A"`` for paramA — so every paramA proposal
+      was scored with ``g_dataset_flag`` 0.0 against the 2,401 paramA corpus rows
+      that trained at 1.0 (2026-08-29 forensic; measured up to **0.087 absolute**
+      P(improve) drift on ``gate_cur`` paramA rows, see below).  THIS is the half
+      that was broken and is fixed here.
+
+    * ``sym_class`` — the corpus did NOT take this from the row.  Every ga80
+      pattern in the cache was built with ``library_provenance(lib)[1]``, i.e.
+      ``"free69"`` -> ``g_sym_class`` 0.0, even though 3,865 of the 3,930 ga80
+      corpus rows carry ``sym_class="rot61"`` in the store.  Train and serve were
+      CONSISTENTLY wrong there, so the shipped ``data/models/policy_v2``
+      checkpoint learned against 0.0 and serving must keep feeding it 0.0.
+      Switching this half to the store truth would silently mis-feed the shipped
+      ensemble; it is a **corpus** defect, not a serving one.
+
+    .. admonition:: v3 prerequisite
+
+       ``data/policy/steps.parquet`` must be RE-MINED with true provenance —
+       ``sym_class`` read from the store row like ``dataset`` already is — and
+       the pattern cache rebuilt, before a v3 policy is trained.  At that point
+       this function collapses into
+       :func:`~..model.featurize.serve_provenance` and can be deleted.  Until
+       then, changing it invalidates ``data/models/policy_v2``.
+    """
+    from ..model.featurize import library_provenance, serve_provenance
+
+    lib = str(library_id)
+    return serve_provenance(lib)[0], library_provenance(lib)[1]
+
+
 def _sym_class(library_id: str) -> str:
-    from ..model.featurize import library_provenance
-    return library_provenance(str(library_id))[1]
+    """Deprecated alias — use :func:`corpus_provenance`."""
+    return corpus_provenance(library_id)[1]
 
 
 def build_pattern_cache(steps: pd.DataFrame, *,
@@ -341,6 +392,18 @@ def build_pattern_cache(steps: pd.DataFrame, *,
                 steps["library_id"], steps["dataset"], strict=True):
             ctx.setdefault(str(pat), (int(feed), str(pair), str(lib), str(ds)))
 
+    # ``corpus_provenance`` is what serving will use, so it must reproduce the
+    # row's own ``dataset`` here — only A/not-A reaches the encoder, so that is
+    # the equivalence to hold.  A library that ever mixed the two would make the
+    # per-row and per-library answers differ; fail loudly rather than train on a
+    # featurization the serve path cannot reconstruct.
+    for _feed, _pair, lib, ds in ctx.values():
+        if (ds == "A") != (corpus_provenance(lib)[0] == "A"):
+            raise ValueError(
+                f"library {lib!r} carries dataset={ds!r} but corpus_provenance "
+                f"derives {corpus_provenance(lib)[0]!r}; serving could not "
+                f"reconstruct this row's g_dataset_flag")
+
     # add the mirror of every pattern under the same context
     mirror_of: dict[str, str] = {}
     for pat in list(ctx):
@@ -359,9 +422,10 @@ def build_pattern_cache(steps: pd.DataFrame, *,
     slots = np.zeros((len(patterns), enc.n_channels, 69), np.float16)
     gvecs = np.zeros((len(patterns), len(enc.globals_names)), np.float32)
     for i, pat in enumerate(patterns):
-        feed, pair, lib, ds = ctx[pat]
+        feed, pair, lib, _ds = ctx[pat]
+        dataset, sym_class = corpus_provenance(lib)
         inp = RecordInputs(pattern=pat, feed=feed, case_pair=pair,
-                           library_id=lib, sym_class=_sym_class(lib), dataset=ds)
+                           library_id=lib, sym_class=sym_class, dataset=dataset)
         slot_vals = enc.encode_slot_matrix(inp, fuel)
         slots[i] = slot_vals.astype(np.float16)
         gvecs[i] = enc._encode_globals(inp, fuel, slot_vals)

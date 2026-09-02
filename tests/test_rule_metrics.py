@@ -427,7 +427,11 @@ def _flat_run_dir(tmp_path, rids):
                    "f_r": 1.50, "cbc_max": 1400.0, "f_q": 2.30, "ao_abs": 0.20,
                    "cyclen": 625.0, "n_cycles": 11.0, "feed": 121,
                    "pattern": "F:K1:0", "node_peak": 1.42, "map_cov": 0.30,
-                   "max_pin_burnup": 68.0}
+                   # both gated licensing axes MEASURED: the report's best-LP
+                   # table is the DELIVERABLE set (review 2026-08-29 §6.4), and
+                   # flat_power gates F_xy at 1.65 by default, so an unmeasured
+                   # f_xy would leave the table (and this L-03 column) empty.
+                   "max_pin_burnup": 68.0, "f_xy": 1.60}
             fh.write(json.dumps({"wave": 0, "slot": "exploit", "origin": "elite",
                                  "record_id": rid, "status": "converged",
                                  "record": rec}) + "\n")

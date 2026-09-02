@@ -64,6 +64,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from ..data.compliance import assert_mono_anchor, is_cross_anchor
+from ..safelog import safe_logger
 
 
 # --------------------------------------------------------------------------- #
@@ -519,7 +520,9 @@ class FrBoundaryOuterRace:
         )
         self.driver_factory = driver_factory or self._default_driver_factory
         self.backend_factory = backend_factory
-        self._log = log or (lambda m: print(m))
+        # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+        # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+        self._log = safe_logger(log)
         self.retrain_gate_callback = retrain_gate_callback
         self.model_reload = model_reload
 

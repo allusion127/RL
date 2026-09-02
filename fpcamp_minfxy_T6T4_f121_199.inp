@@ -1,0 +1,213 @@
+################################################################################
+# lpopt deck — min_fxy WAVE CAMPAIGN, T6_T4 / feed 121  |  BOX 199
+#   `python -m lpopt optimize --input fpcamp_minfxy_T6T4_f121_199.inp`
+#
+# CLONED FROM fpcamp_minfr_T6T4_199.inp.  Read that deck for the cell rationale
+# (operating-point re-screen R2, contrast +0.075, the 1600 CBC decision, the
+# elite-pool bootstrap history).  Only the OBJECTIVE block differs, and this
+# header states exactly what changed and why.
+#
+# THE CHANGE (user decision 2026-08-29, binding):
+#   the optimisation target moves F_r -> F_xy, with the hard limit F_xy <= 1.65.
+#   F_r <= 1.55 STAYS a constraint.
+#
+#   * objective            min_fr_max_cycle -> min_fxy
+#   * minfr_lambda 400.0   -> minfxy_lambda 1000.0
+#   * f_xy_limit = 1.65    NEW — the PRIMARY objective's hard gate
+#   * minfxy_pin_bu_limit  NEW — 78.0, the same model-margin haircut min_fr used
+#   * f_r_limit = 1.55     UNCHANGED, now a pure CONSTRAINT
+#   * [verify] harvest_maps stays true and is now LOAD-BEARING, not report-only
+#
+# WHY F_r IS KEPT AS A CONSTRAINT (design fxy_switch_20260829 §1.3, MEASURED):
+#   the two axes disagree on real cores.  At E1_E2/f109, 18 of the 52 cores that
+#   pass F_r <= 1.55 FAIL F_xy <= 1.65; in the T6_T4 regen population, 41 of 213
+#   do.  The reverse also happens (5 / 8 / 58 cores respectively).  So neither
+#   axis implies the other: dropping F_r would RELAX the feasible set, and F_r
+#   alone cannot certify F_xy.
+#
+# WHY harvest_maps MUST STAY TRUE:
+#   F_xy is MASTER's FXYP and is ABSENT from MAS_SUM — the only source is the
+#   final equilibrium cycle's MAS_OUT.  That file survives only because
+#   harvest_maps forces the verifier's keep_success (verify.WaveVerifier), which
+#   is why there is no separate keep_success deck key to set.  The campaign
+#   REFUSES to construct with harvest_maps = false (campaign.CampaignDriver), for
+#   the same reason flat_power does: an objective that cannot score its own
+#   labels would silently rank on nothing.
+#
+# READ BEFORE CLAIMING A RESULT (design §3.6):
+#   the champion below (data/models/s1e) has NO `predict_fxy` head.  The
+#   acquisition therefore ranks candidates on the INTERIM PROXY
+#   `F_xy ~ 1.1221*F_r - 0.0831` with an inflated sigma, and every wave's
+#   selection.json records `fxy_source = "proxy"`.  What this run may claim:
+#     * "N converged cores, M of them MEASURED at F_xy <= 1.65"  (a fact)
+#     * the fitted per-cell (a, b) of the proxy, validated against the 714
+#       retro-labelled T6_T4 rows
+#   What it may NOT claim:
+#     * "F_xy was optimised" — the objective saw a regression on F_r, not F_xy.
+#       The honest phrasing is "F_r-surrogate search with F_xy measured after
+#       the fact".
+#
+# PRE-REGISTERED BASELINE (design §2.2, MEASURED on this exact cell):
+#   the F_r record core (F_r 1.4797 @ 623.6 EFPD) measures F_xy = 1.5829, but the
+#   population MINIMUM F_xy is a DIFFERENT core: F_xy 1.5491, F_r 1.5018,
+#   cyclen 621.3.  The question this campaign answers is whether min_fxy beats
+#   1.5491.  Anything above it is a null result and is publishable as one.
+#
+# SUCCESS
+#   PRIMARY   a MASTER-verified DELIVERABLE core (every gated axis MEASURED)
+#             with F_xy < 1.5491 and F_r <= 1.55 at the 1600 CBC gate.
+#   SECONDARY the per-cell F_xy/F_r prior refitted on this campaign's own labels.
+#   NULL      no core below 1.5491 in 100 calls — the F_r-surrogate search does
+#             not reach the F_xy frontier, which is the case FOR the f_xy head.
+################################################################################
+
+[flow]
+title = "min_fxy — T6_T4/f121, F_xy <= 1.65 primary, F_r <= 1.55 constraint, champion s1e, CBC gate 1600"
+output_root = "runs"
+random_seed = 1111
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199 path
+workers = 8
+use_all_cores = false
+host_reserve = 1
+timeout = 3600
+max_cycles = 16
+consecutive = 2
+
+[verify]
+package_root = "data/design/package"   # the paramA package (NOT FEASIBLE_PACKAGE)
+harvest_maps = true                    # LOAD-BEARING under min_fxy: it forces the
+                                       # verifier's keep_success, which is the only
+                                       # reason the final cycle's MAS_OUT (and so
+                                       # f_xy / f_xya) survives to be harvested.
+                                       # The campaign refuses to start without it.
+
+[case]
+mode = "fixed"
+pair = "T6_T4"      # R2 of the operating-point re-screen: contrast +0.075, pred elite CBC 1383, cyclen 612-630
+feed = 121
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1e"   # 6th champion (2026-08-15): gate PASS vs s1d, T6_T4 train 726.
+                                # NO predict_fxy head — see the PROXY note above.
+cond_schema = "v6b"
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+device = "cpu"
+inference = "local_cpu"
+library_id = "paramA"
+store_dir = "data/store"
+
+[search]
+pool_size = 2500
+pool_cap = 100000
+elite_frac = 0.65
+guided_frac = 0.10
+diversity_frac = 0.25
+beam_width = 4
+completions_per_prefix = 8
+n_moves_early = 2
+n_moves_late = 5
+elite_top_k = 32
+near_miss_f_r = 1.50         # report-only, gates nothing
+near_miss_top_k = 8
+dry_run_pool_size = 400
+
+[search.trust_region]
+enabled = true
+feed_step = 4
+e_core_band = 0.10
+n_min = 30
+promote_after = 16
+frontier_sigma_inflation = 1.5
+frontier_slots_per_wave = 1
+
+[search.local_search]
+top_m = 32
+neighbors = 48
+depth = 2
+max_predictions = 1500
+n_moves = 1
+
+[acquisition]
+objective = "min_fxy"
+budget = 100
+wave_size = 8
+exploit = 5
+explore = 2
+control = 1
+reserve = 4
+n_waves = 12
+tau0 = 0.30
+hamming_min = 4
+exploit_verified_hamming = 2
+tie_epsilon = 0.1
+finetune_new_weight = 4
+risk_z = 0.25
+
+# --- the objective ------------------------------------------------------------
+minfxy_lambda = 1000.0       # exploit scalar = cyclen_LCB - 1000 * F_xy_UCB, i.e.
+                             # a 0.01 F_xy reduction is worth a full 10 EFPD, so
+                             # F_xy strictly dominates and the cell's ~18 EFPD
+                             # spread only orders near-equal-F_xy candidates.
+                             # NOTE this is NOT the min_fr deck's 400: that value
+                             # was a deliberate anti-slide haircut sized against a
+                             # MEASURED failure (r4/r5 sliding to cyclen 617-619
+                             # to buy 0.01 F_r).  No such measurement exists for
+                             # F_xy yet, so this starts at the design default and
+                             # is re-fitted from THIS campaign's own slide, not
+                             # inherited from the F_r one.
+minfxy_pin_bu_limit = 78.0   # LEU+ 80 minus the 2.0 model margin of the pin head
+                             # (the same haircut min_fr used).  Delivery is judged
+                             # at the licensing 80 on the MEASURED value.
+
+# --- feasibility: F_xy primary + the four carried-over axes -------------------
+f_xy_limit = 1.65            # <<< THE 2026-08-29 DECISION.  Primary objective's
+                             # hard gate AND the delivery gate.
+f_r_limit = 1.55             # licensing limit (delivery.py LICENSING_FR_LIMIT).
+                             # Now a pure CONSTRAINT — it no longer orders rows.
+cbc_limit = 1600.0           # the 2026-08-11 program decision; this cell exists
+                             # because of the 1550..1600 corridor, so any
+                             # comparison against a pre-2026-08-11 result must be
+                             # re-screened.
+f_q_limit = 2.41
+ao_abs_limit = 0.30
+
+# --- report-only cycle readouts (gate NOTHING) --------------------------------
+cycle_target_efpd = 633.0
+cycle_tolerance_efpd = 5.0
+# minfxy_cyclen_lo / minfxy_cyclen_hi are DELIBERATELY unset: cyclen stays the
+# secondary tie-break, exactly as it was under min_fr_max_cycle.  Setting both
+# would promote it to a hard two-edge constraint.
+
+# --- wave online-update gate --------------------------------------------------
+replay_size = 512
+finetune_epochs = 3
+holdout_size = 128
+gate_epsilon = 0.02
+gate_skill_objective = 0.10
+gate_skill_halt = 0.0
+
+# --- stopping -----------------------------------------------------------------
+min_waves_before_stop = 6
+no_improve_waves = 3
+dry_run_replay_size = 64
+dry_run_finetune_epochs = 1
+
+[produce]
+store_dir = "data/store"
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []
+
+[constraints]
+# SDM/MTC pre-delivery gate — carried unchanged (a licensing-chain property, not
+# a search property).  Report-only.  NOTE this section is the SDM/MTC knob
+# surface ONLY: f_xy_limit lives in [acquisition] next to f_r_limit / cbc_limit,
+# which is where the axes it joins have always lived.
+mtc_enable = true
+sdm_enable = false
+post_verify_top_k = 5

@@ -45,9 +45,9 @@ from .train import (
     precision_at_k, _boot_ci,
 )
 from .v2 import (
-    EVAL_LABEL, NEW_SCALARS, PolicyStepsV2, TARGET_CLIP, build_splits_v2,
-    era_weights, load_universe_v2, scalar_features_v2, split_summary_v2,
-    targets,
+    CURRENT_ERA_LIBRARIES, EVAL_LABEL, NEW_SCALARS, POLICY_SCHEMA_V2,
+    PolicyStepsV2, TARGET_CLIP, build_splits_v2, era_weights, load_universe_v2,
+    scalar_features_v2, split_summary_v2, targets,
 )
 
 #: Probe size of ``autoeng``'s PROBE stage (``Target.probe_budget = 8``).  The
@@ -655,6 +655,11 @@ def main(argv: Sequence[str] | None = None) -> int:
              "delta_channels": [cache.channels[i] for i in delta],
              "scalar_names": scalar_names, "policy_version": "v2",
              "protocol": args.protocol,
+             # The serving stamp MoveScorerV2 refuses to load without: which
+             # feature contract, which era definition, which corpus.
+             "policy_schema": POLICY_SCHEMA_V2,
+             "era_libraries": list(CURRENT_ERA_LIBRARIES),
+             "corpus_sha256": manifest["corpus_sha256"],
              "target_clip": TARGET_CLIP}, indent=2, sort_keys=True))
         members.append({k2: v for k2, v in meta.items() if k2 != "history"})
         print(f"  [seed {seed}] params={meta['n_params']:,} "

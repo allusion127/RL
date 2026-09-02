@@ -62,7 +62,7 @@ BASE = Path(__file__).resolve().parent
 #: The frozen batch staged by score_and_stage.py (scratchpad rules dir).
 DEFAULT_CANDIDATES = Path(
     r"C:\Users\USER\AppData\Local\Temp\claude"
-    r"\c--Users-USER-Desktop-CT-RPL-2-Project-KNF-LEU------------------2026-2---"
+    r"\USER"
     r"\8888f052-fa4d-46f0-a439-ef3441b3b061\scratchpad\rules\acid_batch"
     r"\candidates.json")
 

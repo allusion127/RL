@@ -29,6 +29,8 @@ import pandas as pd
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
+import readout_axis as RA                                     # noqa: E402
+
 CAMPAIGN = "ablation_1move_T6T4"
 LINEAGE_SOURCE = "ablation_paramA"
 CELL = "T6_T4/f121/paramA"
@@ -88,6 +90,8 @@ def build_wave_steps(campaign: str | None = None,
 
 
 def cmd_corpus(args) -> int:
+    import mine_policy_corpus as M
+
     new = build_wave_steps(args.campaign,
                            None if args.lineage == "native" else args.lineage)
     print(f"[corpus] mined {len(new)} wave edges")
@@ -100,8 +104,11 @@ def cmd_corpus(args) -> int:
     missing = set(existing.columns) - set(new.columns)
     extra = set(new.columns) - set(existing.columns)
     if missing or extra:
-        raise SystemExit(f"schema drift - missing {sorted(missing)} "
-                         f"extra {sorted(extra)}")
+        raise SystemExit(
+            f"schema drift - missing {sorted(missing)} extra {sorted(extra)}"
+            + ("  (the corpus predates the F_xy / burn_state columns; run "
+               "`python policy_v2_corpus.py backfill-fxy --apply` first)"
+               if extra & set(M.FXY_SCHEMA_COLUMNS) else ""))
     new = new[existing.columns]
     combined = pd.concat([existing, new], ignore_index=True)
     combined = combined.drop_duplicates(
@@ -123,12 +130,23 @@ def cmd_corpus(args) -> int:
 # --------------------------------------------------------------------------- #
 # statistics
 # --------------------------------------------------------------------------- #
-def _improving(frame: pd.DataFrame) -> dict[str, float]:
-    """Improving fractions, defined exactly as mine_policy_corpus.build_steps."""
+def _improving(frame: pd.DataFrame,
+               axis: RA.Axis = RA.F_R_AXIS) -> dict[str, float]:
+    """Improving fractions, defined exactly as mine_policy_corpus.build_steps.
+
+    ``axis`` adds the objective axis as a FOM when the corpus actually carries
+    it.  ``data/policy/steps.parquet`` is built by
+    ``mine_policy_corpus.build_steps``, which predates the F_xy switch and has no
+    ``parent_f_xy`` / ``child_f_xy`` columns, so on the F_xy axis this silently
+    contributes nothing and :func:`cmd_analyze` says so ONCE, at the top of the
+    report — a per-row "n/a" would read as "measured and zero".
+    """
     out: dict[str, float] = {}
-    for label, fom, lower_better in (
-            ("F_r v", "f_r", True), ("flat v", "node_peak", True),
-            ("CBC v", "cbc_max", True), ("cyclen ^", "cyclen", False)):
+    foms = [("F_r v", "f_r", True), ("flat v", "node_peak", True),
+            ("CBC v", "cbc_max", True), ("cyclen ^", "cyclen", False)]
+    if axis.is_fxy and f"child_{axis.key}" in frame.columns:
+        foms.insert(0, (f"{axis.label} v", axis.key, True))
+    for label, fom, lower_better in foms:
         c, p = frame[f"child_{fom}"], frame[f"parent_{fom}"]
         ok = frame["both_converged"].fillna(False).astype(bool) & c.notna() & p.notna()
         better = (c < p) if lower_better else (c > p)
@@ -255,6 +273,7 @@ def _precision_at_k(frame: pd.DataFrame, score: str, truth: str,
 def cmd_analyze(args) -> int:
     import mine_policy_corpus as M
 
+    axis = RA.axis_from_args(args)
     steps = build_wave_steps(args.campaign, args.lineage)
     conv = steps["both_converged"].fillna(False).astype(bool)
     print(f"[analyze] {len(steps)} wave edges, {int(conv.sum())} both-converged")
@@ -266,6 +285,17 @@ def cmd_analyze(args) -> int:
         print(s)
 
     # ---- §6a per-stratum table ------------------------------------------- #
+    if axis.is_fxy:
+        add(f"axis: {axis.provenance()}")
+        if f"child_{axis.key}" not in steps.columns:
+            add(f"  NOT AVAILABLE ON THIS AXIS: the lineage corpus "
+                f"(mine_policy_corpus.build_steps -> data/policy/steps.parquet) "
+                f"carries no parent/child {axis.label} column, so every table "
+                f"below is read on F_r.  These are MOVE-EFFECT measurements, not "
+                f"frontier claims; re-mining the corpus with an {axis.label} "
+                f"column is the prerequisite for reading them on the objective "
+                f"axis (design 20260829 sec. 3.5.5).")
+        add()
     add("## Per-stratum outcomes")
     add()
     rows = []
@@ -273,7 +303,7 @@ def cmd_analyze(args) -> int:
         rows.append({"move_class": cls, "fresh_radial_dir": direction,
                      "n": len(blk), "n_conv": int(blk["both_converged"]
                                                   .fillna(False).sum()),
-                     **_improving(blk)})
+                     **_improving(blk, axis)})
     strata = pd.DataFrame(rows).sort_values(["move_class", "fresh_radial_dir"])
     add(strata.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
     add()
@@ -310,7 +340,7 @@ def cmd_analyze(args) -> int:
 
     # reference arm
     ref = steps[steps["move_class"] == "rewire_swap"]
-    r = _improving(ref)
+    r = _improving(ref, axis)
     add(f"### rewire_swap x neutral (reference arm, no radial direction)")
     add(f"  n={len(ref)}  mean d_cyclen {r['mean d_cyclen']:+.4f}  "
         f"cyclen^ {r['cyclen ^']:.3f}  F_r v {r['F_r v']:.3f}  "
@@ -391,6 +421,7 @@ def main(argv=None) -> int:
     p.add_argument("--campaign", default=CAMPAIGN)
     p.add_argument("--lineage", default=LINEAGE_SOURCE)
     p.add_argument("--store"); p.add_argument("--steps")
+    RA.add_axis_args(p)
     p.set_defaults(func=cmd_analyze)
 
     args = ap.parse_args(argv)

@@ -12,7 +12,7 @@ RL = ("C:\\Users\\USER\\Desktop\\CT&RPL\\2_Project\\KNF_LEU+ "
 PKG = RL + "\\data\\design\\package"
 HGC = PKG + "\\hgc"
 SCR = ("C:\\Users\\USER\\AppData\\Local\\Temp\\claude"
-       "\\c--Users-USER-Desktop-CT-RPL-2-Project-KNF-LEU------------------2026-2---"
+       "\\USER"
        "\\8888f052-fa4d-46f0-a439-ef3441b3b061\\scratchpad")
 LAT = SCR + "\\lat1600"
 V2 = SCR + "\\lat1600_v2"

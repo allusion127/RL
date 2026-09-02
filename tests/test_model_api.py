@@ -386,35 +386,118 @@ def _train_side_mean(backend, rows) -> np.ndarray:
     return _to_surrogate(members_raw.mean(axis=0), backend.target_names)
 
 
+def _campaign_rows(reader, lib: str, n: int):
+    """Converged CAMPAIGN-written rows (``dataset == "P"``) of one live library.
+
+    This — not the 574-row historical ``extract_b`` ga80 harvest — is the
+    population the campaign serves: 18,973 ga80 + 16,316 paramA of the 74,717-row
+    store carry ``dataset="P"``, ``sym_class="rot61"``.
+    """
+    df = reader.records
+    k = df[(df["library_id"] == lib) & (df["dataset"] == "P")
+           & (df["converged"] == True)                       # noqa: E712
+           & df["pattern"].notna() & df["e_core"].notna()]
+    if k.empty:
+        pytest.skip(f"no campaign (dataset=P) {lib} rows in store")
+    return k.head(n)
+
+
 def test_serve_conditioning_reconstructs_store_provenance(tmp_path, store_fixtures) -> None:
-    """``_record_inputs`` must rebuild the store row's Dataset-B provenance, not the
+    """``_record_inputs`` must rebuild the store row's provenance, not the
     RecordInputs defaults (``dataset='A'``/``sym_class='rot61'``) that biased ga80
     inference onto the Dataset-A regime.  Encoded (cells, globals) must be identical
-    to featurizing the store row itself."""
+    to featurizing the store row itself.
+
+    The rows are the campaign-written ones (``dataset="P"``), because that is what
+    the serve path is a prediction OF — see ``featurize.serve_provenance``.  Before
+    the 2026-08-29 fix ``library_provenance`` answered ``("B", "free69")`` here and
+    flipped ``g_sym_class`` against all 18,973 ga80 training rows.
+    """
     reader = store_fixtures
     ens = _make_ensemble(tmp_path, n=1)
+    for lib in ("ga80", "paramA"):
+        backend = PosValCnnBackend.from_dir(ens, store_dir=STORE, library_id=lib)
+        for _, row in _campaign_rows(reader, lib, 12).iterrows():
+            pat = unpack_pattern(str(row["pattern"]))
+            case = CaseKey(pair=str(row["case_pair"]), feed=int(row["feed"]))
+            inp = backend._record_inputs(pat, case)
+            assert inp.dataset == str(row["dataset"]) == "P"
+            assert inp.sym_class == str(row["sym_class"]) == "rot61"
+            assert inp.e_core == pytest.approx(float(row["e_core"]), abs=1e-9)
+            c_serve, g_serve = backend.encoder.encode(inp, backend.fuel)
+            c_train, g_train = backend.encoder.encode(RecordInputs.coerce(row), backend.fuel)
+            assert np.array_equal(g_serve, g_train)      # globals byte-identical
+            assert np.array_equal(c_serve, c_train)      # cells byte-identical
+
+
+def test_serve_row_featurization_parity(tmp_path, store_fixtures) -> None:
+    """HARD GATE (2026-08-29 train/serve forensic): on 50 REAL store rows spanning
+    BOTH live libraries, the serve path (``predict``, CaseKey-based featurization)
+    and the train path (``predict_rows_raw``, each row's own provenance) must agree
+    on EVERY cond global, every cell channel, and the raw ensemble mean to 1e-6.
+
+    Draws the rows from the S1j honest holdout when that split file is present (the
+    exact 793-row slice the arm-2 adjudication used), else from the store head.
+    A synthetic ensemble is used so the gate does not depend on a champion being
+    on disk and so no physics prior / per-cell calibration can mask a featurization
+    gap — ``predict``'s raw means are then literally comparable to
+    ``predict_rows_raw``'s.
+    """
+    import json
+
+    import pandas as pd
+
+    reader = store_fixtures
+    df = reader.records
+    split_path = REPO_ROOT / "data" / "splits" / "S1j.json"
+    if split_path.is_file():
+        spec = json.loads(split_path.read_text(encoding="utf-8"))
+        val_ids = set(spec.get("val_ids") or spec.get("val") or ())
+        if val_ids:
+            df = df[df["record_id"].isin(val_ids)]
+    frames = []
+    for lib in ("ga80", "paramA"):
+        k = df[(df["library_id"] == lib) & (df["converged"] == True)   # noqa: E712
+               & df["pattern"].notna() & df["e_core"].notna()]
+        if len(k) < 25:
+            pytest.skip(f"fewer than 25 usable {lib} rows available")
+        frames.append(k.head(25))
+    rows = pd.concat(frames)
+    assert len(rows) == 50
+
+    ens = _make_ensemble(tmp_path, n=2)
     backend = PosValCnnBackend.from_dir(ens, store_dir=STORE, library_id="ga80")
-    for _, row in _ga80_feasible_rows(reader, n=12).iterrows():
-        pat = unpack_pattern(str(row["pattern"]))
-        case = CaseKey(pair=str(row["case_pair"]), feed=int(row["feed"]))
-        inp = backend._record_inputs(pat, case)
-        assert inp.dataset == "B" and inp.sym_class == "free69"
-        assert inp.e_core == pytest.approx(float(row["e_core"]), abs=1e-9)
-        c_serve, g_serve = backend.encoder.encode(inp, backend.fuel)
-        c_train, g_train = backend.encoder.encode(RecordInputs.coerce(row), backend.fuel)
-        assert np.array_equal(g_serve, g_train)      # globals byte-identical
-        assert np.array_equal(c_serve, c_train)      # cells byte-identical
+    pats = [unpack_pattern(str(p)) for p in rows["pattern"]]
+    cases = [CaseKey(pair=str(p), feed=int(f))
+             for p, f in zip(rows["case_pair"], rows["feed"])]
+
+    # (a) every cond global + every cell channel, exactly
+    g_names = list(backend.encoder.globals_names)
+    for pat, case, (_, row) in zip(pats, cases, rows.iterrows()):
+        c_s, g_s = backend.encoder.encode(backend._record_inputs(pat, case), backend.fuel)
+        c_t, g_t = backend.encoder.encode(RecordInputs.coerce(row), backend.fuel)
+        bad = [g_names[j] for j in range(len(g_names))
+               if not abs(float(g_s[j]) - float(g_t[j])) <= 1e-6]
+        assert not bad, f"cond globals differ for {row['library_id']} row: {bad}"
+        np.testing.assert_allclose(c_s, c_t, atol=1e-6)
+
+    # (b) raw ensemble mean, serve path vs row path
+    serve_raw = _to_surrogate(backend._ensemble_raw(pats, cases)[0], backend.target_names)
+    row_raw = backend.predict_rows_raw(rows)
+    np.testing.assert_allclose(serve_raw, row_raw, atol=1e-6, equal_nan=True)
 
 
 def test_train_serve_predict_parity(tmp_path, store_fixtures) -> None:
-    """HARD GATE: serving 20 ga80 K1_K2 patterns through ``predict`` equals
+    """HARD GATE: serving 20 campaign ga80 patterns through ``predict`` equals
     featurizing their store rows with the training featurizer + ensemble."""
     reader = store_fixtures
     ens = _make_ensemble(tmp_path, n=3)
     backend = PosValCnnBackend.from_dir(ens, store_dir=STORE, library_id="ga80")
-    rows = _ga80_feasible_rows(reader)
-    rows = rows[rows["feed"] == int(rows.iloc[0]["feed"])].head(20)   # one case
-    case = CaseKey(pair="K1_K2", feed=int(rows.iloc[0]["feed"]))
+    rows = _campaign_rows(reader, "ga80", 4000)
+    first = rows.iloc[0]
+    rows = rows[(rows["feed"] == int(first["feed"]))
+                & (rows["case_pair"] == str(first["case_pair"]))].head(20)
+    case = CaseKey(pair=str(first["case_pair"]), feed=int(first["feed"]))
     pats = [unpack_pattern(str(p)) for p in rows["pattern"]]
 
     serve_mean = backend.predict(pats, case, float(case.feed)).mean

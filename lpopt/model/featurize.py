@@ -32,7 +32,7 @@ import numpy as np
 
 from ..data.fuel_types import FuelLibrary, FuelVec, core_enrichment_split
 from ..data.geometry import cell_of_slot, transpose
-from ..data.schema import unpack_pattern
+from ..data.schema import SYM_CLASS, unpack_pattern
 from ..vendor.masterrl.domain import SLOTS, Pattern
 from ..vendor.masterrl.ga import _coord_slot
 
@@ -791,10 +791,90 @@ def library_provenance(library_id: str) -> tuple[str, str]:
     """``(dataset, sym_class)`` implied by a library id for inference featurization.
 
     ga80 -> ``("B", "free69")``; any Dataset A library -> ``("A", "rot61")``.
+
+    **This is the HISTORICAL-EXTRACTOR map and it is no longer what a SERVED
+    pattern must be featurized with** — see :func:`serve_provenance`, which the
+    serve path (:meth:`..model_api.PosValCnnBackend._record_inputs`) uses instead.
+    Kept byte-identical because it still answers the question it was written for
+    ("which extractor wrote this library's ORIGINAL rows") and because
+    :mod:`lpopt.policy.scorer` reads it.
     """
     if library_id == _GA80_LIBRARY:
         return "B", "free69"
     return "A", "rot61"
+
+
+#: The libraries whose store rows come from the Dataset-A extractor
+#: (:mod:`..data.extract_a`) and therefore carry ``dataset == "A"``.  Measured on
+#: ``data/store/records.parquet`` (74,717 rows, 2026-08-29) — the FULL
+#: ``(library_id, dataset)`` census is::
+#:
+#:     260624   A 29,976      ga80  B    574      legacy_a A   634
+#:     5.8_5.1  A  8,244      ga80  P 18,973      paramA   P 16,316
+#:
+#: i.e. every library outside this set is written by the GA / campaign writers
+#: (``extract_b`` -> ``"B"``, ``search.verify.outcome_to_record`` -> ``"P"``), and
+#: NO library mixes ``"A"`` with a non-``"A"`` dataset.  Stated as an exclusion so
+#: a library added later for a new campaign fails SAFE (campaign side, non-``"A"``)
+#: rather than silently claiming Dataset-A provenance.  ``tests/test_featurize.py``
+#: re-derives this set from the live store, so the constant cannot go stale
+#: unnoticed.
+_DATASET_A_LIBRARIES: frozenset[str] = frozenset({"260624", "5.8_5.1", "legacy_a"})
+
+#: ``dataset`` stamped on every row the campaign writes
+#: (``search.verify.outcome_to_record(dataset="P")``).
+SERVE_DATASET = "P"
+
+#: ``sym_class`` stamped on every row the campaign writes
+#: (``schema.SYM_CLASS``, "Symmetry class of every quarter-core record").
+SERVE_SYM_CLASS = SYM_CLASS
+
+
+def serve_provenance(library_id: str) -> tuple[str, str]:
+    """``(dataset, sym_class)`` a SERVED ``(pattern, case)`` must be featurized with.
+
+    A :class:`~..vendor.masterrl.domain.CaseKey` carries no provenance, so the
+    serve path has to reconstruct these two conditioning inputs.  The question is
+    not "where did this library's oldest rows come from" (that is
+    :func:`library_provenance`) but **"what will the store row for THIS request
+    say"** — because train/serve identity is the acceptance criterion: the
+    featurization of a training row and the featurization the campaign uses for
+    the same pattern must be the same vector.
+
+    A served pattern is a core the campaign is about to run, and the row
+    :func:`lpopt.search.verify.outcome_to_record` will write for it is stamped
+    ``dataset="P"``, ``sym_class=schema.SYM_CLASS`` unconditionally.  So:
+
+    * ``sym_class`` is ALWAYS ``"rot61"``.  It is a pure generator label, not a
+      property of the core — measured 2026-08-29, all six ``(library, dataset)``
+      populations round-trip through :func:`..data.geometry.to_cache_key` /
+      :func:`~..data.geometry.to_canonical_from_cache_key` unchanged, so no
+      pattern can be told apart by its symmetry.  ``"free69"`` appears on exactly
+      574 store rows (0.77%), the historical ``extract_b`` ga80 harvest; every one
+      of the 35,289 campaign rows and all 38,854 Dataset-A rows are ``"rot61"``.
+    * ``dataset`` keeps ``"A"`` for the extract_a libraries (:data:`_DATASET_A_LIBRARIES`
+      — byte-identical to the old answer for them) and is ``"P"`` for every campaign
+      library.  Only the A/not-A distinction reaches the encoder
+      (``g_dataset_flag = 0.0 if dataset == "A" else 1.0``), so ``"P"`` and ``"B"``
+      are the same input and the change is exactly "paramA is a campaign library,
+      not a Dataset-A one".
+
+    **What this fixes** (measured on the 793 labelled S1j-val rows through the
+    arm-2 candidate, ``data/reports/fxy_head_results_arm2_20260829.md`` §6.2):
+    ``library_provenance`` sent ga80 to ``("B", "free69")`` -> ``g_sym_class`` 0.0
+    while all 18,973 campaign-era ga80 training rows carry 1.0, and sent paramA to
+    ``("A", "rot61")`` -> ``g_dataset_flag`` 0.0 while all 16,316 paramA rows carry
+    1.0.  Raw ensemble ``mu[f_r]`` bias vs the measured label::
+
+        predict()  (before)                   -0.0719   (ga80 -0.0992, paramA +0.0011)
+        predict()  + store sym_class only     +0.0035
+        predict_rows_raw() (train featurizer) +0.0020   (ga80 +0.0044, paramA -0.0045)
+
+    — i.e. ``g_sym_class`` on the 577 ga80 rows is essentially the whole -0.072,
+    and this function closes it.
+    """
+    dataset = "A" if library_id in _DATASET_A_LIBRARIES else SERVE_DATASET
+    return dataset, SERVE_SYM_CLASS
 
 
 def _row_get(row: Any, key: str, default: Any = None) -> Any:

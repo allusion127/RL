@@ -59,6 +59,25 @@ FOMS: tuple[str, ...] = (
     "f_r", "cyclen", "cbc_max", "f_q", "ao_abs", "node_peak", "map_cov",
 )
 
+#: The F_xy axis (MASTER FXYP pin planar peaking, hard limit 1.65) - the primary
+#: response of the F_xy-era campaigns and, from 2026-08-30, a corpus column
+#: (``intervention_wave_r1_results_20260830.md`` s11-3: the wave produced 791
+#: F_xy labels that the 80-column schema had nowhere to put).  It is deliberately
+#: NOT folded into :data:`FOMS`: ``FOMS`` also drives :func:`build_elites`'
+#: column list and the historical column ORDER of ``steps.parquet``, and the
+#: F_xy columns are appended by a migration rather than inserted.  Emitted
+#: unconditionally - all-NaN when the store predates the label - so the column
+#: SET is stable and the appenders' schema-drift guard stays meaningful.
+FXY_FOM = "f_xy"
+
+#: The columns ``steps.parquet`` gained on 2026-08-30, in the order the
+#: migration (``policy_v2_corpus.py backfill-fxy``) appends them.  Named here so
+#: the appenders' schema-drift guard can tell "this corpus predates the F_xy
+#: columns, migrate it" from a genuine mismatch.
+FXY_SCHEMA_COLUMNS: tuple[str, ...] = (
+    "parent_f_xy", "child_f_xy", "d_f_xy", "improved_fxy", "burn_state",
+)
+
 #: Elites kept per cell per ranking key.
 ELITE_K = 20
 
@@ -232,6 +251,52 @@ def genome_of(packed: str) -> GeneralOrbitGenome:
     return GeneralOrbitGenome.from_pattern(
         unpack_pattern(packed), max_shuffle_depth=3, allow_single_cycle_discharge=True
     )
+
+
+# --------------------------------------------------------------------------- #
+# burn state of an edge
+# --------------------------------------------------------------------------- #
+#: Residence layers a move can reach, deepest-wins (``intervention_wave``'s
+#: stratification axis; review s7.2 "once/twice-burnt swap").
+BURN_STATES: tuple[str, ...] = ("fresh", "once", "twice_plus", "center")
+
+
+def changed_units(parent_packed: str, child_packed: str) -> set[int]:
+    """Orbit units whose slots differ between two packed boards.
+
+    The packed string is 69 ``|``-joined canonical tokens (:func:`fresh_slots`),
+    and ``UNIT_SLOTS[u]`` lists the slots unit ``u`` owns, so this is an exact
+    unit-level diff with no genome decode.
+    """
+    p = parent_packed.split("|")
+    c = child_packed.split("|")
+    if len(p) != len(c):
+        return set()
+    moved = {i for i, (a, b) in enumerate(zip(p, c)) if a != b}
+    if not moved:
+        return set()
+    return {u for u, slots in enumerate(UNIT_SLOTS) if moved & set(slots)}
+
+
+def move_burn_state(parent_genome: GeneralOrbitGenome, parent_packed: str,
+                    child_packed: str) -> str:
+    """Deepest residence layer this edge touches, in the PARENT board.
+
+    ``fresh`` (depth 0 only), ``once`` (a depth-1 unit moved), ``twice_plus``
+    (a depth>=2 unit moved), ``center`` (only the centre cell changed - the
+    centre is not an orbit unit).  Residence comes from
+    :meth:`GeneralOrbitGenome._depths`, the same source :func:`residence_profile`
+    uses, so "once-burnt swap" means the same thing in the corpus, in the
+    ablation tables and in ``intervention_wave``.
+    """
+    units = changed_units(parent_packed, child_packed)
+    if not units:
+        return "center"
+    depths = parent_genome._depths()
+    deepest = max(int(depths.get(u, 0)) for u in units)
+    if deepest <= 0:
+        return "fresh"
+    return "once" if deepest == 1 else "twice_plus"
 
 
 # --------------------------------------------------------------------------- #
@@ -468,6 +533,7 @@ def build_steps(
     swap_radius: list[float] = []
     parent_phys: list[dict[str, float]] = []
     child_phys: list[dict[str, float]] = []
+    burn_state: list[str] = []
     for prid, ppat, crid, cpat, lib in zip(
         parents["record_id"], parents["pattern"],
         children["record_id"], children["pattern"],
@@ -489,6 +555,7 @@ def build_steps(
         enr = enrichment.get(str(lib))
         parent_phys.append(board_physics(ppat, pg, enr))
         child_phys.append(board_physics(cpat, cg, enr))
+        burn_state.append(move_burn_state(pg, ppat, cpat))
 
     steps = pd.DataFrame({
         "lineage_source": edges["lineage_source"].to_numpy(),
@@ -527,6 +594,14 @@ def build_steps(
         steps[f"child_{fom}"] = children[fom].to_numpy()
         steps[f"d_{fom}"] = steps[f"child_{fom}"] - steps[f"parent_{fom}"]
 
+    # ---- F_xy (see FXY_FOM) ----------------------------------------------- #
+    for side, rows in (("parent", parents), ("child", children)):
+        steps[f"{side}_{FXY_FOM}"] = (
+            pd.to_numeric(rows[FXY_FOM], errors="coerce").to_numpy()
+            if FXY_FOM in rows.columns
+            else np.full(len(steps), np.nan))
+    steps[f"d_{FXY_FOM}"] = steps[f"child_{FXY_FOM}"] - steps[f"parent_{FXY_FOM}"]
+
     # ---- physics annotations (radial strategy) ---------------------------- #
     p_phys = pd.DataFrame(parent_phys)
     c_phys = pd.DataFrame(child_phys)
@@ -537,6 +612,9 @@ def build_steps(
 
     steps["fresh_radial_dir"] = _direction(steps["d_fresh_enr_r_center"])
     steps["burnt_periph_dir"] = _direction(steps["d_twice_burnt_periph_share"])
+    #: The residence layer the move reaches - the stratum the intervention wave
+    #: blocked on and the only one of its axes the corpus could not express.
+    steps["burn_state"] = burn_state
 
     # A ``compound_shuffle`` is several MOCHA primitives in one move; its net
     # diff is a real description of the boards but NOT of a single operator, so
@@ -557,6 +635,7 @@ def build_steps(
 
     both = (steps["parent_converged"] & steps["child_converged"]).astype("boolean")
     objectives = (
+        ("improved_fxy", FXY_FOM, True),
         ("improved_fr", "f_r", True),
         ("improved_flat", "node_peak", True),
         ("improved_cbc", "cbc_max", True),
@@ -1621,11 +1700,13 @@ def write_report(
         "`library_id`, `cell`, `cross_cell`), identity (`parent_record_id`, "
         "`child_record_id`, `parent_pattern`, `child_pattern`), diff "
         "(`n_slots_changed`, `n_unit_edits`, `move_class`, `single_move`, "
-        "`swap_span`, `swap_radius`), FOMs (`parent_*`/`child_*`/`d_*` over "
-        f"{', '.join(f'`{f}`' for f in FOMS)}), physics "
+        "`swap_span`, `swap_radius`, `burn_state`), FOMs "
+        f"(`parent_*`/`child_*`/`d_*` over {', '.join(f'`{f}`' for f in FOMS)}, "
+        f"`{FXY_FOM}`), physics "
         f"(`parent_*`/`child_*`/`d_*` over {', '.join(f'`{p}`' for p in PHYSICS)}, "
         "plus `fresh_radial_dir`, `burnt_periph_dir`), labels "
-        "(`improved_fr`, `improved_flat`, `improved_cbc`, `improved_cyclen`, "
+        "(`improved_fxy`, `improved_fr`, `improved_flat`, `improved_cbc`, "
+        "`improved_cyclen`, "
         "`feasible_parent`, `feasible_child`, `both_converged`, "
         "`in_cyclen_band_child`, `cyclen_band_known`).\n")
 

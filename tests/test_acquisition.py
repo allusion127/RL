@@ -1161,3 +1161,257 @@ def test_predict_flatness_without_any_map_head_is_all_nan():
         _Bare(), [c.pattern for c in cands], ctx)
     for arr in (pk_m, pk_s, cv_m, cv_s):
         assert np.all(np.isnan(arr))
+
+
+# --------------------------------------------------------------------------- #
+# min_fxy objective (user decision 2026-08-29 — minimize F_xy, hard limit 1.65)
+# --------------------------------------------------------------------------- #
+def _mfx_pred(f_r=1.50, cyclen=625.0, cbc=1400.0, f_q=2.30, ao=0.20, pin=70.0,
+              n=1):
+    mean = np.tile([f_r, cbc, f_q, cyclen, ao, np.nan, pin], (n, 1))
+    std = np.tile([0.01, 10.0, 0.02, 2.0, 0.01, np.nan, 0.5], (n, 1))
+    return _pred(mean, std)
+
+
+def test_score_min_fxy_is_monotone_in_fxy_and_fxy_dominates_cyclen():
+    spec = acq.MinFxySpec()
+    pred = _mfx_pred(n=2)
+    # candidate 0: F_xy 1.60; candidate 1: F_xy 1.61 but +5 EFPD.  lam=1000 prices
+    # 0.01 F_xy at exactly 10 EFPD, so 5 EFPD does NOT buy it.
+    mean = np.asarray(pred.mean).copy()
+    mean[1, 3] = 630.0
+    pred = _pred(mean, np.asarray(pred.calibrated_std))
+    fxy_m = np.array([1.60, 1.61])
+    fxy_s = np.array([0.0, 0.0])
+    score = acq.score_min_fxy(pred, fxy_m, fxy_s, spec)
+    assert score.total[0] > score.total[1]          # lambda=1000 -> F_xy dominates
+    # the price is EXPLICIT and checkable: 0.01 F_xy == lam*0.01 EFPD.
+    assert (score.scalar[1] - score.scalar[0]) == pytest.approx(
+        5.0 - spec.lam_fxy * 0.01)
+    # and with EQUAL F_xy the longer cycle wins (cyclen is the tie-break).
+    tie = acq.score_min_fxy(pred, np.array([1.60, 1.60]), fxy_s, spec)
+    assert tie.total[1] > tie.total[0]
+
+
+def test_score_min_fxy_gates_fxy_and_keeps_fr_as_a_hard_constraint():
+    spec = acq.MinFxySpec()
+    ok = acq.score_min_fxy(_mfx_pred(f_r=1.50), np.array([1.60]),
+                           np.array([0.0]), spec)
+    assert bool(ok.constraint_ok[0]) and ok.constraint_penalty[0] == pytest.approx(0.0)
+
+    # F_xy over 1.65 -> infeasible, and sunk below the feasible candidate.
+    over_fxy = acq.score_min_fxy(_mfx_pred(f_r=1.50), np.array([1.70]),
+                                 np.array([0.0]), spec)
+    assert not bool(over_fxy.constraint_ok[0])
+    assert over_fxy.total[0] < ok.total[0]
+
+    # F_r over 1.55 -> ALSO infeasible even though F_xy passes.  The two axes
+    # disagree on real cores, so F_r is not implied by F_xy (design 3.5.2).
+    over_fr = acq.score_min_fxy(_mfx_pred(f_r=1.60), np.array([1.60]),
+                                np.array([0.0]), spec)
+    assert not bool(over_fr.constraint_ok[0])
+
+    # …and the remaining carried-over axes still gate.
+    for kwargs in ({"cbc": 1700.0}, {"f_q": 2.60}, {"ao": 0.40}, {"pin": 85.0}):
+        sc = acq.score_min_fxy(_mfx_pred(**kwargs), np.array([1.60]),
+                               np.array([0.0]), spec)
+        assert not bool(sc.constraint_ok[0]), kwargs
+
+
+def test_score_min_fxy_unpredicted_fxy_is_not_silently_feasible():
+    """NaN sigma == the axis is UNPREDICTED.  Same rule the pin-BU gate uses:
+    the ranking is untouched but the candidate is NOT certified feasible."""
+    spec = acq.MinFxySpec()
+    sc = acq.score_min_fxy(_mfx_pred(), np.array([1.60]), np.array([np.nan]), spec)
+    assert not bool(sc.constraint_ok[0])
+    assert sc.constraint_penalty[0] == pytest.approx(0.0)     # not graded, only vetoed
+    # a NaN MEAN makes the whole scalar unscorable rather than an invented best.
+    sc2 = acq.score_min_fxy(_mfx_pred(), np.array([np.nan]), np.array([0.02]), spec)
+    assert not np.isfinite(sc2.total[0])
+
+
+def test_score_min_fxy_optional_cyclen_band():
+    banded = acq.MinFxySpec(cyclen_lo=615.0, cyclen_hi=635.0)
+    inside = acq.score_min_fxy(_mfx_pred(cyclen=625.0), np.array([1.60]),
+                               np.array([0.0]), banded)
+    below = acq.score_min_fxy(_mfx_pred(cyclen=600.0), np.array([1.60]),
+                              np.array([0.0]), banded)
+    above = acq.score_min_fxy(_mfx_pred(cyclen=660.0), np.array([1.60]),
+                              np.array([0.0]), banded)
+    assert bool(inside.constraint_ok[0])
+    assert not bool(below.constraint_ok[0]) and not bool(above.constraint_ok[0])
+    # unset (the default) leaves cyclen a pure tie-break, never a rejection.
+    free = acq.MinFxySpec()
+    assert bool(acq.score_min_fxy(_mfx_pred(cyclen=500.0), np.array([1.60]),
+                                  np.array([0.0]), free).constraint_ok[0])
+
+
+def test_fxy_proxy_matches_the_design_fit_and_is_pessimistic():
+    pred = _mfx_pred(f_r=1.50)
+    mu, sd = acq.fxy_proxy(pred)
+    assert mu[0] == pytest.approx(acq.FXY_PROXY_SLOPE * 1.50 + acq.FXY_PROXY_INTERCEPT)
+    # sigma is the propagated F_r sigma widened by the INFLATED residual sd, so
+    # it reaches toward the measured max |residual| (0.31) rather than sitting at
+    # the corpus residual sd (0.0476).
+    assert sd[0] > acq.FXY_PROXY_RESID_SD * 2.0
+    assert sd[0] > acq.FXY_PROXY_SLOPE * 0.01
+
+
+def test_predict_fxy_prefers_a_head_and_reports_its_source():
+    class _Ctx:
+        case_key = "K1_K2-121"
+        e_core = 5.0
+
+    class _NoHead:
+        pass
+
+    class _HeadlessCheckpoint:
+        """The real backend ALWAYS defines the method and returns ``None`` when
+        the checkpoint carries no f_xy head — a method that exists is not a head
+        that exists, so ``hasattr`` alone must not decide."""
+
+        def predict_fxy(self, patterns, case, cell=0.0):
+            return None
+
+    class _WithHead:
+        """The real backend's contract: ``(mean, sigma, source)``."""
+
+        def predict_fxy(self, patterns, case, cell=0.0):
+            return (np.full(len(patterns), 1.42), np.full(len(patterns), 0.01),
+                    "head")
+
+    class _PairHead:
+        """A bare ``(mean, sigma)`` pair is accepted too (test doubles)."""
+
+        def predict_fxy(self, patterns, case, cell=0.0):
+            return np.full(len(patterns), 1.42), np.full(len(patterns), 0.01)
+
+    pred = _mfx_pred(f_r=1.50, n=3)
+    patterns = [object(), object(), object()]
+
+    mu, sd, src = acq.predict_fxy(_NoHead(), patterns, _Ctx(), pred)
+    assert src == acq.FXY_SOURCE_PROXY
+    assert mu[0] == pytest.approx(acq.FXY_PROXY_SLOPE * 1.50 + acq.FXY_PROXY_INTERCEPT)
+
+    mu, sd, src = acq.predict_fxy(_HeadlessCheckpoint(), patterns, _Ctx(), pred)
+    assert src == acq.FXY_SOURCE_PROXY
+
+    for backend in (_WithHead(), _PairHead()):
+        mu, sd, src = acq.predict_fxy(backend, patterns, _Ctx(), pred)
+        assert src == acq.FXY_SOURCE_HEAD
+        assert mu.tolist() == [1.42, 1.42, 1.42]
+        assert sd.tolist() == [0.01, 0.01, 0.01]
+
+
+def test_p_feasible_takes_the_fxy_axis_through_extra_axes():
+    """F_xy has no surrogate column, so it must enter p_feasible as an EXTRA
+    axis rather than by borrowing another axis's slot."""
+    c = ConstraintConfig(f_r_limit=1.55, cbc_limit=1550.0, f_q_limit=2.41,
+                         ao_abs_limit=0.30)
+    pred = _mfx_pred(f_r=1.50)
+    base = acq.p_feasible(pred, c)
+    with_fxy = acq.p_feasible(pred, c,
+                              extra_axes=((np.array([1.60]), np.array([0.02]), 1.65),))
+    assert with_fxy[0] == pytest.approx(
+        base[0] * float(norm.cdf((1.65 - 1.60) / 0.02)), rel=1e-9)
+    # an UNPREDICTED F_xy contributes the unknown-axis probability, not a NaN.
+    unknown = acq.p_feasible(pred, c,
+                             extra_axes=((np.array([np.nan]), np.array([np.nan]), 1.65),))
+    assert unknown[0] == pytest.approx(base[0] * c.unknown_axis_probability, rel=1e-9)
+    # and no extra axes is byte-identical to the previous four-column product.
+    assert acq.p_feasible(pred, c, extra_axes=())[0] == pytest.approx(base[0])
+
+
+def test_make_minfxy_constraints_keeps_fr_gated():
+    spec = acq.MinFxySpec()
+    c = acq.make_minfxy_constraints(spec)
+    assert c.f_r_limit == pytest.approx(1.55)      # NOT the 1e12 retired sentinel
+    assert c.cbc_limit == pytest.approx(spec.cbc_limit)
+    assert c.f_q_limit == pytest.approx(spec.f_q_limit)
+    assert c.ao_abs_limit == pytest.approx(spec.ao_abs_limit)
+
+
+# --------------------------------------------------------------------------- #
+# flat_power F_xy safety gate (design 3.5.3)
+# --------------------------------------------------------------------------- #
+def test_flatpower_fxy_gate_is_off_by_default_and_binary_when_set():
+    off = acq.FlatPowerSpec()
+    assert acq.flatpower_fxy_gate(off) is None
+    assert off.fxy_gate is None
+    for disabled in (0.0, -1.0, float("nan")):
+        assert acq.flatpower_fxy_gate(acq.FlatPowerSpec(fxy_limit=disabled)) is None
+    on = acq.FlatPowerSpec(fxy_limit=1.65)
+    assert on.fxy_gate == pytest.approx(1.65)
+
+
+def test_flatpower_fxy_gate_vetoes_without_grading():
+    spec = acq.FlatPowerSpec(fxy_limit=1.65)
+    pred = _mfx_pred(f_r=1.50, n=2)
+    peak = np.array([1.40, 1.40])
+    pstd = np.array([0.01, 0.01])
+    both_ok = acq.score_flat_power(pred, peak, pstd, spec,
+                                   fxy_mean=np.array([1.60, 1.60]),
+                                   fxy_std=np.array([0.0, 0.0]))
+    one_over = acq.score_flat_power(pred, peak, pstd, spec,
+                                    fxy_mean=np.array([1.60, 1.75]),
+                                    fxy_std=np.array([0.0, 0.0]))
+    assert list(one_over.fxy_gate_violated) == [False, True]
+    assert not bool(one_over.constraint_ok[1])
+    # exactly ONE tier subtracted (a veto, not a graded penalty)
+    assert one_over.constraint_penalty[1] == pytest.approx(both_ok.constraint_penalty[1])
+    assert (both_ok.total[1] - one_over.total[1]) == pytest.approx(1.0e4)
+    # with the gate OFF the arithmetic is byte-identical to the previous mode.
+    plain = acq.score_flat_power(pred, peak, pstd, acq.FlatPowerSpec())
+    assert plain.fxy_gate_violated is None and plain.fxy_ucb is None
+    assert plain.total.tolist() == pytest.approx(both_ok.total.tolist())
+
+
+def test_flatpower_refuses_the_fxy_proxy_and_only_gates_on_a_real_head(tmp_path):
+    """The interim proxy is an affine function of predicted F_r, so gating
+    ``flat_power`` on it would re-impose an F_r screen at ~1.53 — tighter than
+    the licensing 1.55 and far tighter than this mode's own 1.70 safety gate.
+    That is F_r steering the flatness search again (program §10 STOP)."""
+    class _FlatModel:
+        def predict(self, patterns, case, cell=0.0):
+            n = len(patterns)
+            mean = np.tile([1.68, 1400.0, 2.30, 625.0, 0.20, np.nan, 70.0], (n, 1))
+            std = np.tile([0.01, 10.0, 0.02, 2.0, 0.01, np.nan, 0.5], (n, 1))
+            return _pred(mean, std)
+
+        def predict_convergence(self, patterns, case, cell=0.0):
+            return np.ones(len(patterns))
+
+        def predict_map_flatness(self, patterns, case, cell=0.0):
+            n = len(patterns)
+            return (np.full(n, 1.40), np.full(n, 0.01),
+                    np.full(n, 0.30), np.full(n, 0.01))
+
+    class _HeadlessModel(_FlatModel):
+        def predict_fxy(self, patterns, case, cell=0.0):
+            return None                       # method present, head absent
+
+    class _HeadModel(_FlatModel):
+        def predict_fxy(self, patterns, case, cell=0.0):
+            return (np.full(len(patterns), 1.80), np.full(len(patterns), 0.01),
+                    "head")
+
+    ctx = CaseContext(pair="K1_K2", feed=121, library_id="ga80", e_core=5.2)
+    genome = random_genome(random.Random(0), ctx.pair, ctx.n_fresh)
+    pat = genome.to_pattern()
+    cands = [Candidate(pat, genome, "elite", None,
+                       candidate_record_id(pat, ctx), 5.2)]
+    tr = acq.TrustRegion(TrustRegionConfig(), set(), campaign_feed=121,
+                         campaign_e_core=5.2)
+    spec = acq.FlatPowerSpec(fxy_limit=1.65)
+
+    # F_r 1.68 -> proxy F_xy ~ 1.80, well over the 1.65 gate.  A head-less model
+    # must NOT be vetoed by that; the axis is simply absent.
+    for headless in (_FlatModel(), _HeadlessModel()):
+        pool = acq.score_pool_flat_power(headless, ctx, cands, spec, tr)
+        assert pool.fxy_source == ""
+        assert np.isfinite(pool.exploit[0])
+
+    # a REAL head at 1.80 DOES veto (one tier), and says where it came from.
+    head_pool = acq.score_pool_flat_power(_HeadModel(), ctx, cands, spec, tr)
+    assert head_pool.fxy_source == acq.FXY_SOURCE_HEAD
+    assert head_pool.exploit[0] < pool.exploit[0] - 1.0e3

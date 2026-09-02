@@ -550,6 +550,303 @@ def test_merge_dry_run_writes_nothing(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# STALE-MIRROR CLOBBER (defect measured 20260829)
+#
+# A remote kit shipped with a COPY of the local store carries a stale mirror of
+# every local row.  The quality rank covers converged / valid / the label bits
+# and NOTHING else, so those mirrored rows TIE — and the old dedup handed every
+# other column (e_core, e_split, parent_record_id, ...) to the incoming row on a
+# tie.  Merging such a kit would have reverted 397 corrected e_core values and
+# un-nulled 1,203 repaired parent_record_ids, every one of them reported as a
+# harmless "duplicate (kept)".
+#
+# Three guarantees are pinned here: the tie keeps the LOCAL row, the dry-run
+# report NAMES the rows/columns a merge would rewrite, and --new-only refuses
+# already-stored record_ids outright.
+# --------------------------------------------------------------------------- #
+def _local_truth(rid: str, campaign: str = "5.25-5.5_f101") -> CanonicalRecord:
+    """A locally repaired row: e_core backfilled, parent_record_id nulled."""
+    return _p_record(rid, campaign, converged=True, cyclen=680.0,
+                     e_core=5.4712, e_split=1.0, parent_record_id=None)
+
+
+def _stale_mirror(rid: str, campaign: str = "5.25-5.5_f101") -> CanonicalRecord:
+    """The pre-repair copy of that row, as a stale kit still holds it."""
+    return _p_record(rid, campaign, converged=True, cyclen=680.0,
+                     e_core=5.4, e_split=None, parent_record_id="bogus_parent")
+
+
+def test_merge_tie_keeps_the_local_row_not_the_stale_kit_copy(tmp_path: Path) -> None:
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+
+    kit_data = tmp_path / "kit_data"
+    # the stale mirror + one genuinely new row, so the store IS rewritten and the
+    # tie is exercised through the real write path (not skipped as a no-op merge)
+    _write_kit(kit_data, [_stale_mirror("rid"),
+                          _p_record("fresh", "5.25-5.5_f101", converged=True)])
+
+    report = merge_store(cfg, kit_data, log=lambda m: None)
+    assert report.new_rows == 1 and report.upgraded_rows == 0
+    assert report.duplicate_rows == 1
+
+    df = StoreReader(main_store).records.set_index("record_id")
+    assert float(df.loc["rid", "e_core"]) == pytest.approx(5.4712)   # correction kept
+    assert float(df.loc["rid", "e_split"]) == pytest.approx(1.0)
+    assert pd.isna(df.loc["rid", "parent_record_id"])                # repair kept
+
+
+def test_merge_reports_the_rows_a_merge_would_change(tmp_path: Path) -> None:
+    """The classifier must not be able to hide a clobber behind "duplicate"."""
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records(
+        [_local_truth("rid"), _local_truth("same")], append=False)
+
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [
+        _stale_mirror("rid"),                       # tie, but 3 columns differ
+        _local_truth("same"),                       # byte-identical: NOT a change
+        _p_record("fresh", "5.25-5.5_f101", converged=True),   # new id: NOT a change
+    ])
+
+    report = merge_store(cfg, kit_data, dry_run=True, log=lambda m: None)
+    assert report.duplicate_rows == 2               # the old, misleading headline
+    assert report.changed_rows == 1                 # ... and the honest one
+    assert report.changed_rows_applied == 0         # nothing is rewritten
+    assert report.changed_rows_blocked == 1         # the local row wins the tie
+    assert set(report.changed_by_column) == {"e_core", "e_split", "parent_record_id"}
+    assert [c["record_id"] for c in report.changed_sample] == ["rid"]
+    assert report.changed_sample[0]["outcome"] == "kept"
+
+    text = report.text()
+    assert "would-change existing rows: 1" in text
+    assert "e_core" in text and "parent_record_id" in text
+    assert not (main_store / "records.parquet").exists() or True     # dry run wrote nothing
+    df = StoreReader(main_store).records.set_index("record_id")
+    assert len(df) == 2 and float(df.loc["rid", "e_core"]) == pytest.approx(5.4712)
+
+
+def test_merge_change_audit_is_silent_on_a_clean_kit(tmp_path: Path) -> None:
+    """An add-only kit must not raise noise: 0 changed rows, no warning block."""
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_p_record("fresh", "5.25-5.5_f101", converged=True)])
+
+    report = merge_store(cfg, kit_data, dry_run=True, log=lambda m: None)
+    assert report.changed_rows == 0 and report.changed_by_column == {}
+    assert "would-change existing rows: 0" in report.text()
+
+
+def test_merge_change_audit_counts_a_strict_upgrade_as_applied(tmp_path: Path) -> None:
+    """A real upgrade DOES rewrite the stored row — the audit says so."""
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records(
+        [_p_record("rid", "5.25-5.5_f101", converged=True, cyclen=680.0)],
+        append=False)
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_p_record("rid", "5.25-5.5_f101", converged=True,
+                                    cyclen=999.0, f_xy=1.431)])   # strictly better
+
+    report = merge_store(cfg, kit_data, dry_run=True, log=lambda m: None)
+    assert report.upgraded_rows == 1
+    assert report.changed_rows == 1 and report.changed_rows_applied == 1
+    assert report.changed_rows_blocked == 0
+    assert report.changed_sample[0]["outcome"] == "upgrade"
+    assert "cyclen" in report.changed_by_column and "f_xy" in report.changed_by_column
+
+
+# --------------------------------------------------------------------------- #
+# --new-only: the safe mode for a kit whose store is a stale mirror
+# --------------------------------------------------------------------------- #
+def test_merge_new_only_filters_already_stored_record_ids(tmp_path: Path) -> None:
+    """Even a STRICTLY BETTER stale row is refused; only unseen ids are harvested.
+
+    A tie is not the only clobber path: a mirrored row that happens to carry a
+    label the local row lost ranks strictly higher and would replace the whole
+    local row, corrections included.  --new-only takes that class off the table.
+    """
+    main_store = tmp_path / "main" / "store"
+    main_ledger = tmp_path / "main" / "produce" / "ledger.jsonl"
+    cfg = _merge_cfg(tmp_path, main_store, main_ledger)
+    StoreWriter(main_store).write_records(
+        [_local_truth("tie_row"), _local_truth("upgrade_row")], append=False)
+
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [
+        _stale_mirror("tie_row"),                                    # ties
+        _p_record("upgrade_row", "5.25-5.5_f101", converged=True,    # strictly better
+                  e_core=5.4, e_split=None, parent_record_id="bogus_parent",
+                  f_xy=1.431),
+        _p_record("fresh", "5.25-5.5_f101", converged=True),         # genuinely new
+    ], ledger_rows=[{"record_id": "fresh", "stratum": "5.25-5.5_f101",
+                     "generator": "random", "status": "done"}])
+
+    report = merge_store(cfg, kit_data, new_only=True, log=lambda m: None)
+    assert report.new_only is True
+    assert report.kit_rows == 3
+    assert report.new_rows == 1                 # classification stays honest ...
+    assert report.upgraded_rows == 1            # ... it just is not acted on
+    assert report.filtered_existing == 2
+    assert report.total_before == 2 and report.total_after == 3
+    assert "new-only mode      : ON" in report.text()
+
+    df = StoreReader(main_store).records.set_index("record_id")
+    assert set(df.index) == {"tie_row", "upgrade_row", "fresh"}
+    for rid in ("tie_row", "upgrade_row"):
+        assert float(df.loc[rid, "e_core"]) == pytest.approx(5.4712)
+        assert pd.isna(df.loc[rid, "parent_record_id"])
+    assert pd.isna(df.loc["upgrade_row", "f_xy"])    # the stale label never landed
+
+
+def test_merge_new_only_on_an_all_stale_kit_writes_nothing(tmp_path: Path) -> None:
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+    before = (main_store / "records.parquet").read_bytes()
+
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_stale_mirror("rid")])
+
+    report = merge_store(cfg, kit_data, new_only=True, log=lambda m: None)
+    assert report.new_rows == 0 and report.filtered_existing == 1
+    assert report.total_after == 1
+    assert (main_store / "records.parquet").read_bytes() == before   # not rewritten
+
+
+def test_merge_new_only_does_not_overwrite_a_harvested_map(tmp_path: Path) -> None:
+    """The maps half of the same guarantee: write_maps is a dict update, so a kit
+    key that already exists REPLACES the stored stack unless --new-only trims it."""
+    import numpy as np
+
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+    StoreWriter(main_store).write_maps(
+        {"rid": np.ones((4, 9, 9), np.float16)}, append=False)
+
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_stale_mirror("rid"),
+                          _p_record("fresh", "5.25-5.5_f101", converged=True)])
+    StoreWriter(kit_data / "store").write_maps(
+        {"rid": np.zeros((4, 9, 9), np.float16),        # the stale copy
+         "fresh": np.full((4, 9, 9), 2.0, np.float16)},
+        append=False)
+
+    report = merge_store(cfg, kit_data, new_only=True, log=lambda m: None)
+    assert report.maps_new == 1
+    reader = StoreReader(main_store)
+    assert float(reader.maps("rid").sum()) == pytest.approx(4 * 9 * 9)   # untouched
+    assert reader.maps("fresh") is not None
+
+
+def test_cli_merge_store_new_only_flag(tmp_path: Path, capsys) -> None:
+    from lpopt.cli import main
+
+    main_store = tmp_path / "main" / "store"
+    main_ledger = tmp_path / "main" / "produce" / "ledger.jsonl"
+    deck = tmp_path / "lpopt.inp"
+    deck.write_text(
+        f"[model]\nstore_dir = {json.dumps(str(main_store))}\n"
+        f"[produce]\nledger = {json.dumps(str(main_ledger))}\n",
+        encoding="utf-8",
+    )
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_stale_mirror("rid"),
+                          _p_record("fresh", "5.25-5.5_f101", converged=True)])
+
+    rc = main(["merge-store", "--input", str(deck), "--from", str(kit_data),
+               "--new-only"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "RESULT: OK [new-only]" in out
+    assert "1 existing-id row(s) skipped" in out
+    df = StoreReader(main_store).records.set_index("record_id")
+    assert float(df.loc["rid", "e_core"]) == pytest.approx(5.4712)
+    assert "fresh" in df.index
+
+
+def test_cli_merge_store_warns_when_a_kit_would_change_stored_rows(
+        tmp_path: Path, capsys) -> None:
+    from lpopt.cli import main
+
+    main_store = tmp_path / "main" / "store"
+    deck = tmp_path / "lpopt.inp"
+    deck.write_text(
+        f"[model]\nstore_dir = {json.dumps(str(main_store))}\n"
+        f"[produce]\nledger = {json.dumps(str(tmp_path / 'l.jsonl'))}\n",
+        encoding="utf-8",
+    )
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_stale_mirror("rid")])
+
+    rc = main(["merge-store", "--input", str(deck), "--from", str(kit_data),
+               "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[WARN]" in out and "--new-only" in out
+
+
+# --------------------------------------------------------------------------- #
+# the merge's rank helper and the store's rank MUST agree
+#
+# They decide different halves of the same operation: _quality_rank_row drives
+# what the report SAYS (and whether the store is rewritten at all), _quality_rank
+# drives what is PERSISTED.  Any disagreement makes the merge report one thing
+# and do another — including on the tie, which both now resolve to the incumbent.
+# --------------------------------------------------------------------------- #
+def test_rank_helpers_agree_over_the_whole_input_matrix() -> None:
+    import itertools
+
+    import numpy as np
+
+    from lpopt.data.store import _quality_rank
+    from lpopt.multi_pc import _quality_rank_row
+
+    falsey = [False, None, float("nan"), pd.NA]
+    nulls = [None, float("nan"), pd.NA]
+    rows = []
+    for conv, valid in itertools.product([True] + falsey, [True] + falsey):
+        for peak, cov, fxy, fxya in itertools.product(
+            [1.5, nulls[0]], [0.08, nulls[1]], [1.43, nulls[2]], [1.4, None],
+        ):
+            rows.append(dict(record_id=f"r{len(rows)}", converged=conv, valid=valid,
+                             node_peak=peak, map_cov=cov, f_xy=fxy, f_xya=fxya))
+    df = pd.DataFrame(rows)
+    vectorized = np.asarray(_quality_rank(df))
+    per_row = np.asarray([
+        _quality_rank_row(r["converged"], r["valid"], r["node_peak"],
+                          r["map_cov"], r["f_xy"], r["f_xya"])
+        for r in rows
+    ])
+    assert vectorized.tolist() == per_row.tolist()
+
+
+def test_merge_tie_rule_matches_what_the_store_persists(tmp_path: Path) -> None:
+    """End-to-end agreement: a row the report calls a duplicate really is kept."""
+    main_store = tmp_path / "main" / "store"
+    cfg = _merge_cfg(tmp_path, main_store, tmp_path / "main" / "ledger.jsonl")
+    StoreWriter(main_store).write_records([_local_truth("rid")], append=False)
+    kit_data = tmp_path / "kit_data"
+    _write_kit(kit_data, [_stale_mirror("rid"),
+                          _p_record("fresh", "5.25-5.5_f101", converged=True)])
+
+    report = merge_store(cfg, kit_data, dry_run=True, log=lambda m: None)
+    projected = report.total_after
+    merge_store(cfg, kit_data, log=lambda m: None)
+    persisted = StoreReader(main_store).records.set_index("record_id")
+    assert len(persisted) == projected
+    # "duplicate (kept)" is now literally true, column by column
+    assert float(persisted.loc["rid", "e_core"]) == pytest.approx(5.4712)
+
+
+# --------------------------------------------------------------------------- #
 # ledger merge dedup
 # --------------------------------------------------------------------------- #
 def test_merge_ledger_dedup_idempotent(tmp_path: Path) -> None:

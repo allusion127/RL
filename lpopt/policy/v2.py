@@ -40,6 +40,18 @@ from .data import (
 )
 
 # --------------------------------------------------------------------------- #
+# serving contract
+# --------------------------------------------------------------------------- #
+#: Stamped into every v2 member's ``meta.json`` and REQUIRED by
+#: :class:`lpopt.policy.scorer.MoveScorerV2` at load.  It names the serving
+#: contract — v1's 36 move/context scalars plus :data:`NEW_SCALARS`, over the
+#: ``v6b`` board encoding, read as a within-parent RANKER — and nothing else.
+#: Bump it whenever a change would make an older checkpoint's conditioning
+#: vector mean something different, so the old checkpoint fails LOUDLY at load
+#: instead of being silently mis-fed at score time.
+POLICY_SCHEMA_V2 = "policy_move_v2"
+
+# --------------------------------------------------------------------------- #
 # eras
 # --------------------------------------------------------------------------- #
 #: The live operating point: the libraries the running program actually loads.

@@ -1,0 +1,133 @@
+# pinbu_wave_fxyera_r1_199.inp -- PHASE-2 WAVE for the F_xy-era produce round r1,
+# box 199.  Registered in data/reports/produce_fxyera_r1_prereg_20260829.md sec.6
+# ("Phase-2 plan ... 40 chains") and pre-registered in
+# data/reports/pinbu_wave_fxyera_r1_prereg_20260830.md.
+#
+# CLONE of pinbu_wave_keep_199.inp.  The three deltas, and only these three:
+#
+#   (1) [verify] harvest_maps = true   (was false)
+#   (2) [model]  cond_schema  = "v8"   (was "v7") -- INERT on the run path; set to
+#                the r1 deck's value so the deck reads as an r1-era artifact
+#   (3) header/title text
+#
+# The run dir is a CLI argument, not a deck knob: `--run-dir runs/pinbu_wave_fxyera_r1`
+# (see run_pinbu_wave_fxyera_r1_199.bat).  It stays RELATIVE, so it follows the
+# `runs/` junction if `runs/` is redirected to another volume -- nothing in this
+# deck names a drive.
+#
+# This deck does NOT drive `lpopt optimize`.  It is read by `pinbu_wave.py run`
+# for exactly three things:
+#
+#   (1) [master]  + [produce]  -> the MASTER executable, worker/core policy and
+#                                 equilibrium protocol that
+#                                 `curriculum.make_pin_burnup_verifier` reads
+#                                 (it takes its wave size from [produce], not
+#                                 [master] -- curriculum.py:1091-1132);
+#   (2) [verify]  package_root + harvest_maps;
+#   (3) [design]  package_root -> the paramA routing, selected per-core by
+#                                 `build_case_resolver(cfg, fuel, library_id)`.
+#
+# WHAT THIS WAVE MEASURES (40 chains, all paramA -- every r1 stratum is paramA):
+#   A. fxywall_top20   -- the 20 lowest MEASURED F_xy joint-clean r1 cores, run
+#                         with enable_pin_burnup=True: the first measured pin
+#                         burnup on an F_xy-selected frontier (prereg sec.6 item 1).
+#   B. replicate_span20 -- 20 EXACT re-runs of stored r1 records, one per r1
+#                         stratum plus the global F_xy minimum: the replicate-QC
+#                         arm (prereg sec.6 item 2).
+#   Both sets are exact replays, so both feed the determinism readout; the split
+#   is what each set is SELECTED for, not what it can report.
+#
+# WHY A REPLICATE CAN RUN HERE AT ALL.  `produce` dedups on
+# record_id = sha256(canonical_pattern | library_id | case_pair | deck_knobs),
+# replayed from the ledger AND the store at start (produce.py:_reconstruct), so a
+# produce stratum cannot re-run a stored pattern.  `pinbu_wave.py run` never
+# touches that path: it builds `WaveEntry` objects directly from the manifest and
+# calls `WaveVerifier.evaluate_wave` (pinbu_wave.py:481-512).  There is no dedup
+# to bypass.  The identity check runs the OPPOSITE way -- pinbu_wave.py:495-503
+# REQUIRES `compute_record_id(pattern.canonical(), library_id, case_pair,
+# PRODUCE_DECK_KNOBS)` to reproduce the manifest's record_id, else the chain is
+# skipped.  `PRODUCE_DECK_KNOBS` is the module CONSTANT "ga80_produce"
+# (search/verify.py:74), not a hash of this file, so `keep_success` /
+# `harvest_maps` / `workers` cannot move the id: this deck replays the stored
+# core, it does not mint a new one.  Verified offline on all 40 targets before
+# this deck was hashed (0 drift).
+#
+# WHY keep_success = true.  F_xy is MASTER's FXYP and is printed ONLY in MAS_OUT;
+# it is not on `WaveFom`, so `pinbu_wave.py` cannot report it and the replay's
+# F_xy must be read OFFLINE from the retained final-cycle MAS_OUT with the same
+# scanner that produced fxy_backfill_199_produce_fxyera_r1_20260829.csv.
+# keep_success=false purges 100% of those dirs (pinbu_rodavg_20260820.md).  No
+# retained MAS_OUT, no F_xy determinism measurement -- the whole point of item 2.
+#
+# WHY harvest_maps = true.  Two effects on this path, both wanted:
+#   * curriculum.py widens keep_success to `keep_success OR harvest` (:1075), so
+#     retention is belt-and-braces rather than resting on one knob;
+#   * `_factory` installs HarvestingEquilibriumEvaluator, so `WaveOutcome.maps`
+#     carries the final EDIT5 map instead of None (curriculum.py:1100-1104).
+#   HONEST LIMIT: `pinbu_wave.py._outcome_record` does NOT persist `outcome.maps`,
+#   so this writes no maps.npz.  The canonical map for 537 of the 540 labelled r1
+#   rows already exists (`maps_key` non-null); the map that matters here is the
+#   retained MAS_SUM/MAS_OUT on disk, which keep_success guarantees.
+#
+# NOTHING HERE TOUCHES boxes 198 / 181 / 238, nor any runs/ dir other than
+# runs/pinbu_wave_fxyera_r1.  The canonical store is READ-ONLY on the run path
+# (fuel_types.parquet only); merging is a separate, backed-up `pinbu_wave.py
+# patch` step, dry-run first.
+
+[flow]
+title = "phase-2 F_xy-era r1: measured pin burnup on the F_xy frontier + F_xy/F_r/cyclen determinism replicates"
+output_root = "runs"
+random_seed = 830          # inert: no sampling happens on this path
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+timeout = 3600
+max_cycles = 16            # matches produce_fxyera_r1_199.inp -- the equilibrium
+consecutive = 2            # protocol must be identical or the replay is not the
+                           # same evaluation and determinism is untestable
+keep_success = true        # see header: MAS_OUT is the F_xy carrier
+
+[produce]
+# make_pin_burnup_verifier reads its wave size / core policy / chain timeout /
+# purge policy from HERE (curriculum.py:1091-1132), not from [master].
+store_dir = "data/store"
+workers = 12
+use_all_cores = true       # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 16
+consecutive = 2
+purge_intermediate = true  # only the converged cycle is needed; keep_success
+                           # retains exactly that one, which is the MAS_OUT we read
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []    # EMPTY, as in produce_fxyera_r1_199.inp.  On paramA a
+                           # ga80 glob fallback would win resolution and then fail
+                           # the %GEN_DIM gate.
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # ga80 routing.  UNUSED by this wave -- all 40
+                                    # targets are paramA -- but kept so the deck is
+                                    # byte-comparable to pinbu_wave_keep_199.inp
+                                    # and stays legal if a ga80 core is ever added.
+harvest_maps = true                 # see header
+
+[design]
+store_dir = "data/design"
+package_root = "data/design/package"   # paramA: the routing all 40 targets use
+
+[case]
+mode = "fixed"
+pair = "N1_N2"             # INERT: every CaseKey comes from the manifest's own rows.
+feed = 113                 # Present only so the deck reads as a legal fixed-case
+                           # config; `pinbu_wave.py run` never reads [case].
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1i"   # INERT on the run path (no model is loaded); the
+cond_schema = "v8"              # predictions were pinned in the MANIFEST, on the
+device = "cpu"                  # coordinator box, before any spend.
+inference = "local_cpu"
+library_id = "ga80"             # resolver DEFAULT only; pinbu_wave.py passes the
+                                # per-core library_id ("paramA") explicitly.
+store_dir = "data/store"

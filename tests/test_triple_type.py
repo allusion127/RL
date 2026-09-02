@@ -455,10 +455,37 @@ _FEAT_V6C_CELLS_SHA256 = (
 _FEAT_V6C_GLOBALS_SHA256 = (
     "016b518047f04afc16c2a01ed2318e1b286cbfbce846819902bad8c0950bcd11")
 
+#: The 30 rows the two hashes above were frozen over — ``_sample(df)`` (6 per
+#: ``library_id``) of the LIVE store as it stood when they were captured —
+#: snapshotted to a fixture holding only :data:`SAFE_INPUT_FIELDS` (plus
+#: ``record_id`` for identification).  Reading the live store here would make the
+#: hashes move every time the store gains rows, which says nothing about
+#: featurization; the guard is "byte-identical output for a FIXED input", so the
+#: input is pinned.  Reconstructed from
+#: ``records.parquet.bak_pre_ecore_backfill_20260829`` (the newest backup that
+#: still reproduces the frozen globals hash — the e_core backfill that followed
+#: it rewrote ``e_core`` on some of these rows).
+_FEAT_V6C_SAMPLE = Path(__file__).resolve().parent / "data" / "v6c_featurization_sample.parquet"
+_FEAT_V6C_SAMPLE_ROWS = 30
+#: sha256 over "\n".join(record_id) of the fixture, so a silent re-generation
+#: (different rows, different order) fails loudly instead of moving the hashes.
+_FEAT_V6C_SAMPLE_IDS_SHA256 = (
+    "5e37bd8cea0090b2a089f7865ad7082761051cf07a27a2452517c7a4957d3965")
 
-def test_v6c_featurization_is_byte_identical(store) -> None:
-    df, fl = store
-    cells, gvec = FeatureEncoder(cond_schema="v6c").encode_batch(_sample(df), fl)
+
+def test_v6c_featurization_is_byte_identical() -> None:
+    if not FUEL.is_file():
+        pytest.skip("Dataset-A store not present")
+    import pandas as pd
+
+    sample = pd.read_parquet(_FEAT_V6C_SAMPLE)
+    assert len(sample) == _FEAT_V6C_SAMPLE_ROWS
+    assert hashlib.sha256(
+        "\n".join(sample["record_id"].astype(str)).encode()
+    ).hexdigest() == _FEAT_V6C_SAMPLE_IDS_SHA256
+
+    fl = FuelLibrary.from_parquet(FUEL)
+    cells, gvec = FeatureEncoder(cond_schema="v6c").encode_batch(sample, fl)
     assert hashlib.sha256(
         np.ascontiguousarray(cells).tobytes()).hexdigest() == _FEAT_V6C_CELLS_SHA256
     assert hashlib.sha256(

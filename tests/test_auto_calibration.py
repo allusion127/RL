@@ -231,11 +231,12 @@ def test_curriculum_threads_the_v5_flags():
     assert CurriculumDriver._v5_train_flags(stub) == []
 
     stub.cfg.model = ModelConfig(cyclen_physics_prior=True, quantile_heads=True,
-                                 promote_max_asm_bu=True,
+                                 promote_max_asm_bu=True, promote_fxy=True,
                                  auto_fit_cell_calibration=False)
     flags = CurriculumDriver._v5_train_flags(stub)
     assert flags == ["--cyclen-physics-prior", "--quantile-heads",
-                     "--promote-max-asm-bu", "--no-auto-cell-calibration"]
+                     "--promote-max-asm-bu", "--promote-fxy",
+                     "--no-auto-cell-calibration"]
 
 
 def test_curriculum_train_config_mirrors_the_deck():
@@ -248,11 +249,12 @@ def test_curriculum_train_config_mirrors_the_deck():
     stub = _Stub()
     stub.cfg = type("C", (), {})()
     stub.cfg.model = ModelConfig(cyclen_physics_prior=True,
-                                 promote_max_asm_bu=True)
+                                 promote_max_asm_bu=True, promote_fxy=True)
     stub.curr = type("K", (), {"cell_weight_cap": 16.0})()
     cfg = CurriculumDriver._v5_train_config(stub)
     assert cfg.cyclen_physics_prior is True
     assert cfg.promote_max_asm_bu is True
+    assert cfg.promote_fxy is True
     assert cfg.quantile_heads is False
     assert cfg.auto_fit_cell_calibration is True
     assert cfg.cell_weight_cap == 16.0

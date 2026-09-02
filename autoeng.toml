@@ -32,6 +32,27 @@ open_budget  = 100    # opening campaign, per cell (the f113 budget)
 # rather than quietly spending the next cell's calls.
 master_budget_total = 500
 
+# WHICH AXIS every mark, gate and headline in this run is read on.
+# (design: data/reports/fxy_switch_design_20260829.md sec. 3.5.5)
+#
+#   "f_r"   DEFAULT, and what every run to date used.  The store floor, the
+#           OPENED-cell test (opened_cells_from_store) and the PARTIAL/NULL
+#           success marks are all F_r, gated at 1.55.  Output is byte-identical
+#           to the pre-switch driver.
+#   "f_xy"  The same gates on MEASURED F_xy (MASTER FXYP) at f_xy_limit = 1.65.
+#           F_r STAYS a hard constraint at 1.55 (design sec. 3.5.2) — the F_xy
+#           gate is ADDED, never substituted, so a cell can only get harder.
+#           Converged rows with NO measured F_xy are EXCLUDED from every floor
+#           and count, and the excluded count is printed: F_xy is parsed out of
+#           MAS_OUT, so a cell whose runs were never harvested reads as closed
+#           rather than as passing (design sec. 3.5.4, delivery side).
+#
+# `parent_deck` must carry the matching [acquisition] objective —
+# "f_r" -> min_fr_max_cycle, "f_xy" -> min_fxy.  build_deck refuses the
+# mismatch BEFORE any MASTER call rather than write a pre-registration that
+# names an axis the campaign will not optimise.
+objective_axis = "f_r"
+
 # v1 default: autonomous everywhere except these three.
 pause_for_approval = ["new_assembly", "retrain_promote_fail", "budget_exceeded"]
 

@@ -45,7 +45,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -69,7 +69,7 @@ from .conformal import (
     conformal_targets, interval_arrays, load_conformal,
 )
 from .dataset_torch import TARGETS
-from .featurize import FeatureEncoder, RecordInputs, library_provenance
+from .featurize import FeatureEncoder, RecordInputs, serve_provenance
 from .pinbu_physics import (
     PINBU_PHYSICS_NAME, PINBU_SURROGATE_COL, PinBuPhysicsEstimator,
     load_pinbu_physics,
@@ -141,6 +141,19 @@ _DEFAULT_FLATNESS_SIGMA_FLOOR: dict[str, float] = {"node_peak": 0.06, "map_cov":
 #: Per-channel training-population feature envelope sidecar (review sec. 4b), written
 #: next to the champion so the serve-time OOD guard uses the frozen train-time range.
 _FEATURE_OOD_NAME = "feature_ood.json"
+#: Ensemble-level meta sidecar (written by training; members list + split).  Read at
+#: load time ONLY for the f_xy serve-sigma bar below — nothing else consults it.
+_ENSEMBLE_NAME = "ensemble.json"
+#: ``fxy_head.serve_sigma`` value that BARS this checkpoint's f_xy head sigma from
+#: serving.  `s1j` (11th champion, promoted 2026-08-30) carries it: its head passed
+#: G1/G2'/G3' but FAILED G4 (68% coverage 0.831 > the 0.80 ceiling — over-wide), and
+#: the registered disposition is "keep the promotion, do not serve the sigma"
+#: (``data/reports/fxy_head_results_arm3_20260829.md`` §5 / §10.2).  The MEAN is
+#: unaffected and ``source`` stays ``"head"``; only the width is refused, because
+#: ``min_fxy`` ranks on ``cyclen_LCB - lam*F_xy_UCB`` and an over-wide sigma silently
+#: inflates every UCB.  Lifting this needs a new pre-registration and a fresh
+#: coverage measurement, not a config edit.
+FXY_SERVE_SIGMA_BARRED = "barred"
 
 
 class EncoderChannelMismatch(ValueError):
@@ -313,6 +326,8 @@ class PosValCnnBackend:
         device: str | torch.device = "cpu",
         encoder: FeatureEncoder | None = None,
         feature_ood_envelope: dict | None = None,
+        fxy_serve_sigma: str | None = None,
+        ensemble_meta: Mapping[str, Any] | None = None,
     ):
         if not members:
             raise ValueError("PosValCnnBackend needs at least one member")
@@ -582,6 +597,46 @@ class PosValCnnBackend:
         # advisory — the guard NEVER changes a prediction (see feature_ood_types).
         self._feature_ood_envelope = feature_ood_envelope
 
+        # -- f_xy head SERVE-SIGMA bar (G4, results arm 3 §5) -------------------
+        # Declared by the checkpoint itself, not by a deck knob: a coverage verdict
+        # belongs to the trained artifact.  Read from ``ensemble.json``'s
+        # ``fxy_head.serve_sigma`` (passed by :meth:`from_dir`) and — as a fallback,
+        # so a future trainer can stamp it per member — from any member meta's
+        # ``fxy_head.serve_sigma``.  ANY member asserting the bar bars the ensemble:
+        # a width objection is never outvoted.  ``None``/absent is the historical
+        # default and leaves every existing champion byte-identical.
+        # The SOURCE ``ensemble.json`` verbatim (``{}`` when the checkpoint has
+        # none).  Kept so :meth:`save` can round-trip it onto every derived
+        # checkpoint — a wave fine-tune's ``champion_wave_NN`` used to be written
+        # WITHOUT it, so a ``--resume`` reloading that dir silently lost the G4
+        # sigma bar and served the head's own width (campaign D3, results
+        # ``minfxy_T6T4_f121_r1`` §9).  Nothing is invented here: what is written
+        # back is the block that was read.
+        self.ensemble_meta: dict[str, Any] = dict(ensemble_meta or {})
+        if fxy_serve_sigma is None and self.ensemble_meta:
+            fxy_serve_sigma = (
+                self.ensemble_meta.get("fxy_head") or {}).get("serve_sigma")
+        serve_sigma = fxy_serve_sigma
+        if serve_sigma is None:
+            for m in self.metas:
+                v = (m.get("fxy_head") or {}).get("serve_sigma")
+                if v is not None and str(v).strip().lower() == FXY_SERVE_SIGMA_BARRED:
+                    serve_sigma = v
+                    break
+        self.fxy_serve_sigma: str = str(serve_sigma).strip().lower() if serve_sigma else ""
+
+    @property
+    def fxy_sigma_barred(self) -> bool:
+        """Is this checkpoint's f_xy head sigma REFUSED for serving? (G4 bar)
+
+        ``True`` only for a checkpoint that stamped
+        ``fxy_head.serve_sigma = "barred"`` — `s1j` does.  Consumers keep the head's
+        MEAN and its ``source = "head"`` tag and take the WIDTH from the interim
+        proxy convention instead (``acquisition.fxy_proxy``); see
+        :data:`FXY_SERVE_SIGMA_BARRED`.
+        """
+        return self.fxy_serve_sigma == FXY_SERVE_SIGMA_BARRED
+
     def _resolve_flatness_sigma_floor(self, override: dict | None) -> dict[str, float]:
         """Per-model ``{"node_peak": s, "map_cov": s}`` OOD floor for the map head.
 
@@ -723,6 +778,19 @@ class PosValCnnBackend:
                 feature_ood = json.loads(ood_path.read_text()).get("envelope")
             except (OSError, ValueError):
                 feature_ood = None
+        # f_xy head serve-sigma bar (G4).  Absent on every checkpoint before `s1j`,
+        # which is the backward-compat contract: no key -> nothing changes.
+        fxy_serve_sigma = None
+        ensemble_meta: dict = {}
+        ens_path = d / _ENSEMBLE_NAME
+        if ens_path.is_file():
+            try:
+                ens = json.loads(ens_path.read_text(encoding="utf-8"))
+                ensemble_meta = ens if isinstance(ens, dict) else {}
+                fxy_serve_sigma = (ens.get("fxy_head") or {}).get("serve_sigma")
+            except (OSError, ValueError, AttributeError):
+                ensemble_meta = {}
+                fxy_serve_sigma = None
         sigma_floor = None
         manifest = d / _BACKEND_MANIFEST
         if manifest.is_file():
@@ -746,7 +814,9 @@ class PosValCnnBackend:
                    flatness_calibration=flat_calib,
                    flatness_sigma_floor=sigma_floor,
                    pinbu_physics=pinbu, conformal=conformal, device=device,
-                   feature_ood_envelope=feature_ood)
+                   feature_ood_envelope=feature_ood,
+                   fxy_serve_sigma=fxy_serve_sigma,
+                   ensemble_meta=ensemble_meta)
 
     @classmethod
     def load(cls, path: str | Path, **kwargs: Any) -> "PosValCnnBackend":
@@ -892,14 +962,34 @@ class PosValCnnBackend:
         A :class:`CaseKey` carries no provenance, so ``dataset`` / ``sym_class``
         are derived from the *effective* ``library_id`` (:meth:`_effective_library`,
         which reroutes to the library that actually carries the pattern's fresh types
-        when the configured one does not — ga80 -> Dataset B / free69, else Dataset A
-        / rot61) rather than left at the RecordInputs defaults (``"A"`` / ``"rot61"``),
-        which biased ga80 inference onto the Dataset-A regime.  ``e_core`` / ``e_split``
-        use the same feed-average recipe as extraction so the served conditioning
-        equals the stored value.
+        when the configured one does not) rather than left at the RecordInputs
+        defaults (``"A"`` / ``"rot61"``), which biased ga80 inference onto the
+        Dataset-A regime.  ``e_core`` / ``e_split`` use the same feed-average recipe
+        as extraction so the served conditioning equals the stored value.
+
+        The derivation is :func:`~.featurize.serve_provenance`, **not**
+        :func:`~.featurize.library_provenance` (2026-08-29 train/serve forensic).
+        The latter is the historical-extractor map: it predates ``dataset="P"`` and
+        answered ga80 -> ``("B", "free69")`` / paramA -> ``("A", "rot61")``, but
+        18,973 of the 19,547 ga80 store rows and all 16,316 paramA rows are
+        campaign rows stamped ``("P", "rot61")``.  Serving therefore flipped
+        ``g_sym_class`` on every ga80 request and ``g_dataset_flag`` on every
+        paramA request relative to what those rows carried in TRAINING — a
+        2-of-20 cond-global train/serve break worth **-0.072 raw ``mu[f_r]`` bias**
+        on the 793 labelled S1j-val rows (ga80 -0.0992 / paramA +0.0011 vs
+        +0.0044 / -0.0045 through :meth:`predict_rows_raw`).  ``serve_provenance``
+        stamps what ``search.verify.outcome_to_record`` will write for this very
+        request, which is the definition of train/serve identity here; the parity
+        gate is ``tests/test_model_api.py::test_serve_row_featurization_parity``.
+
+        Every other field was ALREADY in exact parity and is untouched (measured
+        on the same 793 rows: ``pattern`` / ``feed`` / ``case_pair`` /
+        ``library_id`` / ``e_core`` / ``e_split`` differ on 0 rows — the effective
+        library round-trips for both live libraries and the 2026-08-29 e_core
+        backfill aligned the store column with this recipe exactly).
         """
         lib = self._effective_library(pattern)
-        dataset, sym_class = library_provenance(lib)
+        dataset, sym_class = serve_provenance(lib)
         e_core, e_split = core_enrichment_split(
             self.fuel, lib, pattern.batch_feed()
         )
@@ -1191,6 +1281,22 @@ class PosValCnnBackend:
             e_core, _ = self.cyclen_e_core(pat)
             keys.append(cyclen_cell_key(int(case.feed), e_core, self.conformal_bin_width))
         return keys
+
+    def conformal_cell_keys(self, patterns: Sequence[Pattern], case: CaseKey,
+                            cell: float = 0.0) -> list[str]:
+        """Public ``predict``-shaped accessor for the conformal cell keys.
+
+        Same recipe as :meth:`_conformal_cell_keys` but taking the ``(patterns,
+        case, cell)`` signature every other serve entry point takes, so a consumer
+        that needs a per-row quantile for a target OUTSIDE the seven-column
+        contract (``f_xy``, whose interval ``predict_interval`` cannot carry) can
+        key it identically to the fit without reaching into a private method.
+        """
+        patterns = list(patterns)
+        if not patterns:
+            return []
+        cases, _ = self._broadcast(patterns, case, cell)
+        return self._conformal_cell_keys(patterns, cases)
 
     def _pinbu_column(self, patterns: Sequence[Pattern], cases: Sequence[CaseKey],
                       cyclen: np.ndarray, raw_pin: np.ndarray) -> np.ndarray:
@@ -1702,8 +1808,10 @@ class PosValCnnBackend:
 
         RE-POINTED (program §13) at :meth:`predict_map_flatness` so there is ONE
         computation of the peak: this returns its first two outputs, i.e. the
-        multiplicity-weighted ``node_peak`` in PHYSICAL units (== F_xy) rather
-        than the head's z-space max the previous implementation returned.  The
+        multiplicity-weighted ``node_peak`` in PHYSICAL units — the BOC ASSEMBLY
+        radial peak (assembly-level 2-D), NOT MASTER's FXYP (pin planar), which
+        is the separate ``f_xy`` column — rather than the head's z-space max the
+        previous implementation returned.  The
         z-space max was monotone with the physical peak and therefore fine for a
         pure ranking, but the flatness objective consumes LEVELS (a scale, a bias
         correction, a record column to compare against), and a z-space number
@@ -1712,6 +1820,52 @@ class PosValCnnBackend:
         peak_mean, peak_std, _cov_mean, _cov_std = self.predict_map_flatness(
             patterns, case, cell, channel=channel)
         return peak_mean, peak_std
+
+    def predict_fxy(self, patterns: Sequence[Pattern], case: CaseKey,
+                    cell: float = 0.0
+                    ) -> tuple[np.ndarray, np.ndarray, str] | None:
+        """``(mean[N], sigma[N], source)`` for ``f_xy``, or ``None`` — no head.
+
+        MASTER's FXYP (pin PLANAR peaking) is the objective of the F_xy switch
+        (design 20260829), and it has **no slot in the frozen 7-column vendor
+        surrogate** — ``surrogate.TARGET_NAMES`` has no spare column and reusing
+        one would poison that axis's gate, exactly as ``predict`` refuses to route
+        ``discharge_burnup`` through ``max_assembly_burnup``.  So f_xy is served
+        OUTSIDE the 7-column contract, mirroring :meth:`predict_map_flatness`:
+        acquisition takes it as its own argument and builds its own UCB from it.
+        Nothing about :meth:`predict` changes.
+
+        ``None`` (not a NaN column) when this checkpoint carries no f_xy head, so
+        a caller can tell "the model cannot answer" from "the model answered NaN"
+        and fall back to its measured/proxy path — the fallback contract of design
+        §3.6, which forbids CLAIMING an f_xy prediction that does not exist.
+
+        ``source`` is ``"head"``: this is the head's own (prior + residual)
+        prediction, already composed inside :meth:`net.PosValNet._compose_fxy` and
+        de-normalized by ``_ensemble_raw``, so no prior arithmetic happens here.
+        The field exists so a caller can log WHICH estimator produced a number
+        once proxy-backed sources also exist.
+
+        σ is the CALIBRATED total σ, resolved BY TARGET NAME: a champion's
+        ``calibration.json`` predates f_xy and lists only the 7 legacy targets, so
+        :func:`~.calibrate.apply_calibration` passes the raw σ through for this
+        column rather than serving another column's isotonic curve (or, as the
+        original bug did, uninitialized memory).  Conformal intervals deliberately
+        do NOT cover f_xy in this phase (``conformal.CONFORMAL_TARGETS`` is keyed
+        on surrogate columns and f_xy has none, and the label count is far below
+        ``DEFAULT_MIN_CELL`` per cell) — :meth:`predict_interval` therefore leaves
+        no f_xy bound at all, which is the honest report.
+        """
+        if "f_xy" not in self.target_names:
+            return None
+        patterns = list(patterns)
+        if not patterns:
+            z = np.zeros(0)
+            return z, z.copy(), "head"
+        cases, _ = self._broadcast(patterns, case, cell)
+        mean_t, _epistemic_t, calibrated_t = self._ensemble_raw(patterns, cases)
+        k = self.target_names.index("f_xy")
+        return mean_t[:, k].copy(), calibrated_t[:, k].copy(), "head"
 
     def predict_extra(self, patterns: Sequence[Pattern], case: CaseKey,
                       cell: float = 0.0) -> ExtraPrediction:
@@ -1906,8 +2060,12 @@ class PosValCnnBackend:
     def save(self, path: str | Path) -> Path:
         out = Path(path)
         out.mkdir(parents=True, exist_ok=True)
+        written = []
         for meta, model in zip(self.metas, self.members):
-            save_member(out / f"member_{meta['seed']}", model, meta)
+            name = f"member_{meta['seed']}"
+            save_member(out / name, model, meta)
+            written.append(name)
+        self._save_ensemble_meta(out, written)
         if self.calibration is not None:
             (out / CALIB_NAME).write_text(
                 json.dumps(self.calibration, indent=2, sort_keys=True),
@@ -1933,6 +2091,36 @@ class PosValCnnBackend:
                        indent=2, sort_keys=True),
             encoding="utf-8")
         return out
+
+    def _save_ensemble_meta(self, out: Path, members: Sequence[str]) -> None:
+        """Round-trip the source ``ensemble.json`` onto a DERIVED checkpoint.
+
+        The f_xy serve-sigma bar (G4) lives in that file's ``fxy_head`` block and
+        is read back by :meth:`from_dir`, so a checkpoint written without it is a
+        checkpoint whose bar is GONE.  That is defect D3 of
+        ``data/reports/minfxy_T6T4_f121_r1_results_20260830.md``: the campaign's
+        per-wave ``models/champion_wave_NN`` carried members + ``backend.json``
+        but no ``ensemble.json``, so ``--resume`` reloaded a `s1j` descendant with
+        ``fxy_sigma_barred = False`` and served the head's own (over-wide) sigma
+        for the last 12 calls.
+
+        The block is COPIED, never synthesised: with no source meta and no
+        resolved bar nothing is written at all, which keeps every pre-`s1j`
+        checkpoint byte-identical to what it was.  Only ``members`` /
+        ``n_members`` are refreshed, to the member dirs this call actually wrote.
+        """
+        payload = dict(self.ensemble_meta)
+        if not payload and self.fxy_serve_sigma:
+            # The bar was asserted by a member meta rather than by an
+            # ``ensemble.json``.  Restate it at ensemble level so the derived
+            # checkpoint declares it the same way the source did in effect.
+            payload = {"fxy_head": {"serve_sigma": self.fxy_serve_sigma}}
+        if not payload:
+            return
+        payload["members"] = list(members)
+        payload["n_members"] = len(members)
+        (out / _ENSEMBLE_NAME).write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _cross_check_manifest(manifest: dict, metas: Sequence[dict]) -> None:

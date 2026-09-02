@@ -9,6 +9,7 @@ import math
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from lpopt.config import load_config
@@ -18,6 +19,7 @@ from lpopt.data.fuel_types import (
     FuelVec,
     GA80_TYPE_IDS,
     build_fuel_table,
+    core_enrichment_split,
     count_gd_pins_from_hgc,
     fuel_paths_from_config,
     load_manual_anchors,
@@ -262,3 +264,89 @@ def test_config_fuel_defaults() -> None:
     cfg = load_config(DECK)
     assert cfg.fuel.apr1400_root == "../0_APR1400"
     assert cfg.fuel.store == "data/store/fuel_types.parquet"
+
+
+# --------------------------------------------------------------------------- #
+# core_enrichment_split — THE derived-column formula (regression 20260829)
+#
+# ``e_core`` is a pure function of the REALIZED feed, never of the case's planned
+# split.  These pin the recipe on a synthetic library so the contract survives any
+# future fuel-table refresh:
+#
+#   * U-mass weighted when EVERY fed type has a known ``u_mass_g``;
+#   * count weighted when ANY fed type is missing one (all-or-nothing);
+#   * ``(None, None)`` — never a partial answer — when a fed type is unresolvable
+#     or carries no enrichment, so extraction and inference fall back identically;
+#   * and it is NOT ``pair_e_core(a, b, 0.5)``.  The produce/campaign write path
+#     stamped that NOMINAL equal-split value into ``records.e_core`` (paired with a
+#     null ``e_split``), which is how 979 store rows came to advertise a core that
+#     was never loaded — up to 0.068 w/o away from their own pattern, ~1.4 curriculum
+#     e_core bins.
+# --------------------------------------------------------------------------- #
+_SYNTH_COLUMNS = dict(n_gd=None, source_flags=None, axial_zone=None,
+                      feature_poor=False)
+
+
+def _synth_library(*types: tuple[str, float | None, float | None]) -> FuelLibrary:
+    """A one-library FuelLibrary from ``(type_id, enrichment, u_mass_g)`` triples."""
+    rows = [dict(library_id="synth", type_id=tid, u_avg_enrichment=enr,
+                 u_mass_g=mass, **_SYNTH_COLUMNS) for tid, enr, mass in types]
+    return FuelLibrary(pd.DataFrame(rows))
+
+
+def test_core_enrichment_split_is_u_mass_weighted_on_the_realized_feed() -> None:
+    lib = _synth_library(("A", 5.0, 100.0), ("B", 6.0, 200.0))
+    e_core, e_split = core_enrichment_split(lib, "synth", {"A": 69, "B": 52})
+    # (69*100*5 + 52*200*6) / (69*100 + 52*200) = 96900 / 17300
+    assert e_core == pytest.approx(96900.0 / 17300.0)
+    assert e_split == pytest.approx(1.0)                    # max(e) - min(e)
+    # ... and NOT the count-weighted mean, nor the nominal 50/50 pair value.
+    assert abs(e_core - 657.0 / 121.0) > 1e-3               # count weighted
+    assert abs(e_core - pair_e_core(lib.get("A", "synth"),
+                                    lib.get("B", "synth"), 0.5)) > 1e-3
+
+
+def test_core_enrichment_split_tracks_the_split_not_the_nominal() -> None:
+    """Two feeds of the SAME case give two different e_core — exactly the property
+    the nominal write path destroyed by stamping one constant across a campaign."""
+    lib = _synth_library(("A", 5.0, 100.0), ("B", 6.0, 200.0))
+    a, _ = core_enrichment_split(lib, "synth", {"A": 69, "B": 52})
+    b, _ = core_enrichment_split(lib, "synth", {"A": 53, "B": 68})
+    assert abs(a - b) > 1e-6
+    assert b > a                                            # more of the rich type
+    # the endpoints are the pure single-type values, with a zero spread
+    only_a, spread = core_enrichment_split(lib, "synth", {"A": 121})
+    assert only_a == pytest.approx(5.0) and spread == pytest.approx(0.0)
+
+
+def test_core_enrichment_split_count_weights_when_any_mass_unknown() -> None:
+    """All-or-nothing: ONE missing u_mass_g demotes the whole feed to count
+    weighting (the ga80 letter library, whose masses are all NaN)."""
+    lib = _synth_library(("A", 5.0, 100.0), ("B", 6.0, None))
+    e_core, e_split = core_enrichment_split(lib, "synth", {"A": 69, "B": 52})
+    assert e_core == pytest.approx((69 * 5.0 + 52 * 6.0) / 121.0)
+    assert e_split == pytest.approx(1.0)
+
+
+def test_core_enrichment_split_three_types() -> None:
+    lib = _synth_library(("A", 5.0, 100.0), ("B", 6.0, 200.0), ("C", 5.5, 150.0))
+    e_core, e_split = core_enrichment_split(lib, "synth", {"A": 65, "B": 56, "C": 4})
+    num = 65 * 100 * 5.0 + 56 * 200 * 6.0 + 4 * 150 * 5.5
+    den = 65 * 100 + 56 * 200 + 4 * 150
+    assert e_core == pytest.approx(num / den)
+    assert e_split == pytest.approx(1.0)                    # 6.0 - 5.0, not a stdev
+
+
+def test_core_enrichment_split_returns_a_none_pair_not_a_partial() -> None:
+    lib = _synth_library(("A", 5.0, 100.0), ("B", 6.0, 200.0), ("N", None, 100.0))
+    assert core_enrichment_split(lib, "synth", {"A": 69, "Z": 52}) == (None, None)
+    assert core_enrichment_split(lib, "other", {"A": 121}) == (None, None)
+    assert core_enrichment_split(lib, "synth", {"A": 69, "N": 52}) == (None, None)
+    assert core_enrichment_split(lib, "synth", {}) == (None, None)
+
+
+def test_core_enrichment_split_zero_padding_tolerance() -> None:
+    """``resolve_type_id`` normalization is part of the recipe: a ``C01`` batch
+    name in a pattern still finds the roster's ``C1``."""
+    lib = _synth_library(("C1", 5.0, 100.0))
+    assert core_enrichment_split(lib, "synth", {"C01": 121})[0] == pytest.approx(5.0)

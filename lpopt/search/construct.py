@@ -8,9 +8,10 @@ three sources, in the plan's proportions:
   empty) plus the top-predicted candidates from the previous wave's pool; each
   child is a small-``n_moves`` mutation (a trust-region bias that widens with the
   wave index).  ``[acquisition] policy_prior`` (default ``"off"``) optionally
-  ranks each parent's proposed edits with the v1 learned move policy and
-  softmax-samples one, keeping a floor of unscored random mutations
-  (``data/reports/policy_v1_results_20260815.md`` section 7);
+  ranks each parent's proposed edits with a learned move policy (``v1`` or
+  ``v2``) and softmax-samples one, keeping a floor of unscored random mutations
+  (``data/reports/policy_v1_results_20260815.md`` section 7); ``shadow_v2``
+  builds the pool exactly as ``off`` does and only RECORDS v2's scores;
 * **rollout-scored guided construction (~30%)** — a seed ("prefix") genome is
   greedily completed into ``completions_per_prefix`` *complete* patterns, the
   surrogate scores those complete boards (the CNN never scores a partial board,
@@ -184,39 +185,143 @@ def _heuristic_genome(ctx: CaseContext, rng: random.Random) -> GeneralOrbitGenom
 #: control arm — the failure mode that makes an A/B measure nothing.
 _POLICY_WARNED = False
 
+#: ``[acquisition] policy_prior`` -> ``(family, head)``.  The deck validator's
+#: accepted-value list is the key set of this table (``config._VALID_POLICY_
+#: PRIORS``), so a mode the deck accepts is always a mode this dispatcher knows.
+#:
+#: ``fr`` / ``flat`` / ``both`` are v1's original spellings and keep their exact
+#: meaning; ``v1`` is ``both`` named by version.  The v2 modes rank on the mean
+#: of the two heads: the A/B this wiring exists for is judged on a verified
+#: objective, not on one head, and the prereg fixes the arm rather than the deck.
+POLICY_MODES: dict[str, tuple[str, str]] = {
+    "off": ("off", ""),
+    "fr": ("v1", "fr"),
+    "flat": ("v1", "flat"),
+    "both": ("v1", "both"),
+    "v1": ("v1", "both"),
+    "v2": ("v2", "both"),
+    "shadow_v2": ("shadow_v2", "both"),
+}
 
-def _policy_prior(cfg: Any) -> tuple[Any, str]:
-    """``(scorer, mode)`` for the elite-mutation prior; ``(None, "off")`` if unused.
 
-    ``mode`` is ``[acquisition] policy_prior``.  Loading is deferred to the first
-    call that actually wants it, so a flag-off campaign never imports torch.
+@dataclass(frozen=True)
+class PolicyPrior:
+    """What ``[acquisition] policy_prior`` resolved to for one pool build.
+
+    :attr:`scorer` ranks the elite draw and is ``None`` whenever the pool must be
+    built exactly as ``off`` builds it — the flag being off, a shadow arm, or a
+    non-strict load failure.  :attr:`shadow` scores children WITHOUT selecting
+    them.  The three readout fields are always written to the wave metadata, so
+    a fallback can never be read back as policy-on.
+    """
+
+    mode: str = "off"          #: the deck value, verbatim
+    head: str = ""             #: "fr" | "flat" | "both" — which score column ranks
+    scorer: Any = None         #: ranks the elite draw; None == unscored mutation
+    shadow: Any = None         #: scores every elite child, never selects
+    version: str = ""          #: "v1" / "v2" — what actually loaded, "" if nothing
+    fallback: bool = False     #: requested but not loaded (non-strict only)
+
+    def as_meta(self) -> dict[str, Any]:
+        return {"policy_mode": self.mode, "policy_version": self.version,
+                "policy_fallback": self.fallback}
+
+
+def _policy_prior(cfg: Any) -> PolicyPrior:
+    """Resolve the elite-mutation prior; ``PolicyPrior()`` (all off) if unused.
+
+    Loading is deferred to the first call that actually wants it, so a flag-off
+    campaign never imports torch.
+
+    ``[acquisition] policy_prior_strict`` is the production fail-closed switch
+    (review section 6.12): with it set, a deck that names a policy and cannot
+    load it RAISES here — at the first pool build, i.e. campaign start — instead
+    of running a random-mutation control arm under a policy-on label.
     """
 
     global _POLICY_WARNED
     acq = getattr(cfg, "acquisition", None)
     mode = str(getattr(acq, "policy_prior", "off") or "off").strip().lower()
-    if mode == "off":
-        return None, "off"
-    from ..policy.scorer import DEFAULT_MODEL_DIR, get_scorer
+    if mode not in POLICY_MODES:
+        # ``load_config`` rejects these already; this catches a hand-built config
+        # (autoeng override, a script's SimpleNamespace) whose typo would
+        # otherwise resolve to "off" and run a control arm under a policy label.
+        raise ValueError(f"[acquisition] policy_prior {mode!r} unknown; expected "
+                         f"one of {sorted(POLICY_MODES)}")
+    family, head = POLICY_MODES[mode]
+    if family == "off":
+        return PolicyPrior()
 
-    scorer = get_scorer(
-        getattr(acq, "policy_prior_model_dir", DEFAULT_MODEL_DIR),
-        device="cpu",
-        n_threads=int(getattr(acq, "policy_prior_threads", 4)),
-    )
+    version = "v2" if family in ("v2", "shadow_v2") else "v1"
+    model_dir = (getattr(acq, "policy_prior_model_dir_v2", None) if version == "v2"
+                 else getattr(acq, "policy_prior_model_dir", None))
+    strict = bool(getattr(acq, "policy_prior_strict", False))
+    try:
+        # INSIDE the guard: ``lpopt.policy`` imports torch at module scope, and a
+        # torch that will not load (a broken DLL, an absent install) raises HERE,
+        # before ``get_scorer``'s own try can see it.  Left unguarded it aborts
+        # the whole campaign in NON-strict mode — the opposite of the documented
+        # contract, which is "warn and fall back".  Observed, not theoretical.
+        from ..policy.scorer import get_scorer
+
+        scorer = get_scorer(
+            model_dir,
+            version=version,
+            device="cpu",
+            n_threads=int(getattr(acq, "policy_prior_threads", 4)),
+            strict=strict,
+        )
+    except Exception:  # noqa: BLE001 — strict re-raises on the next line
+        if strict:
+            raise
+        scorer = None
     if scorer is None:
         if not _POLICY_WARNED:
             _POLICY_WARNED = True
             print(f"[construct] WARNING [acquisition] policy_prior={mode!r} but the "
                   f"policy checkpoints did not load; the elite arm falls back to "
                   f"UNSCORED random mutation for this whole run")
-        return None, "off"
-    return scorer, mode
+        return PolicyPrior(mode=mode, fallback=True)
+    if family == "shadow_v2":
+        # The pool is built exactly as `off` builds it — no scorer reaches the
+        # elite loop, so not one rng draw moves — and v2 only watches.
+        return PolicyPrior(mode=mode, head=head, shadow=scorer,
+                           version=scorer.version)
+    return PolicyPrior(mode=mode, head=head, scorer=scorer,
+                       version=scorer.version)
+
+
+def _policy_scores(scorer: Any, ctx: Any, parent: Any,
+                   children: Sequence[tuple[Any, Any]]) -> np.ndarray | None:
+    """``[n, H]`` raw ensemble output, or ``None`` if the forward failed.
+
+    The one place a policy forward is taken, shared by the selecting path
+    (:func:`_policy_pick`) and the recording path (shadow), so the two can never
+    read the ensemble differently.  Failure is ``None`` rather than an exception
+    for the same reason ``_score_completions`` swallows a surrogate failure: the
+    prior must never abort construction.
+    """
+
+    try:
+        probs = np.asarray(scorer.score(parent, children, ctx), dtype=float)
+        if probs.ndim != 2 or not np.all(np.isfinite(probs)):
+            raise ValueError("policy returned a non-finite or misshaped score")
+    except Exception:  # noqa: BLE001 — see docstring
+        return None
+    return probs
+
+
+def _policy_head(probs: np.ndarray, head: str) -> np.ndarray:
+    """The ``[n]`` ranking column: one head, or the mean of both."""
+
+    from ..policy.scorer import HEAD_INDEX
+
+    return probs.mean(axis=1) if head == "both" else probs[:, HEAD_INDEX[head]]
 
 
 def _policy_pick(
     scorer: Any,
-    mode: str,
+    head: str,
     ctx: CaseContext,
     parent: GeneralOrbitGenome,
     candidates: list[tuple[GeneralOrbitGenome, Pattern, str]],
@@ -233,21 +338,15 @@ def _policy_pick(
     never abort construction.
     """
 
+    probs = _policy_scores(
+        scorer, ctx, (parent, parent.to_pattern()),
+        [(genome, pattern) for genome, pattern, _ in candidates],
+    )
+    if probs is None:
+        return rng.randrange(len(candidates))
     try:
-        probs = scorer.score(
-            (parent, parent.to_pattern()),
-            [(genome, pattern) for genome, pattern, _ in candidates],
-            ctx,
-        )
-        from ..policy.scorer import HEAD_INDEX
-
-        if mode == "both":
-            score = np.asarray(probs, dtype=float).mean(axis=1)
-        else:
-            score = np.asarray(probs, dtype=float)[:, HEAD_INDEX[mode]]
-        if not np.all(np.isfinite(score)):
-            raise ValueError("policy returned a non-finite score")
-    except Exception:  # noqa: BLE001 — the prior must never abort construction
+        score = _policy_head(probs, head)
+    except (KeyError, IndexError):     # a head this ensemble does not have
         return rng.randrange(len(candidates))
 
     tau = max(float(temperature), 1e-6)
@@ -294,6 +393,7 @@ def build_pool(
     prev_top: Sequence[tuple[str | None, Pattern]] = (),
     near_miss_parents: Sequence[tuple[str | None, Pattern]] = (),
     size: int | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> list[Candidate]:
     """Build a deduplicated candidate pool for one wave (plan sec. 4.6).
 
@@ -306,6 +406,13 @@ def build_pool(
     across ALL parents so no single parent's neighbourhood dominates the pool
     (the pilot's parent-concentration failure).  ``size`` overrides the configured
     pool size (StubEvaluator tests pass ~500).
+
+    ``meta``, when a dict is passed, is FILLED with what the policy prior did:
+    ``policy_mode`` (the deck value), ``policy_version`` (what actually loaded,
+    ``""`` when nothing did), ``policy_fallback`` (requested but unloadable), and
+    — in ``shadow_v2`` — ``policy_shadow_scores``, a ``record_id -> [fr, flat]``
+    map over the elite children.  The caller writes it into the wave artifact; a
+    caller that passes nothing is unaffected.
     """
 
     search = cfg.search
@@ -364,11 +471,19 @@ def build_pool(
     # edits FROM ONE PARENT, ranks them, and softmax-samples one.  With the flag
     # off ``scorer`` is None, no branch below is entered, and the rng is drawn in
     # exactly the sequence it was drawn before the knob existed.
-    scorer, policy_mode = _policy_prior(cfg)
+    prior = _policy_prior(cfg)
+    scorer = prior.scorer
     acq = getattr(cfg, "acquisition", None)
     policy_floor = float(getattr(acq, "policy_prior_random_floor", 0.20))
     policy_n = max(1, int(getattr(acq, "policy_prior_candidates", 16)))
-    policy_tau = float(getattr(acq, "policy_prior_temperature", 0.25))
+    policy_tau = float(
+        getattr(acq, "policy_prior_temperature_v2", 0.08) if prior.version == "v2"
+        else getattr(acq, "policy_prior_temperature", 0.25))
+    # shadow_v2: every elite child this pool admits, kept per parent because the
+    # scorer is only valid WITHIN a parent, and scored after the loop so the
+    # recording cannot perturb the draw sequence it is observing.
+    shadow_batches: list[tuple[Any, list[tuple[Any, Any, str]]]] = [
+        (parent, []) for _, parent, _ in parents] if prior.shadow else []
 
     elite_made = 0
     attempts = 0
@@ -376,7 +491,7 @@ def build_pool(
     per_parent_tries = max(4, int(round(1.0 / max(search.elite_frac, 0.05))) + 2)
     while parents and elite_made < n_elite and attempts < max_attempts:
         progressed = False
-        for parent_rid, parent, moves in parents:
+        for p_i, (parent_rid, parent, moves) in enumerate(parents):
             if elite_made >= n_elite:
                 break
             # POLICY-SCORED SLOT.  The floor draw comes first so a floor slot
@@ -401,11 +516,13 @@ def build_pool(
                     scored.append((child, pattern, rid))
                 if scored:
                     child, pattern, rid = scored[_policy_pick(
-                        scorer, policy_mode, ctx, parent, scored, rng, policy_tau)]
+                        scorer, prior.head, ctx, parent, scored, rng, policy_tau)]
                     if _admit(Candidate(pattern, child, "elite", parent_rid, rid,
                                         ctx.e_core)):
                         elite_made += 1
                         progressed = True
+                        if shadow_batches:
+                            shadow_batches[p_i][1].append((child, pattern, rid))
                     continue
             # feed_move_prob=0: a fixed-case campaign never drifts off its feed
             # grid point (feed_range/free modes are deferred, plan sec. 6.2).
@@ -422,9 +539,29 @@ def build_pool(
                 if _admit(Candidate(pattern, child, "elite", parent_rid, rid, ctx.e_core)):
                     elite_made += 1
                     progressed = True
+                    if shadow_batches:
+                        shadow_batches[p_i][1].append((child, pattern, rid))
                     break
         if not progressed:                     # every parent exhausted its novel
             break                              # 1-move neighbourhood this round
+
+    # -- shadow readout: score what was built, change nothing about it ------- #
+    if meta is not None:
+        meta.update(prior.as_meta())
+    if prior.shadow is not None:
+        shadow_scores: dict[str, list[float]] = {}
+        for parent, kids in shadow_batches:
+            if not kids:
+                continue
+            probs = _policy_scores(
+                prior.shadow, ctx, (parent, parent.to_pattern()),
+                [(child, pattern) for child, pattern, _ in kids])
+            if probs is None:
+                continue
+            for (_, _, rid), row in zip(kids, probs, strict=True):
+                shadow_scores[rid] = [round(float(x), 6) for x in row]
+        if meta is not None:
+            meta["policy_shadow_scores"] = shadow_scores
 
     # -- 2. rollout-scored guided construction ------------------------------ #
     beam = max(1, int(search.beam_width))
@@ -701,6 +838,7 @@ def screen_e_core_band(
 
 __all__ = [
     "CAMPAIGN_DECK_KNOBS", "CaseContext", "Candidate", "PairCell",
+    "POLICY_MODES", "PolicyPrior",
     "achievable_e_core_interval", "build_pair_universe", "build_pool",
     "candidate_record_id", "e_core_in_band", "predicted_e_core",
     "screen_e_core_band",

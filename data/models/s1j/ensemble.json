@@ -1,0 +1,25 @@
+{
+  "base_seed": 20260716,
+  "members": [
+    "member_20260716",
+    "member_20260717",
+    "member_20260718",
+    "member_20260719",
+    "member_20260720"
+  ],
+  "n_members": 5,
+  "parallel_members": 1,
+  "split": "S1j",
+  "fxy_head": {
+    "serve_sigma": "barred",
+    "bar": "G4",
+    "verdict": "data/reports/fxy_head_results_arm3_20260829.md",
+    "measured_coverage_68": 0.831021,
+    "allowed_coverage_68": [
+      0.55,
+      0.8
+    ],
+    "reason": "G4 FAIL (over-wide): 68% coverage 0.831021 > 0.80. Disposition C.4 promotes the head but bars its sigma from serving. predict_fxy keeps the head MEAN and source='head' and substitutes the proxy's inflated sigma (FXY_PROXY_RESID_SD 0.0476 x FXY_PROXY_SIGMA_K 3.0, propagated through FXY_PROXY_SLOPE 1.2176 on the F_r sigma).",
+    "barred_at": "2026-08-30"
+  }
+}

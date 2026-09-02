@@ -46,6 +46,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from ..data.fuel_types import FuelLibrary
+from ..safelog import configure_stdio
 from ..data.store import StoreReader
 from ..data.traj import DEFAULT_ANCHORS as TRAJ_ANCHORS
 from ..data.traj import N_PLANES as TRAJ_PLANES
@@ -57,6 +58,8 @@ from .dataset_torch import (
 from .featurize import (
     CHANNELS, CHANNELS_BY_SCHEMA, DEFAULT_COND_SCHEMA, FeatureEncoder)
 from .net import TRAJ_MAP_CHANNELS, PosValNet, PosValNetConfig, count_parameters
+from .physics_prior import (
+    MIN_FXY_LABELS, FxyFrPrior, fit_fxy_prior, fxy_prior_z)
 from .splits import SplitManifest, make_splits
 
 COND_SCHEMA = "v3"          # Phase D expanded envelope (plan sec. 12.4)
@@ -155,6 +158,45 @@ class TrainConfig:
     #     first-class regression target; the global head grows by one output and
     #     the label is masked wherever absent.
     promote_max_asm_bu: bool = False
+    # (3b) Promote f_xy (MASTER's FXYP, pin planar peaking) to a first-class
+    #      regression target — the 8th/9th head row, APPENDED exactly as
+    #      max_assembly_burnup was.  The label exists on ~2% of store rows, so the
+    #      row trains on the masked subset only, and it regresses the RESIDUAL
+    #      against the measured ``F_xy ~ F_r`` affine rather than the absolute
+    #      value (net.PosValNet._compose_fxy; design 20260829 §3.4).  Training
+    #      REFUSES if the train fold carries fewer than
+    #      ``physics_prior.MIN_FXY_LABELS`` labelled rows.
+    promote_fxy: bool = False
+    # (3b-i) Compose the f_xy row against the ``a*f_r + b`` prior (the default,
+    #      and what the 20260829 arm-1 run shipped) or predict f_xy DIRECTLY.
+    #      With ``--freeze-trunk-cyclen`` the mu head is a LINEAR probe on a
+    #      frozen embedding and ``mu[f_r]`` is another linear probe on that same
+    #      embedding, so "prior + linear residual" and "direct" span the SAME
+    #      function class — measured offline on S1j (see Amendment B): 0.0701 vs
+    #      0.0708 MAE, 0.761 vs 0.766 rho.  The prior is therefore an
+    #      INITIALIZATION and a graceful-degradation floor, not extra capacity,
+    #      and the direct mode exists to measure that claim rather than assume it.
+    fxy_prior_residual: bool = True
+    # (3b-ii) Fit that prior on the model's OWN predicted F_r instead of on the
+    #      MEASURED F_r.  The composition (net._compose_fxy) reads the raw
+    #      ``mu[f_r]`` row, which carries the F_r head's uniform under-prediction
+    #      (bias -0.0655 on s1i) that ``f_r_calibration.json`` exists to remove --
+    #      and that artifact is applied in ``predict``, i.e. AFTER the composition
+    #      has already happened inside the net.  A measured-F_r-fitted prior
+    #      therefore inherits ``a * bias`` = -0.081, exactly the arm-1 f_xy bias.
+    #      Fitting on the model's own predicted F_r absorbs it and keeps train and
+    #      serve reading the SAME row (offline: floor MAE 0.1056 -> 0.0894, bias
+    #      -0.077 -> +0.014).  Costs one eval-mode pass over the labelled train
+    #      rows per member, after ``--init-from``.
+    fxy_prior_on_predicted: bool = False
+    # (3b-iii) Weight of the f_xy val score in the best-epoch / early-stop
+    #      criterion.  0.0 (default) reproduces the legacy selection EXACTLY.
+    #      ``fxy_metrics`` deliberately stays out of ``composite_metric`` -- a
+    #      2%-labelled axis must not silently move a general-purpose retrain's
+    #      checkpoint -- but a run whose ONLY purpose is the f_xy head must be
+    #      able to select on it: arm 1 picked epochs 4-37 on a composite blind to
+    #      f_xy, before its own LR warmup ended, and shipped an untrained residual.
+    fxy_select_weight: float = 0.0
     # --- post-train artifacts -------------------------------------------------
     # Fit the per-cell cyclen + F_r affine calibrations into the new model dir at
     # the end of a retrain (train-split rows only, leakage-asserted).  This writes
@@ -748,6 +790,124 @@ def residual_target_frame(df: pd.DataFrame, cyclen_prior: np.ndarray
     return out
 
 
+def resolve_fxy_prior(train_df: pd.DataFrame, norm_df: pd.DataFrame,
+                      target_names: Sequence[str], *, verbose: bool = False,
+                      prior_residual: bool = True,
+                      ) -> tuple[int, int, Any | None, tuple[float, float]]:
+    """Resolve the F_xy prior-residual head from the TRAIN frame.
+
+    Returns ``(fxy_idx, ref_idx, prior, (A, B))``.  Without ``f_xy`` in
+    ``target_names`` this is ``(-1, -1, None, (0.0, 0.0))``, i.e. every
+    ``net_config`` field stays at its default and the built network is
+    byte-identical to the pre-F_xy one.
+
+    ``prior_residual=False`` (``--fxy-direct``) keeps the label guard and the
+    fitted prior — which is still stamped into the meta as the REPORTED baseline
+    — but returns ``ref_idx = -1``, so ``net.PosValNet`` builds with the
+    composition OFF and the f_xy row predicts the ABSOLUTE value.  The mu head is
+    linear, so under a frozen trunk this is the same hypothesis class as
+    prior + linear residual; the flag exists so the two can be measured against
+    each other instead of assumed equivalent.
+
+    The prior is fitted ONCE, on the TRAIN frame only — the same leakage rule the
+    cyclen physics prior and the diffusion power prior obey — and converted into
+    the z space the ``mu`` head lives in (see
+    :func:`~.physics_prior.fxy_prior_z`); ``norm_df`` is the frame the z-score
+    constants come from, so under cyclen residual learning it is the residual
+    frame, exactly as for every other target.
+
+    **Guard.** Fewer than :data:`~.physics_prior.MIN_FXY_LABELS` labelled train
+    rows raises.  A head fitted on a handful of labels would still produce a
+    number for every served core, and that number would be indistinguishable at
+    the API from a trained one — the design's F_xy gate sits at 1.65 with a prior
+    residual sd of 0.029, so a head trained on noise is not a weak signal but a
+    wrong feasibility claim.  Refusing loudly is the only honest option.
+    """
+    names = tuple(target_names)
+    if "f_xy" not in names:
+        return -1, -1, None, (0.0, 0.0)
+    if "f_r" not in names:
+        raise ValueError("promote_fxy needs an 'f_r' target to build the F_xy "
+                         "prior from; target_names=%r" % (names,))
+    fxy_idx = names.index("f_xy")
+    ref_idx = names.index("f_r")
+    prior = fit_fxy_prior(train_df, split="train")
+    if prior.n_fit < MIN_FXY_LABELS:
+        raise ValueError(
+            f"promote_fxy: only {prior.n_fit} labelled f_xy train rows "
+            f"(need >= {MIN_FXY_LABELS}); refusing to train an f_xy head on a "
+            "label set too small to fit its prior or to learn a residual against "
+            "it.  Backfill f_xy labels before promoting.")
+    if not prior_residual:
+        if verbose:
+            print(f"=== f_xy head: DIRECT mode — no prior composition; the row "
+                  f"regresses ABSOLUTE f_xy.  (Reported baseline prior f_xy = "
+                  f"{prior.a:.4f}*f_r {prior.b:+.4f} on {prior.n_fit} labelled "
+                  f"train rows, resid sd={prior.resid_sd:.4f}) ===", flush=True)
+        return fxy_idx, -1, prior, (0.0, 0.0)
+    t_mean, t_std = compute_target_norm(norm_df, names)
+    ab = fxy_prior_z(prior, t_mean, t_std, fxy_idx, ref_idx)
+    if verbose:
+        print(f"=== f_xy head: prior f_xy = {prior.a:.4f}*f_r {prior.b:+.4f} on "
+              f"{prior.n_fit} labelled train rows (r={prior.pearson:.4f}, "
+              f"resid sd={prior.resid_sd:.4f}); head regresses the RESIDUAL, "
+              f"z prior (A={ab[0]:.4f}, B={ab[1]:.4f}) ===", flush=True)
+    return fxy_idx, ref_idx, prior, ab
+
+
+def refit_fxy_prior_on_predicted(
+    model: PosValNet, tensors: dict[str, torch.Tensor], *,
+    fxy_idx: int, ref_idx: int, tmean: np.ndarray, tstd: np.ndarray,
+    device: torch.device, batch_size: int = 512,
+) -> tuple[Any, tuple[float, float]] | None:
+    """Refit ``f_xy = a*f_r + b`` on the MODEL'S OWN predicted F_r, in eval mode.
+
+    ``net.PosValNet._compose_fxy`` composes on the RAW ``mu[f_r]`` row — never on
+    the ``f_r_calibration.json``-corrected column that ``predict`` serves, because
+    that correction is applied outside the network, after the composition.  A
+    prior fitted on the MEASURED F_r therefore hands the f_xy row the F_r head's
+    whole systematic offset multiplied by ``a`` (measured: 1.2161 x -0.0655 =
+    -0.0797 against an observed f_xy bias of -0.0809).  Fitting the same two
+    scalars against the row the composition actually reads absorbs that offset
+    and — unlike applying the calibration at serve time only — leaves train and
+    serve reading the IDENTICAL quantity.
+
+    Runs after ``--init-from`` has loaded the champion weights, on the labelled
+    f_xy train rows only (the same rows :func:`~.physics_prior.fit_fxy_prior`
+    uses, so the leakage rule is unchanged: no val row is touched).  Returns
+    ``None`` — leaving the measured-F_r prior in place — when the labelled subset
+    is degenerate; the caller has already enforced ``MIN_FXY_LABELS``.
+    """
+    mask = tensors["target_mask"][:, fxy_idx].detach().cpu() > 0
+    rows = torch.nonzero(mask, as_tuple=True)[0]
+    if int(rows.numel()) < 2:
+        return None
+    y = tensors["targets"].detach().cpu()[rows, fxy_idx].numpy().astype(float)
+    cells = tensors["cells"]
+    globals_ = tensors["globals"]
+    was_training = model.training
+    model.eval()
+    chunks: list[np.ndarray] = []
+    with torch.no_grad():
+        for start in range(0, int(rows.numel()), batch_size):
+            sel = rows[start:start + batch_size]
+            c = cells.index_select(0, sel.to(cells.device)).to(device)
+            g = globals_.index_select(0, sel.to(globals_.device)).to(device)
+            chunks.append(model(c, g)["mu"][:, ref_idx].float().cpu().numpy())
+    model.train(was_training)
+    x = np.concatenate(chunks) * float(tstd[ref_idx]) + float(tmean[ref_idx])
+    ok = np.isfinite(x) & np.isfinite(y)
+    if int(ok.sum()) < 2 or float(np.ptp(x[ok])) < 1e-9:
+        return None
+    a, b = np.polyfit(x[ok], y[ok], 1)
+    resid = y[ok] - (a * x[ok] + b)
+    prior = FxyFrPrior(
+        a=float(a), b=float(b), n_fit=int(ok.sum()),
+        pearson=float(np.corrcoef(x[ok], y[ok])[0, 1]),
+        resid_sd=float(resid.std()), split="train:predicted_f_r")
+    return prior, fxy_prior_z(prior, tmean, tstd, fxy_idx, ref_idx)
+
+
 # --------------------------------------------------------------------------- #
 # normalized batch helper
 # --------------------------------------------------------------------------- #
@@ -915,6 +1075,7 @@ def build_precomputed(
     subset_rows: int | None = None,
     censor_dataset_a_pin_labels: bool = True,
     promote_max_asm_bu: bool = False,
+    promote_fxy: bool = False,
     include_axial: bool = False,
     include_traj: bool = False,
     traj_anchors: Sequence[float] = TRAJ_ANCHORS,
@@ -924,6 +1085,7 @@ def build_precomputed(
                      encoder=encoder, seed=seed,
                      censor_dataset_a_pin_labels=censor_dataset_a_pin_labels,
                      promote_max_asm_bu=promote_max_asm_bu,
+                     promote_fxy=promote_fxy,
                      include_axial=include_axial,
                      include_traj=include_traj, traj_anchors=traj_anchors)
     if subset_rows is not None and subset_rows < len(base):
@@ -1199,6 +1361,62 @@ def composite_metric(pred: dict[str, np.ndarray], df: pd.DataFrame,
     }
 
 
+def fxy_metrics(pred: dict[str, np.ndarray], df: pd.DataFrame,
+                tmean: np.ndarray, tstd: np.ndarray,
+                target_names: Sequence[str], min_case: int) -> dict[str, float]:
+    """Val-fold ``f_xy`` metrics on the LABELLED SUBSET only (``{}`` when off).
+
+    Deliberately NOT folded into :func:`composite_metric`: the composite selects
+    the best epoch for EVERY run, and an axis labelled on ~2% of rows must not be
+    able to move that selection in a general-purpose retrain (a noisy 20-row
+    Spearman would otherwise pick the checkpoint).
+
+    ``fxy_select`` is the same shape as ``composite`` (``within-cell Spearman
+    minus z-space MAE``) so a run that explicitly opts in with
+    ``TrainConfig.fxy_select_weight > 0`` can ADD it to the composite instead of
+    replacing it — the legacy axes keep their veto, and the f_xy head stops being
+    selected by a criterion that cannot see it.  It is NaN whenever the val fold
+    carries no labelled row, and the weighted selection then falls back to the
+    plain composite.
+
+    ``within_cell_spearman_f_xy`` reuses :func:`within_case_spearman` on the same
+    ``case_pair`` grouping the F_r metric uses, so "within cell" means exactly
+    what it already means everywhere else in this file.  Labelled rows are sparse,
+    so it usually falls back to that helper's global-Spearman branch — the
+    ``n_fxy_cells`` count says which happened (0 == the global fallback).
+    """
+    names = list(target_names)
+    if "f_xy" not in names:
+        return {}
+    k = names.index("f_xy")
+    mask = pred["target_mask"][:, k]
+    true = pred["targets"][:, k]
+    sel = mask > 0
+    n = int(sel.sum())
+    if n == 0:
+        return {"n_fxy_val": 0.0, "mae_f_xy": float("nan"),
+                "z_mae_f_xy": float("nan"), "fxy_select": float("nan"),
+                "within_cell_spearman_f_xy": float("nan"), "n_fxy_cells": 0.0}
+    mean_raw = denormalize(pred["mu_z_members"].mean(axis=0), tmean, tstd)
+    rid_to_cp = dict(zip(df["record_id"].astype(str), df["case_pair"].astype(str)))
+    case_pairs = np.asarray([rid_to_cp.get(str(r), "?") for r in pred["record_ids"]])
+    sp, _sd, n_cells = within_case_spearman(
+        mean_raw[:, k], true, mask, case_pairs, min_case)
+    mae = float(np.mean(np.abs(mean_raw[sel, k] - true[sel])))
+    scale = float(tstd[k])
+    z_mae = mae / scale if math.isfinite(scale) and scale > 0 else float("nan")
+    select = (sp - z_mae if math.isfinite(sp) and math.isfinite(z_mae)
+              else float("nan"))
+    return {
+        "n_fxy_val": float(n),
+        "mae_f_xy": mae,
+        "z_mae_f_xy": z_mae,
+        "fxy_select": select,
+        "within_cell_spearman_f_xy": sp,
+        "n_fxy_cells": float(n_cells),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # checkpoint I/O (state_dict + meta.json — no pickled classes)
 # --------------------------------------------------------------------------- #
@@ -1270,6 +1488,46 @@ def _load_champion_member_states(champion_dir: str | Path,
             f"--init-from {str(champion_dir)!r} has no member_*/model.pt checkpoints")
     return [torch.load(md / "model.pt", map_location=device, weights_only=True)
             for md in order]
+
+
+#: Head tensors whose dim 0 is the TARGET axis, i.e. the ones a ``promote_*``
+#: flag makes taller.  ``conv_head`` / ``map_head`` / ``quantile_head`` are not
+#: here: their widths are set by other knobs and a mismatch there is a genuine
+#: recipe error that must stay loud.
+_TARGET_ROW_TENSORS = ("mu_head.weight", "mu_head.bias",
+                       "log_sigma_head.weight", "log_sigma_head.bias")
+
+
+def _graft_appended_target_rows(state: dict[str, torch.Tensor],
+                                model_state: dict[str, torch.Tensor],
+                                ) -> dict[str, torch.Tensor]:
+    """Pad a champion's head rows into a head that grew by an APPENDED target.
+
+    The AL recipe for a new target is ``--init-from <champion>
+    --freeze-trunk-cyclen --promote-fxy``: a new head row on a frozen trunk.  But
+    the champion's ``mu_head`` is one row shorter than the model being trained, so
+    the strict ``load_state_dict`` that guards every other mismatch would reject
+    it.  Because :func:`~.dataset_torch.targets_for` only ever APPENDS, the
+    champion's rows are a PREFIX of the new head's: copy them in and keep this
+    run's freshly-initialized rows for the appended target(s).
+
+    Exactly the same shape of surgery the axial head already does for a champion
+    that predates it — and equally narrow: only a pure row-append is grafted
+    (same trailing shape, strictly fewer rows).  Anything else is left untouched
+    so the strict load still fails loudly.
+    """
+    out = dict(state)
+    for key in _TARGET_ROW_TENSORS:
+        src, dst = state.get(key), model_state.get(key)
+        if src is None or dst is None or src.shape == dst.shape:
+            continue
+        if (src.ndim != dst.ndim or src.shape[0] >= dst.shape[0]
+                or src.shape[1:] != dst.shape[1:]):
+            continue
+        grafted = dst.clone()
+        grafted[:src.shape[0]] = src.to(dtype=dst.dtype, device=dst.device)
+        out[key] = grafted
+    return out
 
 
 def _register_row_zero_hook(param: torch.Tensor, rows: Sequence[int]) -> Any:
@@ -1761,6 +2019,32 @@ def _train_members(
     # The z-score constants: under residual learning cyclen's are the RESIDUAL's.
     norm_df = (residual_target_frame(train_df, train_prior)
                if use_prior else train_df)
+    fxy_idx, fxy_ref_idx, fxy_prior, fxy_prior_z_ab = resolve_fxy_prior(
+        train_df, norm_df, target_names, verbose=verbose,
+        prior_residual=bool(cfg.fxy_prior_residual))
+    fxy_select_w = float(cfg.fxy_select_weight)
+    if fxy_idx >= 0 and verbose:
+        if fxy_select_w <= 0.0:
+            print("=== f_xy head: best-epoch selection does NOT see f_xy "
+                  "(fxy_select_weight=0) — set --fxy-select-weight for a "
+                  "head-focused run ===", flush=True)
+        if warm >= cfg.epochs // 2:
+            print(f"WARNING: f_xy head with warmup_epochs_effective={warm} of "
+                  f"{cfg.epochs} epochs.  log_sigma receives NO gradient during "
+                  "the mu-only warmup, so any checkpoint selected before epoch "
+                  f"{warm} serves the INITIAL sigma (the 20260829 arm-1 failure: "
+                  "best epochs 4-37, warm 80, 68% coverage 0.99).  Lower "
+                  "--warmup-epochs for a head-only finetune.", flush=True)
+
+    # The z-score constants are identical for every member (same norm frame,
+    # same target order); resolved once so the pre-training f_xy prior refit can
+    # de-normalize the F_r row before the per-member block recomputes them.
+    tmean0, tstd0 = compute_target_norm(norm_df, target_names)
+    refit_fxy = bool(cfg.fxy_prior_on_predicted) and fxy_idx >= 0 and fxy_ref_idx >= 0
+    if refit_fxy and init_states is None:
+        raise ValueError(
+            "fxy_prior_on_predicted needs --init-from: fitting the f_xy prior "
+            "against a RANDOMLY initialized F_r head would fit noise.")
 
     freeze = bool(cfg.freeze_trunk_cyclen)   # guarded above (needs init_states)
     # hires A2: resolve the power-prior input channel ONCE.  ``-1`` (the default,
@@ -1828,7 +2112,11 @@ def _train_members(
             n_axial_modes=n_ax_modes,
             n_traj_anchors=n_traj_anchors,
             n_traj_planes=n_traj_planes,
-            n_cbc_provenance_groups=n_cbc_prov)).to(device)
+            n_cbc_provenance_groups=n_cbc_prov,
+            fxy_target_idx=fxy_idx,
+            fxy_ref_idx=fxy_ref_idx,
+            fxy_prior_a=fxy_prior_z_ab[0],
+            fxy_prior_b=fxy_prior_z_ab[1])).to(device)
         # --- freeze-and-finetune: initialize from the champion member --------- #
         # The per-member RNG streams (sampler_gen / rng_aug, seeded below) are
         # independent of the global RNG the init above consumes, so loading the
@@ -1851,7 +2139,42 @@ def _train_members(
                 if verbose:
                     print("=== axial head: champion has none; initializing it "
                           "fresh on the loaded trunk ===", flush=True)
+            if fxy_idx >= 0:
+                # The champion predates the promoted target, so its mu /
+                # log_sigma heads are one row short.  Graft its rows in (they
+                # are a strict prefix) and keep this run's fresh f_xy row —
+                # still strict on every other key.
+                grafted = _graft_appended_target_rows(state, model.state_dict())
+                if grafted is not state and verbose and i == 0:
+                    print("=== f_xy head: champion has none; grafting its "
+                          f"{len(state.get('mu_head.bias', ()))}-target head "
+                          "rows and initializing the f_xy row fresh ===",
+                          flush=True)
+                state = grafted
             model.load_state_dict(state, strict=True)
+        member_prior, member_ab = fxy_prior, fxy_prior_z_ab
+        if refit_fxy and init_states is not None and init_states[i] is not None:
+            got = refit_fxy_prior_on_predicted(
+                model, train_ds._t, fxy_idx=fxy_idx, ref_idx=fxy_ref_idx,
+                tmean=tmean0, tstd=tstd0, device=device)
+            if got is not None:
+                member_prior, member_ab = got
+                # The composition scalars live on the module AND on its config
+                # (which ``_finalize_member`` reads back for ``net_config``), so
+                # both must move or the checkpoint's recorded prior would not be
+                # the one its weights were trained against.
+                model.fxy_prior_a, model.fxy_prior_b = member_ab
+                model.config.fxy_prior_a, model.config.fxy_prior_b = member_ab
+                if verbose:
+                    print(f"  [seed {seed}] f_xy prior refit on PREDICTED f_r: "
+                          f"{member_prior.a:.4f}*f_r {member_prior.b:+.4f} "
+                          f"(n={member_prior.n_fit}, r={member_prior.pearson:.4f}, "
+                          f"resid sd={member_prior.resid_sd:.4f}); measured-f_r "
+                          f"fit was {fxy_prior.a:.4f}/{fxy_prior.b:+.4f}",
+                          flush=True)
+            elif verbose:
+                print(f"  [seed {seed}] f_xy prior refit on predicted f_r "
+                      "DEGENERATE; keeping the measured-f_r fit", flush=True)
         freeze_handles = _apply_freeze_trunk_cyclen(model, q_names) if freeze else []
         fwd = torch.compile(model) if compile_flag else model
         optim = _build_member_optim(model, lr=lr,
@@ -1875,13 +2198,18 @@ def _train_members(
         m.use_traj = bool(use_traj and model.has_traj)
         m.traj_anchors = (tuple(cfg.traj_anchors[:n_traj_anchors])
                           if m.use_traj else ())
+        m.fxy_idx = fxy_idx
+        m.fxy_ref_idx = fxy_ref_idx
+        m.fxy_prior = member_prior
+        m.fxy_prior_z = member_ab
         m.cbc_idx = cbc_idx
         m.cbc_offset_param = (model.cbc_provenance_offset
                               if model.has_cbc_provenance else None)
         m.tmean, m.tstd, m.mmean, m.mstd = tmean, tstd, mmean, mstd
         m.sampler_gen = torch.Generator().manual_seed(int(seed))
         m.rng_aug = np.random.default_rng(seed)
-        m.best = {"composite": -1e18, "epoch": -1, "state": None, "metrics": {}}
+        m.best = {"composite": -1e18, "select_score": -1e18, "epoch": -1,
+                  "state": None, "metrics": {}}
         m.since_best = 0
         m.live = True
         m.history = []
@@ -1922,19 +2250,40 @@ def _train_members(
                 val_pred = predict_dataset([m.model], val_ds, device, num_workers=0)
             metrics = composite_metric(val_pred, val_df, m.tmean, m.tstd,
                                        cfg.min_case_val, val_prior)
+            metrics.update(fxy_metrics(val_pred, val_df, m.tmean, m.tstd,
+                                       target_names, cfg.min_case_val))
             metrics["train_loss"] = m.running / max(1, m.n_batches)
             metrics["epoch"] = epoch
             metrics["lr"] = m.optim.param_groups[0]["lr"]
+            # Selection score: the composite, PLUS the opted-in f_xy term.  With
+            # ``fxy_select_weight == 0`` (the default) this is the composite
+            # itself, so every legacy run selects exactly the epoch it always did.
+            score = metrics["composite"]
+            fxy_sel = metrics.get("fxy_select")
+            if fxy_select_w > 0.0 and fxy_sel is not None and math.isfinite(fxy_sel):
+                score = score + fxy_select_w * fxy_sel
+            metrics["select_score"] = score
             m.history.append(metrics)
             if verbose and (epoch % log_every == 0 or epoch == cfg.epochs - 1):
-                print(f"  [seed {m.seed}] epoch {epoch:3d} "
-                      f"loss={metrics['train_loss']:.4f} "
-                      f"comp={metrics['composite']:.4f} "
-                      f"spF_r={metrics['within_case_spearman_f_r']:.3f} "
-                      f"zMAEcy={metrics['z_mae_cyclen']:.3f}", flush=True)
-            if metrics["composite"] > m.best["composite"]:
+                line = (f"  [seed {m.seed}] epoch {epoch:3d} "
+                        f"loss={metrics['train_loss']:.4f} "
+                        f"comp={metrics['composite']:.4f} "
+                        f"spF_r={metrics['within_case_spearman_f_r']:.3f} "
+                        f"zMAEcy={metrics['z_mae_cyclen']:.3f}")
+                if "mae_f_xy" in metrics:
+                    # Per-epoch f_xy trace: arm 1 shipped an inert residual and a
+                    # never-trained log_sigma, and train.log carried no f_xy
+                    # number at all to show it while the run was still alive.
+                    line += (f" fxyMAE={metrics['mae_f_xy']:.4f}"
+                             f" fxyRho={metrics['within_cell_spearman_f_xy']:.3f}"
+                             f" n={int(metrics['n_fxy_val'])}")
+                    if fxy_select_w > 0.0:
+                        line += f" sel={score:.4f}"
+                print(line, flush=True)
+            if score > m.best["select_score"]:
                 m.best = {
                     "composite": metrics["composite"],
+                    "select_score": score,
                     "epoch": epoch,
                     "state": {k: v.detach().cpu().clone()
                               for k, v in m.model.state_dict().items()},
@@ -2011,6 +2360,7 @@ def _finalize_member(
             "levels": list(cfg.quantile_levels) if getattr(m, "q_names", ()) else [],
         },
         "promote_max_asm_bu": bool(cfg.promote_max_asm_bu),
+        "promote_fxy": bool(cfg.promote_fxy),
         "seed": m.seed,
         "split": split,
         "train_config": cfg.to_dict(),
@@ -2072,6 +2422,38 @@ def _finalize_member(
             "cbc_tstd_ppm": cbc_std,
             "serve_convention": CBC_PROVENANCE_GROUPS[0],
             "serve_affecting": False,
+        }
+    # F_xy prior-residual head.  SERVE-AFFECTING: ``predict_fxy`` reads
+    # ``enabled`` to decide whether this checkpoint can answer at all, and the
+    # prior is what the served f_xy is a residual against — so the fitted
+    # coefficients and the label count that justified them are recorded here, not
+    # only in ``train_config``.  Added ONLY when the head exists, so a flag-off
+    # meta.json is key-for-key the legacy one and every pre-F_xy checkpoint
+    # resolves correctly with ``meta.get("fxy_head", {"enabled": False})``.
+    if getattr(m, "fxy_idx", -1) >= 0 and getattr(m, "fxy_prior", None) is not None:
+        a_z, b_z = getattr(m, "fxy_prior_z", (0.0, 0.0))
+        meta["fxy_head"] = {
+            "enabled": True,
+            "target": "f_xy",
+            "target_idx": int(m.fxy_idx),
+            # "prior_residual" == the composition is live inside the net;
+            # "direct" == the row predicts the absolute f_xy and ``prior`` below
+            # is the REPORTED baseline only (prior_z is (0, 0) and composes
+            # nothing).  ``prior_source`` says which F_r the two scalars were fit
+            # against — "measured" (the store label) or "predicted" (the model's
+            # own raw ``mu[f_r]`` row, i.e. the row the composition reads).
+            "mode": ("prior_residual" if getattr(m, "fxy_ref_idx", -1) >= 0
+                     else "direct"),
+            "prior_source": ("predicted"
+                             if str(getattr(m.fxy_prior, "split", "")).endswith(
+                                 "predicted_f_r") else "measured"),
+            "prior_ref": "f_r",
+            "prior": m.fxy_prior.to_dict(),
+            "prior_z": {"a": float(a_z), "b": float(b_z)},
+            "n_labelled_train": int(m.fxy_prior.n_fit),
+            "min_labels": int(MIN_FXY_LABELS),
+            "select_weight": float(cfg.fxy_select_weight),
+            "serve_affecting": True,
         }
     if getattr(m, "axial_basis", None) is not None:
         meta["axial_head"] = {
@@ -2262,7 +2644,7 @@ def train_member(
     # leakage rule with).  A v6/v6_prior encoder here uses the module DEFAULT
     # (M^2, extrap); ``train_ensemble`` — the path every A/B arm uses — fits them.
     encoder = FeatureEncoder(cond_schema=cond_schema)
-    target_names = targets_for(cfg.promote_max_asm_bu)
+    target_names = targets_for(cfg.promote_max_asm_bu, cfg.promote_fxy)
     manifest = None
     fuel = None
     if train_pre is None or val_pre is None:
@@ -2273,6 +2655,7 @@ def train_member(
             encoder=encoder, seed=seed, subset_rows=subset_rows,
             censor_dataset_a_pin_labels=censor_dataset_a_pin_labels,
             promote_max_asm_bu=cfg.promote_max_asm_bu,
+            promote_fxy=cfg.promote_fxy,
             include_axial=cfg.axial_head,
             include_traj=cfg.traj_weight > 0.0,
             traj_anchors=cfg.traj_anchors)
@@ -2282,6 +2665,7 @@ def train_member(
             seed=seed, subset_rows=val_n,
             censor_dataset_a_pin_labels=censor_dataset_a_pin_labels,
             promote_max_asm_bu=cfg.promote_max_asm_bu,
+            promote_fxy=cfg.promote_fxy,
             include_axial=cfg.axial_head,
             include_traj=cfg.traj_weight > 0.0,
             traj_anchors=cfg.traj_anchors)
@@ -2412,12 +2796,13 @@ def train_ensemble(
     power_prior = _fit_power_prior_for_split(reader, manifest, fuel, split,
                                              cond_schema, verbose=verbose)
     encoder = FeatureEncoder(cond_schema=cond_schema, power_prior=power_prior)
-    target_names = targets_for(cfg.promote_max_asm_bu)
+    target_names = targets_for(cfg.promote_max_asm_bu, cfg.promote_fxy)
     train_pre = build_precomputed(
         reader, manifest, fuel, fold="train", augment=cfg.augment,
         encoder=encoder, seed=base_seed, subset_rows=subset_rows,
         censor_dataset_a_pin_labels=censor_dataset_a_pin_labels,
         promote_max_asm_bu=cfg.promote_max_asm_bu,
+        promote_fxy=cfg.promote_fxy,
         include_axial=cfg.axial_head,
         include_traj=cfg.traj_weight > 0.0,
         traj_anchors=cfg.traj_anchors)
@@ -2427,6 +2812,7 @@ def train_ensemble(
         seed=base_seed, subset_rows=val_n,
         censor_dataset_a_pin_labels=censor_dataset_a_pin_labels,
         promote_max_asm_bu=cfg.promote_max_asm_bu,
+        promote_fxy=cfg.promote_fxy,
         include_axial=cfg.axial_head,
         include_traj=cfg.traj_weight > 0.0,
         traj_anchors=cfg.traj_anchors)
@@ -2673,6 +3059,11 @@ def _resolve_device(name: str) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # stdio is REDIRECTED to a log file by every launcher, so Windows gives it
+    # the ANSI codepage; a non-ASCII banner then raises UnicodeEncodeError and
+    # kills the run (incident 2026-08-30).  This module has its own __main__,
+    # so it cannot rely on lpopt.cli.main's call.
+    configure_stdio()
     ap = argparse.ArgumentParser(description="Train the PosValNet ensemble")
     ap.add_argument("--ensemble", type=int, default=1, help="number of members")
     ap.add_argument("--split", default="S1")
@@ -2710,6 +3101,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--promote-max-asm-bu", action="store_true",
                     help="promote max_assembly_burnup to a first-class target "
                          "(global head grows by one output, masked where absent)")
+    ap.add_argument("--promote-fxy", action="store_true",
+                    help="promote f_xy (MASTER FXYP, pin planar peaking) to a "
+                         "first-class target: one more head row, masked wherever "
+                         "the label is absent (nearly all rows today), "
+                         "regressing the residual against the fitted F_xy~F_r "
+                         f"prior; refuses to train below {MIN_FXY_LABELS} "
+                         "labelled train rows")
+    ap.add_argument("--fxy-direct", action="store_true",
+                    help="f_xy head predicts the ABSOLUTE value instead of a "
+                         "residual against the F_xy~F_r prior (the prior is "
+                         "still fitted and reported, but composes nothing)")
+    ap.add_argument("--fxy-prior-on-predicted", action="store_true",
+                    help="fit the F_xy~F_r prior on the model's OWN predicted "
+                         "F_r (the raw mu row the composition reads) instead of "
+                         "the measured F_r, so the F_r head's uncalibrated bias "
+                         "is absorbed instead of inherited; needs --init-from")
+    ap.add_argument("--fxy-select-weight", type=float, default=None,
+                    help="weight of the f_xy val score (within-cell Spearman "
+                         "minus z-MAE) added to the composite for best-epoch / "
+                         "early-stop selection; 0 (default) = legacy selection")
     ap.add_argument("--distill-targets", default=None,
                     help="path to a prebuilt soft-target cache (lpopt.model.distill); "
                          "enables per-cell teacher distillation on the FULL corpus")
@@ -2854,6 +3265,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.map_fr_consistency_weight is not None:
         cfg.map_fr_consistency_weight = float(args.map_fr_consistency_weight)
     cfg.promote_max_asm_bu = bool(args.promote_max_asm_bu)
+    cfg.promote_fxy = bool(args.promote_fxy)
+    cfg.fxy_prior_residual = not bool(args.fxy_direct)
+    cfg.fxy_prior_on_predicted = bool(args.fxy_prior_on_predicted)
+    if args.fxy_select_weight is not None:
+        cfg.fxy_select_weight = float(args.fxy_select_weight)
     cfg.auto_fit_cell_calibration = bool(args.auto_cell_calibration)
     cfg.distill_targets = args.distill_targets
     if args.distill_weight is not None:

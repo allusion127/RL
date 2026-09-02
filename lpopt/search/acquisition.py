@@ -64,10 +64,34 @@ def make_constraints(acq: Any) -> ConstraintConfig:
     )
 
 
+def _axis_feasible_probability(
+    mu: np.ndarray, sd: np.ndarray, limit: float, unknown_probability: float
+) -> np.ndarray:
+    """``Φ((limit−μ)/σ)`` for ONE axis, with the vendor's degenerate/unknown rules.
+
+    Factored out of :func:`p_feasible` so an axis that is NOT one of the seven
+    surrogate columns (``f_xy``, served by its own head / proxy) is judged by the
+    same arithmetic rather than a second copy of it.  An axis whose mean OR std is
+    non-finite is UNKNOWN and contributes ``unknown_probability`` — a NaN mean must
+    not propagate a NaN through the whole product.
+    """
+    mu = np.asarray(mu, dtype=float).reshape(-1)
+    sd = np.asarray(sd, dtype=float).reshape(-1)
+    out = np.empty(mu.shape[0], dtype=float)
+    known = np.isfinite(sd) & np.isfinite(mu)
+    out[~known] = unknown_probability
+    positive = known & (sd > 1.0e-12)
+    out[positive] = norm.cdf((float(limit) - mu[positive]) / sd[positive])
+    degenerate = known & (sd <= 1.0e-12)
+    out[degenerate] = (mu[degenerate] <= float(limit)).astype(float)
+    return out
+
+
 def p_feasible(
     prediction: SurrogatePrediction,
     constraints: ConstraintConfig,
     convergence: Sequence[float] | np.ndarray | None = None,
+    extra_axes: Sequence[tuple[Any, Any, float]] = (),
 ) -> np.ndarray:
     """``Π Φ((limit−μ)/σ_total)`` over F_r / CBC / F_q / AO (× convergence prob).
 
@@ -75,6 +99,11 @@ def p_feasible(
     plan sec. 4.5) contributes ``unknown_axis_probability``; a (near-)zero std
     collapses to the hard indicator ``μ ≤ limit`` — matching the vendor
     ``feasible_probability`` semantics, which uses ``erf`` == ``norm.cdf``.
+
+    ``extra_axes`` — ``[(mean, std, limit), …]`` for gated axes that live OUTSIDE
+    the seven-column surrogate contract, i.e. exactly the ``f_xy`` head/proxy
+    (:func:`predict_fxy`).  Empty (the default) is byte-identical to the previous
+    four-column product, so every other mode is untouched.
     """
 
     mean = np.asarray(prediction.mean, dtype=float)
@@ -88,16 +117,12 @@ def p_feasible(
     ]
     prob = np.ones(n, dtype=float)
     for column, limit in columns:
-        mu = mean[:, column]
-        sd = std[:, column]
-        col = np.empty(n, dtype=float)
-        known = np.isfinite(sd)
-        col[~known] = constraints.unknown_axis_probability
-        positive = known & (sd > 1.0e-12)
-        col[positive] = norm.cdf((limit - mu[positive]) / sd[positive])
-        degenerate = known & (sd <= 1.0e-12)
-        col[degenerate] = (mu[degenerate] <= limit).astype(float)
-        prob *= col
+        prob *= _axis_feasible_probability(
+            mean[:, column], std[:, column], limit,
+            constraints.unknown_axis_probability)
+    for mu_x, sd_x, limit_x in extra_axes:
+        prob *= _axis_feasible_probability(
+            mu_x, sd_x, float(limit_x), constraints.unknown_axis_probability)
     if convergence is not None:
         prob = prob * np.asarray(convergence, dtype=float)
     return prob
@@ -591,6 +616,406 @@ def score_pool_min_fr(
         exploit=np.asarray(exploit, dtype=float),
         margin=np.asarray(margin, dtype=float),
         rank=np.asarray(rank, dtype=float),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# min_fxy objective (user decision 2026-08-29 — minimize F_xy, hard limit 1.65)
+# --------------------------------------------------------------------------- #
+#: Gated MODEL axes for min_fxy — the SAME four the min_fr scorer gates, because
+#: F_r STAYS a hard constraint here (design §3.5.2: measured cores pass F_r <= 1.55
+#: and fail F_xy <= 1.65, and others do the reverse, so neither axis implies the
+#: other and dropping F_r would RELAX the feasible set).  F_xy itself is NOT in
+#: this table: it is not a surrogate column, it arrives as a separate array.
+_MINFXY_GATED_AXES: tuple[tuple[int, str, float], ...] = _MINFR_GATED_AXES
+#: Predicted max-pin-burnup column (mirrors min_fr_max_cycle col 6).
+_MINFXY_PINBU_COL = _MINFR_PINBU_COL
+#: Penalty width of the F_xy excess — the F_r width, since the two axes have the
+#: same measured within-cell dispersion (design §1.2).
+_MINFXY_FXY_WIDTH = 0.01
+
+#: INTERIM F_xy PROXY — ``F_xy ~ 1.2176*F_r - 0.2519``.  REFIT 2026-08-29 over the
+#: whole labelled corpus (n = 6,218 converged MAS_OUT cores, 119 cells; r = 0.9895,
+#: residual sd 0.0476) per ``data/reports/fxy_head_prereg_20260829.md`` §7, which
+#: superseded the original 192-core / 2-cell fit (1.1221 / -0.0831, sd 0.0293): that
+#: fit carried a +0.0103 bias and understated the true dispersion by ~38%.
+#: Used ONLY while the model exposes no ``predict_fxy`` head; every candidate
+#: scored this way is tagged ``fxy_source = "proxy"`` so a readout can never
+#: mistake it for a prediction.  INTERIM UNTIL THE f_xy HEAD SHIPS.
+FXY_PROXY_SLOPE = 1.2176
+FXY_PROXY_INTERCEPT = -0.2519
+#: Residual sd of that fit (REFIT 2026-08-29, n = 6,218).  It is inflated by
+#: :data:`FXY_PROXY_SIGMA_K` before it becomes a sigma: the measured MAX absolute
+#: residual is 0.31 and p95 is 0.080, and at a 1.65 gate a miss of that size is a
+#: straight misclassification (design §3.4.4 warning), so the proxy must be
+#: pessimistic by construction — it is a starting point, never a licensing
+#: statement.  ``K`` stays 3.0: the widened sigma is what stops the steeper slope
+#: from turning false-infeasible calls into false-FEASIBLE ones (prereg §7.3).
+#: INTERIM UNTIL THE f_xy HEAD SHIPS.
+FXY_PROXY_RESID_SD = 0.0476
+FXY_PROXY_SIGMA_K = 3.0
+#: Tag values for :attr:`MinFxyScore.fxy_source`.
+FXY_SOURCE_HEAD = "head"
+FXY_SOURCE_PROXY = "proxy"
+
+
+def fxy_proxy(prediction: SurrogatePrediction) -> tuple[np.ndarray, np.ndarray]:
+    """``(mean, std)`` of the INTERIM F_xy proxy from the F_r column (col 0).
+
+    ``mean = a*mu_Fr + b`` and ``std = sqrt((a*sigma_Fr)^2 + (k*resid_sd)^2)`` —
+    the F_r head's own uncertainty propagated through the fit, widened by the
+    fit's inflated residual dispersion.  INTERIM UNTIL THE f_xy HEAD SHIPS.
+    """
+    mean = np.asarray(prediction.mean, dtype=float)
+    std = np.asarray(prediction.calibrated_std, dtype=float)
+    fr_mu = mean[:, 0]
+    fr_sd = std[:, 0]
+    mu = FXY_PROXY_SLOPE * fr_mu + FXY_PROXY_INTERCEPT
+    prop = FXY_PROXY_SLOPE * np.where(np.isfinite(fr_sd), fr_sd, 0.0)
+    extra = FXY_PROXY_SIGMA_K * FXY_PROXY_RESID_SD
+    sd = np.sqrt(prop * prop + extra * extra)
+    return mu, np.where(np.isfinite(mu), sd, np.nan)
+
+
+def predict_fxy(model: Any, patterns: Sequence[Pattern], ctx: CaseContext,
+                prediction: SurrogatePrediction
+                ) -> tuple[np.ndarray, np.ndarray, str]:
+    """``(mean, std, source)`` for F_xy — the HEAD when the backend has one.
+
+    Mirrors :func:`predict_flatness`: an OPTIONAL ``model.predict_fxy`` (the
+    dedicated head, served outside the frozen seven-column surrogate contract)
+    is preferred; a backend without one falls back to :func:`fxy_proxy` and the
+    caller is told which by ``source`` (:data:`FXY_SOURCE_HEAD` /
+    :data:`FXY_SOURCE_PROXY`), so the campaign readout can state it instead of
+    presenting a regression on F_r as an F_xy prediction.
+
+    ``PosValCnnBackend.predict_fxy`` returns ``(mean, sigma, source)`` and
+    ``None`` when the CHECKPOINT carries no f_xy head — a method that exists is
+    not a head that exists, so the ``None`` is what actually decides, not
+    ``hasattr``.  A plain ``(mean, sigma)`` pair is also accepted (test doubles).
+
+    **SIGMA BAR.**  A checkpoint may serve its f_xy MEAN while its SIGMA is
+    refused: :func:`fxy_sigma_barred` (the checkpoint's own
+    ``fxy_head.serve_sigma = "barred"`` stamp).  `s1j` is the first — G1/G2'/G3'
+    PASS, G4 FAIL at 68% coverage 0.831 > 0.80, over-wide
+    (``data/reports/fxy_head_results_arm3_20260829.md`` §5).  In that case the
+    head's mean and its ``source = "head"`` tag are kept — the campaign readout
+    must still say a head produced the number — and the WIDTH comes from the
+    interim proxy convention (:func:`fxy_proxy`: the F_r sigma propagated through
+    the fit and widened by ``K * resid_sd``), which is the conservative default
+    the results report named in §10.2.  Falling back to ``source = "proxy"``
+    instead would be a lie in the other direction: the ranking mean IS the head's.
+    """
+    head = getattr(model, "predict_fxy", None)
+    if callable(head):
+        out = head(patterns, ctx.case_key, ctx.e_core or 0.0)
+        if out is not None:
+            mu, sd = out[0], out[1]
+            source = str(out[2]) if len(out) > 2 else FXY_SOURCE_HEAD
+            mu = np.asarray(mu, dtype=float).reshape(-1)
+            sd = np.asarray(sd, dtype=float).reshape(-1)
+            if fxy_sigma_barred(model):
+                _, proxy_sd = fxy_proxy(prediction)
+                proxy_sd = np.asarray(proxy_sd, dtype=float).reshape(-1)
+                if proxy_sd.shape == sd.shape:
+                    sd = proxy_sd
+                else:                       # empty batch / doubled prediction
+                    sd = np.full(sd.shape, FXY_PROXY_SIGMA_K * FXY_PROXY_RESID_SD)
+            return mu, sd, source or FXY_SOURCE_HEAD
+    mu, sd = fxy_proxy(prediction)
+    return mu, sd, FXY_SOURCE_PROXY
+
+
+def fxy_sigma_barred(model: Any) -> bool:
+    """Has the SERVED CHECKPOINT barred its own f_xy sigma from serving?
+
+    The bar is a property of the trained artifact (its measured coverage), not of
+    a deck knob, so it is read off the checkpoint — ``ensemble.json``'s
+    ``fxy_head.serve_sigma`` surfaced as ``PosValCnnBackend.fxy_sigma_barred``.
+    Any model object without the attribute answers ``False``, which is every
+    champion up to `s1i` and every test double.
+    """
+    return bool(getattr(model, "fxy_sigma_barred", False))
+
+
+def has_fxy_head(model: Any, ctx: CaseContext) -> bool:
+    """Does the SERVED CHECKPOINT actually carry an f_xy head?
+
+    ``hasattr(model, "predict_fxy")`` is not the question: the real backend
+    always defines the method and returns ``None`` when the checkpoint has no
+    head, so the only honest probe is to call it.  An empty pattern list makes
+    that free (``PosValCnnBackend.predict_fxy`` short-circuits on it), and any
+    failure answers "no" rather than propagating — this is used to choose a LOG
+    LINE and a gate's inertness, never to score anything.
+    """
+    head = getattr(model, "predict_fxy", None)
+    if not callable(head):
+        return False
+    try:
+        return head([], ctx.case_key, ctx.e_core or 0.0) is not None
+    except Exception:  # noqa: BLE001 — a probe never breaks a campaign
+        return False
+
+
+@dataclass(frozen=True)
+class MinFxySpec:
+    """Objective + gated limits for the ``min_fxy`` campaign mode.
+
+    MINIMIZE **F_xy** (MASTER ``FXYP`` — pin PLANAR peaking) as the primary axis
+    with cyclen maximization the secondary tie-break, subject to
+    ``F_xy <= f_xy_limit`` (1.65, user decision 2026-08-29) AND the whole existing
+    hard set: ``F_r <= f_r_limit`` (1.55 — a CONSTRAINT here, no longer the
+    objective), F_q / CBC / |AO|, and the predicted ``max_pin_burnup <=
+    pin_bu_limit``.  ``lam_fxy`` sizes F_xy to strictly dominate cyclen in the
+    exploit scalar ``cyclen_LCB - lam_Fxy*F_xy_UCB`` — the same lambda structure
+    :class:`MinFrSpec` uses, with the same default (1000: a 0.01 F_xy reduction
+    == 10 EFPD).
+
+    ``cyclen_lo`` / ``cyclen_hi`` are OPTIONAL (``None`` = no band, the default):
+    set both to make cyclen a hard two-edge constraint in the ``min_fuel_cost``
+    shape instead of a pure tie-break.
+
+    ``fxy_bias`` / ``fxy_sigma_extra`` are the per-cell level calibration of the
+    F_xy head, consumed exactly as :class:`FlatPowerSpec`'s map-head calibration
+    is (:func:`_debias` / :func:`_inflate`); both ``None`` is the raw form.
+    """
+
+    lam_fxy: float = 1000.0
+    risk_z: float = 0.25
+    f_xy_limit: float = 1.65
+    f_r_limit: float = 1.55
+    cbc_limit: float = 1550.0
+    f_q_limit: float = 2.41
+    ao_abs_limit: float = 0.30
+    pin_bu_limit: float = 78.0
+    cyclen_lo: float | None = None
+    cyclen_hi: float | None = None
+    cyclen_width: float = 10.0
+    fxy_bias: float | None = None
+    fxy_sigma_extra: float | None = None
+
+
+@dataclass
+class MinFxyScore:
+    """Result of :func:`score_min_fxy` (all arrays length N).
+
+    ``total`` is the exploit ranking scalar (higher is better): the ``scalar``
+    F_xy/cyclen trade dominated hierarchically by any gated-constraint violation
+    (F_xy / F_r / F_q / CBC / |AO| / predicted pin BU / the optional cyclen band).
+    ``constraint_ok`` is the predicted all-axis feasibility screen at +risk_z*sigma.
+    """
+
+    total: np.ndarray            # scalar - TIER*constraint_penalty (the rank key)
+    scalar: np.ndarray           # cyclen_LCB - lam_Fxy*F_xy_UCB (F_xy dominant)
+    cyclen_lcb: np.ndarray       # mu_cy - kappa*sigma_cy
+    fxy_ucb: np.ndarray          # mu_Fxy + kappa*sigma_Fxy (calibrated)
+    fr_ucb: np.ndarray           # mu_Fr + kappa*sigma_Fr (constraint, not objective)
+    constraint_penalty: np.ndarray   # sum squared gated-axis excess (F_xy + pin incl.)
+    constraint_ok: np.ndarray    # predicted-feasible over every hard axis, bool
+    #: Where the F_xy numbers came from — :data:`FXY_SOURCE_HEAD` or
+    #: :data:`FXY_SOURCE_PROXY`.  Carried into the selection metadata so a readout
+    #: can say which; ``""`` when the caller did not declare one.
+    fxy_source: str = ""
+
+
+def make_minfxy_constraints(spec: MinFxySpec) -> ConstraintConfig:
+    """Vendor :class:`ConstraintConfig` for the p_feasible gate + feasibility
+    margin in min_fxy mode.
+
+    Carries the FOUR seven-column axes only (F_r GATED at ``f_r_limit``, CBC,
+    F_q, |AO|).  F_xy has no surrogate column, so it enters :func:`p_feasible`
+    through its ``extra_axes`` argument (:func:`score_pool_min_fxy`) and the hard
+    tier through :func:`score_min_fxy` — never by borrowing another axis's slot.
+    """
+
+    return ConstraintConfig(
+        f_r_limit=float(spec.f_r_limit),
+        cbc_limit=float(spec.cbc_limit),
+        f_q_limit=float(spec.f_q_limit),
+        ao_abs_limit=float(spec.ao_abs_limit),
+        risk_z=float(spec.risk_z),
+        objective_mode="trade_off",
+    )
+
+
+def score_min_fxy(
+    prediction: SurrogatePrediction,
+    fxy_mean: np.ndarray,
+    fxy_std: np.ndarray,
+    spec: MinFxySpec,
+    *,
+    fxy_source: str = "",
+) -> MinFxyScore:
+    """Score candidates for min_fxy (higher ``total`` is better).
+
+    Objective (risk-adjusted): ``scalar = cyclen_LCB - lam_Fxy*F_xy_UCB``, cyclen
+    at its LCB and F_xy at its UCB (conservative both ways) — structurally
+    identical to :func:`score_min_fr_max_cycle` with F_xy in F_r's place.  With
+    ``lam_Fxy = 1000`` F_xy strictly dominates and cyclen only orders near-ties.
+
+    HARD screen (hierarchical, dominant): F_r / F_q / CBC / |AO| each enter as a
+    UCB-shifted normalized excess, the predicted ``max_pin_burnup`` (col 6) as
+    ``max(0, pin_UCB - pin_bu_limit)``, F_xy as
+    ``max(0, F_xy_UCB - f_xy_limit)/width``, and — when a band is configured — the
+    two cyclen edges.  The summed-square penalty x
+    :data:`_MAXCYCLE_CONSTRAINT_TIER` is subtracted, so any predicted violation
+    sinks below every feasible candidate, least-infeasible first.
+
+    ``fxy_std`` NON-FINITE means the F_xy axis is UNPREDICTED: the penalty stays 0
+    (ranking unchanged) but ``constraint_ok`` goes ``False``, the same rule the
+    pin-BU gate uses.  An unscreened licensing axis is never silently called
+    feasible.
+    """
+
+    mean = np.asarray(prediction.mean, dtype=float)
+    std = np.asarray(prediction.calibrated_std, dtype=float)
+    n = mean.shape[0]
+    kappa = float(spec.risk_z)
+    shift = np.where(np.isfinite(std), kappa * std, 0.0)
+
+    fxy_mu = _debias(np.asarray(fxy_mean, dtype=float).reshape(-1), spec.fxy_bias)
+    fxy_sd = _inflate(np.asarray(fxy_std, dtype=float).reshape(-1),
+                      spec.fxy_sigma_extra)
+    fxy_known = np.isfinite(fxy_mu) & np.isfinite(fxy_sd)
+    fxy_ucb = fxy_mu + np.where(np.isfinite(fxy_sd), kappa * fxy_sd, 0.0)
+
+    cyclen_lcb = mean[:, 3] - shift[:, 3]
+    scalar = np.where(np.isfinite(fxy_ucb),
+                      cyclen_lcb - float(spec.lam_fxy) * fxy_ucb, -np.inf)
+
+    penalty = np.zeros(n, dtype=float)
+    constraint_ok = np.ones(n, dtype=bool)
+    for column, attr, width in _MINFXY_GATED_AXES:
+        limit = float(getattr(spec, attr))
+        mu_c = mean[:, column]
+        sd_c = std[:, column]
+        known = np.isfinite(sd_c)
+        ucb = mu_c + np.where(known, kappa * sd_c, 0.0)
+        excess = np.maximum(0.0, ucb - limit) / float(width)
+        penalty = penalty + excess ** 2
+        constraint_ok = constraint_ok & known & (excess <= 1.0e-12)
+
+    # -- F_xy: the PRIMARY axis and a hard gate at the same time --------------
+    fxy_excess = np.where(
+        fxy_known,
+        np.maximum(0.0, fxy_ucb - float(spec.f_xy_limit)) / _MINFXY_FXY_WIDTH, 0.0)
+    penalty = penalty + fxy_excess ** 2
+    constraint_ok = constraint_ok & fxy_known & (fxy_excess <= 1.0e-12)
+
+    # -- predicted pin burnup (col 6) — same rule as score_min_fr_max_cycle ---
+    pin_mu = mean[:, _MINFXY_PINBU_COL]
+    pin_sd = std[:, _MINFXY_PINBU_COL]
+    pin_known = np.isfinite(pin_mu)
+    pin_ucb = pin_mu + np.where(np.isfinite(pin_sd), kappa * pin_sd, 0.0)
+    pin_excess = np.where(pin_known,
+                          np.maximum(0.0, pin_ucb - float(spec.pin_bu_limit)), 0.0)
+    penalty = penalty + pin_excess ** 2
+    constraint_ok = constraint_ok & pin_known & (pin_excess <= 1.0e-12)
+
+    # -- OPTIONAL cyclen band (min_fuel_cost shape; inert when unset) ---------
+    if spec.cyclen_lo is not None or spec.cyclen_hi is not None:
+        width = float(spec.cyclen_width) if float(spec.cyclen_width) > 0.0 else 10.0
+        cy_mu = mean[:, 3]
+        cy_sd = std[:, 3]
+        cy_shift = np.where(np.isfinite(cy_sd), kappa * cy_sd, 0.0)
+        band = np.zeros(n, dtype=float)
+        if spec.cyclen_lo is not None:
+            band = band + np.maximum(
+                0.0, float(spec.cyclen_lo) - (cy_mu - cy_shift)) / width
+        if spec.cyclen_hi is not None:
+            band = band + np.maximum(
+                0.0, (cy_mu + cy_shift) - float(spec.cyclen_hi)) / width
+        penalty = penalty + band ** 2
+        constraint_ok = constraint_ok & np.isfinite(cy_mu) & (band <= 1.0e-12)
+
+    total = np.where(np.isfinite(scalar),
+                     scalar - _MAXCYCLE_CONSTRAINT_TIER * penalty, -np.inf)
+    return MinFxyScore(
+        total=total, scalar=scalar, cyclen_lcb=cyclen_lcb, fxy_ucb=fxy_ucb,
+        fr_ucb=mean[:, 0] + shift[:, 0],
+        constraint_penalty=penalty, constraint_ok=constraint_ok,
+        fxy_source=str(fxy_source),
+    )
+
+
+def score_pool_min_fxy(
+    model: Any,
+    ctx: CaseContext,
+    candidates: Sequence[Candidate],
+    spec: MinFxySpec,
+    trust_region: "TrustRegion",
+    *,
+    tie_epsilon: float = 0.0,
+) -> ScoredPool:
+    """Score a candidate pool for the ``min_fxy`` mode.
+
+    Structurally identical to :func:`score_pool_min_fr`: the exploit score is
+    :func:`score_min_fxy` ``total`` (F_xy strictly dominant), and ``p_feas`` /
+    ``margin`` gate the four surrogate axes of :func:`make_minfxy_constraints`
+    (F_r INCLUDED — it is still a hard constraint) PLUS the F_xy axis, which
+    reaches :func:`p_feasible` through ``extra_axes`` because it has no surrogate
+    column.  ``ScoredPool.fxy_source`` records whether F_xy came from a head or
+    from the interim proxy.
+    """
+
+    candidates = list(candidates)
+    patterns = [c.pattern for c in candidates]
+    n = len(patterns)
+    if n == 0:
+        empty = np.zeros((0, 7))
+        z = np.zeros(0)
+        return ScoredPool(
+            candidates=[], mean=empty, epistemic=empty.copy(), calibrated=empty.copy(),
+            conv=z, p_feas=z.copy(), acq=z.copy(), raw_epi=z.copy(),
+            in_region=np.zeros(0, dtype=bool), exploit=z.copy(),
+            margin=z.copy(), rank=z.copy(),
+        )
+
+    prediction = model.predict(patterns, ctx.case_key, ctx.e_core or 0.0)
+    conv = _safe_convergence(model, patterns, ctx)
+
+    calibrated = np.asarray(prediction.calibrated_std, dtype=float).copy()
+    region = np.ones(n, dtype=bool)
+    for i, cand in enumerate(candidates):
+        feed = cand.pattern.feed
+        ec = cand.e_core if cand.e_core is not None else ctx.e_core
+        region[i] = trust_region.in_region(feed, ec)
+        scale = trust_region.sigma_scale(feed, ec)
+        if scale != 1.0:
+            calibrated[i] = calibrated[i] * scale
+    inflated = SurrogatePrediction(prediction.mean, prediction.epistemic_std, calibrated)
+
+    fxy_mean, fxy_std, fxy_source = predict_fxy(model, patterns, ctx, inflated)
+
+    constraints = make_minfxy_constraints(spec)
+    pf = np.where(
+        region,
+        p_feasible(inflated, constraints, convergence=conv,
+                   extra_axes=((fxy_mean, fxy_std, float(spec.f_xy_limit)),)),
+        0.0,
+    )
+
+    mx = score_min_fxy(inflated, fxy_mean, fxy_std, spec, fxy_source=fxy_source)
+    exploit = np.where(region, mx.total, -np.inf)
+    margin = np.where(region, feasibility_margin(inflated, constraints), -np.inf)
+    rank = rank_with_tiebreak(exploit, margin, tie_epsilon)
+
+    return ScoredPool(
+        candidates=candidates,
+        mean=np.asarray(prediction.mean, dtype=float),
+        epistemic=np.asarray(prediction.epistemic_std, dtype=float),
+        calibrated=calibrated,
+        conv=np.asarray(conv, dtype=float),
+        p_feas=np.asarray(pf, dtype=float),
+        acq=np.where(region, pf, 0.0),
+        raw_epi=raw_epistemic(inflated),
+        in_region=region,
+        exploit=np.asarray(exploit, dtype=float),
+        margin=np.asarray(margin, dtype=float),
+        rank=np.asarray(rank, dtype=float),
+        fxy_source=str(fxy_source),
+        fxy_mean=np.asarray(fxy_mean, dtype=float).reshape(-1),
+        fxy_sigma=np.asarray(fxy_std, dtype=float).reshape(-1),
     )
 
 
@@ -1165,7 +1590,12 @@ class FlatPowerSpec:
 
     with ``node_peak`` PRIMARY because within a cell rho(node_peak, F_r) = 0.983
     and the partial rho of ``map_cov`` given ``node_peak`` is only 0.107 — the
-    licensing-relevant signal rides on the peak.  ``peak_scale`` / ``cov_scale``
+    licensing-relevant signal rides on the peak.  **``node_peak`` is NOT F_xy**:
+    it is the BOC ASSEMBLY radial peak of the harvested EDIT5 map, while F_xy is
+    MASTER's ``FXYP`` (pin PLANAR).  Measured corr(node_peak, F_xy) is only
+    0.735-0.854 with residual sd 0.057-0.064 — the width of the 1.65 gate itself —
+    so the flatness objective can NEVER stand in for an F_xy claim; that is what
+    ``fxy_limit`` below is for.  ``peak_scale`` / ``cov_scale``
     come from :class:`..data.flat_scale.FlatScale` (per-cell by default) so the
     declared 1 : ``w_cov`` ratio is what each cell actually realizes.
 
@@ -1191,6 +1621,18 @@ class FlatPowerSpec:
     fr_limit: float = 1.70
     fr_bias: float | None = None
     fr_sigma: float | None = None
+    #: F_xy SAFETY GATE (design fxy_switch_20260829 §3.5.3) — the SAME binary
+    #: shape as ``fr_limit``: it vetoes, it never grades.  ``None`` (or a
+    #: non-positive / non-finite value) DISABLES it, which is byte-identical to
+    #: the pre-F_xy flat_power mode.  It exists because ``node_peak`` is a BOC
+    #: ASSEMBLY radial peak, and its measured correlation with MASTER's FXYP is
+    #: only 0.735-0.854 (residual sd 0.057-0.064, the width of the gate itself):
+    #: a flat pattern carries no F_xy guarantee at all.
+    fxy_limit: float | None = None
+    #: Per-cell level calibration of the F_xy head, in the same form as
+    #: ``peak_bias`` / ``peak_sigma_extra`` (both ``None`` = the raw form).
+    fxy_bias: float | None = None
+    fxy_sigma_extra: float | None = None
     #: Map-head LEVEL calibration (``map_calibration.json``, program §2.1).  Each
     #: is ``median(pred - actual)`` for that target, so the de-biased level is
     #: ``mean - bias``; ``*_sigma_extra`` is the dispersion the ensemble spread
@@ -1226,6 +1668,28 @@ class FlatPowerSpec:
         available for the cell, else the unmodified ``fr_limit`` (1.70 held).
         """
         return flatpower_fr_gate(self)
+
+    @property
+    def fxy_gate(self) -> float | None:
+        """The effective F_xy safety gate, or ``None`` when the axis is ungated."""
+        return flatpower_fxy_gate(self)
+
+
+def flatpower_fxy_gate(spec: "FlatPowerSpec") -> float | None:
+    """Effective F_xy safety gate for ``spec`` — ``None`` when disabled.
+
+    Free function for the same reason :func:`flatpower_fr_gate` is one: the rule
+    has ONE implementation and a test can pin the disabled branch explicitly.
+    ``0.0`` / negative / non-finite all mean "no gate", which is what a deck that
+    never sets ``flatpower_fxy_limit`` resolves to.
+    """
+    limit = spec.fxy_limit
+    if limit is None:
+        return None
+    value = float(limit)
+    if not math.isfinite(value) or value <= 0.0:
+        return None
+    return value
 
 
 def flatpower_fr_gate(spec: "FlatPowerSpec") -> float:
@@ -1302,6 +1766,10 @@ class FlatPowerScore:
     #: (all-zero unless ``spec.rule_penalty_weights`` is set AND the caller
     #: supplied the patterns).  Reported so a run can show what it cost.
     rule_penalty: np.ndarray | None = None
+    #: F_xy UCB and its binary veto — ``None`` when the mode's F_xy safety gate is
+    #: not configured (``spec.fxy_limit`` unset), which is the default.
+    fxy_ucb: np.ndarray | None = None
+    fxy_gate_violated: np.ndarray | None = None
 
 
 def make_flatpower_constraints(spec: FlatPowerSpec) -> ConstraintConfig:
@@ -1336,6 +1804,9 @@ def score_flat_power(
     cov_mean: np.ndarray | None = None,
     cov_std: np.ndarray | None = None,
     patterns: Sequence[Pattern] | None = None,
+    *,
+    fxy_mean: np.ndarray | None = None,
+    fxy_std: np.ndarray | None = None,
 ) -> FlatPowerScore:
     """Score candidates for flat_power (higher ``total`` is better).
 
@@ -1358,6 +1829,11 @@ def score_flat_power(
       subtracts exactly one TIER: it vetoes, it does not grade.  F_r no longer
       appears in the graded tier list at all, so the mode can never rank its
       candidates by F_r.
+    * binary — the F_xy SAFETY GATE (:attr:`FlatPowerSpec.fxy_gate`), identical in
+      shape and active only when ``spec.fxy_limit`` is set AND ``fxy_mean`` is
+      supplied.  Like the pin-BU gate, an UNPREDICTED F_xy (non-finite mean/std)
+      does not grade but does clear ``constraint_ok``: a licensing axis the mode
+      declares it screens is never silently passed.
 
     cyclen is never read (record-only contract).
 
@@ -1437,9 +1913,26 @@ def score_flat_power(
     fr_violated = np.isfinite(fr_ucb) & (fr_ucb > gate)
     constraint_ok = constraint_ok & np.isfinite(fr_ucb) & ~fr_violated
 
+    # F_xy SAFETY GATE — the same binary veto, active only when configured.
+    fxy_gate = flatpower_fxy_gate(spec)
+    fxy_ucb: np.ndarray | None = None
+    fxy_violated: np.ndarray | None = None
+    vetoes = fr_violated.astype(float)
+    if fxy_gate is not None and fxy_mean is not None:
+        fxy_mu = _debias(np.asarray(fxy_mean, dtype=float).reshape(-1), spec.fxy_bias)
+        fxy_sd = _inflate(
+            np.full(n, np.nan) if fxy_std is None
+            else np.asarray(fxy_std, dtype=float).reshape(-1),
+            spec.fxy_sigma_extra)
+        fxy_ucb = fxy_mu + kappa * np.where(np.isfinite(fxy_sd), fxy_sd, 0.0)
+        fxy_known = np.isfinite(fxy_ucb)
+        fxy_violated = fxy_known & (fxy_ucb > float(fxy_gate))
+        constraint_ok = constraint_ok & fxy_known & ~fxy_violated
+        vetoes = vetoes + fxy_violated.astype(float)
+
     total = np.where(
         np.isfinite(scalar),
-        scalar - _FLATPOWER_CONSTRAINT_TIER * (penalty + fr_violated.astype(float)),
+        scalar - _FLATPOWER_CONSTRAINT_TIER * (penalty + vetoes),
         -np.inf,
     )
     # SOFT engineering-rule shaping, outside the constraint tier.  Absent weights
@@ -1455,6 +1948,7 @@ def score_flat_power(
         total=total, scalar=scalar, z_peak=z_peak, z_cov=z_cov,
         peak_ucb=peak_ucb, cov_ucb=cov_ucb, fr_ucb=fr_ucb,
         fr_gate_violated=fr_violated,
+        fxy_ucb=fxy_ucb, fxy_gate_violated=fxy_violated,
         constraint_penalty=penalty, constraint_ok=constraint_ok,
         rule_penalty=rule_pen,
     )
@@ -1530,11 +2024,36 @@ def score_pool_flat_power(
             calibrated[i] = calibrated[i] * scale
     inflated = SurrogatePrediction(prediction.mean, prediction.epistemic_std, calibrated)
 
+    # F_xy safety axis (design §3.5.3) — only when the deck configured a gate AND
+    # the backend has a REAL f_xy head.
+    #
+    # The interim proxy is DELIBERATELY refused here.  It is an affine function of
+    # predicted F_r, so gating flat_power on it would re-impose an F_r screen at
+    # roughly F_r <= 1.53 — tighter than the licensing 1.55 and far tighter than
+    # this mode's own 1.70 safety gate — i.e. it would put F_r back in charge of
+    # the flatness search through the back door, which is exactly what program §10
+    # STOPped.  Without a head the gate is INERT in the acquisition and is still
+    # enforced on the MEASURED f_xy of every verified row
+    # (``campaign.feasibility_limits_for``), which is where a licensing verdict
+    # belongs anyway.  ``min_fxy`` is the opposite case and DOES use the proxy:
+    # there F_xy is the declared objective, and the run says so in every readout.
+    fxy_gate = flatpower_fxy_gate(spec)
+    fxy_mean = fxy_std = None
+    fxy_source = ""
+    extra_axes: tuple = ()
+    if fxy_gate is not None:
+        mu_x, sd_x, src_x = predict_fxy(model, patterns, ctx, inflated)
+        if src_x == FXY_SOURCE_HEAD:
+            fxy_mean, fxy_std, fxy_source = mu_x, sd_x, src_x
+            extra_axes = ((fxy_mean, fxy_std, float(fxy_gate)),)
+
     constraints = make_flatpower_constraints(spec)
-    pf = np.where(region, p_feasible(inflated, constraints, convergence=conv), 0.0)
+    pf = np.where(region, p_feasible(inflated, constraints, convergence=conv,
+                                     extra_axes=extra_axes), 0.0)
 
     fp = score_flat_power(inflated, pk_mean, pk_std, spec, cv_mean, cv_std,
-                          patterns=patterns)
+                          patterns=patterns,
+                          fxy_mean=fxy_mean, fxy_std=fxy_std)
     exploit = np.where(region, fp.total, -np.inf)
     margin = np.where(region, feasibility_margin(inflated, constraints), -np.inf)
     rank = rank_with_tiebreak(exploit, margin, tie_epsilon)
@@ -1552,6 +2071,11 @@ def score_pool_flat_power(
         exploit=np.asarray(exploit, dtype=float),
         margin=np.asarray(margin, dtype=float),
         rank=np.asarray(rank, dtype=float),
+        fxy_source=fxy_source,
+        fxy_mean=(np.asarray(fxy_mean, dtype=float).reshape(-1)
+                  if fxy_mean is not None else np.empty(0)),
+        fxy_sigma=(np.asarray(fxy_std, dtype=float).reshape(-1)
+                   if fxy_std is not None else np.empty(0)),
     )
 
 
@@ -1722,6 +2246,33 @@ class ScoredPool:
     #: ``exploit`` when the tie-break is disabled.  ``exploit`` keeps its pure
     #: value for improvement thresholds and reporting.
     rank: np.ndarray = field(default_factory=lambda: np.empty(0))
+    #: Provenance of the F_xy numbers this pool was scored with — ``"head"`` (a
+    #: real ``predict_fxy``) or ``"proxy"`` (the interim F_r regression of
+    #: :func:`fxy_proxy`).  ``""`` for every mode that does not read F_xy.  It is
+    #: a POOL-level fact (one model scored the whole pool) and is written into
+    #: the wave's ``selection.json`` so a readout can never mistake a proxy for a
+    #: prediction.
+    fxy_source: str = ""
+    #: Per-candidate F_xy as :func:`predict_fxy` SERVED it — i.e. after the G4
+    #: sigma bar, so ``fxy_sigma`` is the PROXY width whenever the checkpoint bars
+    #: its head's.  These are the two numbers the exploit scalar is built from
+    #: (:func:`score_min_fxy` then applies the per-cell ``fxy_bias`` /
+    #: ``fxy_sigma_extra``, both ``None`` by default, before taking the UCB).
+    #: NaN for every mode that does not read F_xy.  Written per candidate into the
+    #: wave's ``selection.json``: without them an F_xy attribution had to be
+    #: reconstructed by re-loading the wave's checkpoint (defect D-LOG,
+    #: ``data/reports/minfxy_T6T4_f121_r1_results_20260830.md`` §9).
+    fxy_mean: np.ndarray = field(default_factory=lambda: np.empty(0))
+    fxy_sigma: np.ndarray = field(default_factory=lambda: np.empty(0))
+    #: Per-candidate serve-time feature/geometry OOD verdict (review §6.5), set by
+    #: :func:`apply_safety_shield`.  All-False until the shield runs — a pool that
+    #: was never screened must not read as "screened and clean".
+    ood_flag: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=bool))
+    #: Per-candidate gated axes for which NO finite conformal interval exists
+    #: (artifact missing, target unfitted, or a vacuous ``+inf`` quantile).  The
+    #: review's "calibration cell unsupported" state, carried as data so the
+    #: delivery dossier can name it.  Empty tuples until the shield runs.
+    conformal_unfit: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         # Directly-constructed pools (tests, external callers) may omit the
@@ -1732,6 +2283,15 @@ class ScoredPool:
             self.margin = np.zeros(n, dtype=float)
         if np.size(self.rank) != n:
             self.rank = np.asarray(self.exploit, dtype=float).copy()
+        if np.size(self.ood_flag) != n:
+            self.ood_flag = np.zeros(n, dtype=bool)
+        # A pool scored without F_xy must read as "no F_xy prediction", never as 0.
+        if np.size(self.fxy_mean) != n:
+            self.fxy_mean = np.full(n, np.nan, dtype=float)
+        if np.size(self.fxy_sigma) != n:
+            self.fxy_sigma = np.full(n, np.nan, dtype=float)
+        if len(self.conformal_unfit) != n:
+            self.conformal_unfit = tuple(() for _ in range(n))
 
     def __len__(self) -> int:
         return len(self.candidates)
@@ -1847,6 +2407,346 @@ def _safe_convergence(model: Any, patterns: Sequence[Pattern], ctx: CaseContext)
 
 
 # --------------------------------------------------------------------------- #
+# SAFETY SHIELD — OOD policy + conformal chance constraint (review §6.5 P0-04,
+# §8.5).  Both gates are OFF by default; with the defaults every function here
+# is a no-op and the composed wave is byte-identical to the pre-shield campaign.
+#
+# The two gates answer DIFFERENT questions and that is why they are separate:
+#
+#   * the OOD guard asks "is this board's fuel population inside the manifold the
+#     ensemble was trained on?"  Ensemble sigma cannot answer it — every member
+#     shares the manifold, so off-manifold they agree while being jointly wrong
+#     (:mod:`lpopt.model.ood_guard`).  Its verdict therefore acts on the RANKING
+#     (escalate) or the POOL (reject), never on sigma.
+#   * the conformal gate asks "is the model's own finite-sample error bar, not
+#     its calibrated sigma, still inside the limit?"  It replaces the mu + kappa*sigma
+#     screen with the distribution-free ``U_c(x) <= L_c`` of
+#     :mod:`lpopt.model.conformal` on the axes that carry a fitted interval.
+# --------------------------------------------------------------------------- #
+OOD_POLICY_WARN = "warn"
+OOD_POLICY_ESCALATE = "escalate"
+OOD_POLICY_REJECT = "reject"
+#: Accepted ``[acquisition] ood_policy`` values (mirrors ``config``'s validator).
+OOD_POLICIES: tuple[str, ...] = (
+    OOD_POLICY_WARN, OOD_POLICY_ESCALATE, OOD_POLICY_REJECT)
+
+#: Gated licensing axes the conformal gate can bound: ``(feasibility-limit key,
+#: surrogate column)``.  These are exactly the four axes that carry BOTH a hard
+#: limit in :func:`lpopt.search.campaign.feasibility_limits_for` and a fitted
+#: :data:`lpopt.model.conformal.CONFORMAL_TARGETS` entry.
+#:
+#: ``max_pin_burnup`` is deliberately ABSENT even though it has a conformal
+#: target: the search screens it at a MODEL-MARGIN haircut (78.0 against a
+#: licensing 80.0), so stacking a conformal half-width on top would double-count
+#: the same margin.  ``cyclen`` is absent because its band, where a mode sets
+#: one, is two-sided and the gate here is a one-sided upper bound.
+CONFORMAL_GATE_AXES: tuple[tuple[str, int], ...] = (
+    ("f_r", 0),
+    ("cbc_max", 1),
+    ("f_q", 2),
+    ("ao_abs", 4),
+)
+
+
+@dataclass(frozen=True)
+class SafetyShield:
+    """The ``[acquisition]`` safety-shield settings, in one immutable value.
+
+    ``ood_policy`` is one of :data:`OOD_POLICIES`; ``conformal_gate`` turns the
+    conformal chance constraint on; ``conformal_alpha`` is the miscoverage level
+    the artifact was fit at.  ``ood_margin`` (``None`` = the guard's own
+    :data:`lpopt.model.ood_guard.DEFAULT_MARGIN`) is exposed for tests and for a
+    future production/research margin split, not as a deck knob.
+    """
+
+    ood_policy: str = OOD_POLICY_WARN
+    conformal_gate: bool = False
+    conformal_alpha: float = 0.10
+    ood_margin: float | None = None
+
+    @property
+    def policy(self) -> str:
+        return str(self.ood_policy).strip().lower()
+
+    @property
+    def active(self) -> bool:
+        """True when the shield can change a wave (else every call is a no-op)."""
+        return self.policy != OOD_POLICY_WARN or bool(self.conformal_gate)
+
+    @classmethod
+    def from_config(cls, acq_cfg: Any) -> "SafetyShield":
+        """Build from an ``[acquisition]`` config block (missing keys -> defaults)."""
+        return cls(
+            ood_policy=str(getattr(acq_cfg, "ood_policy", OOD_POLICY_WARN)),
+            conformal_gate=bool(getattr(acq_cfg, "conformal_gate", False)),
+            conformal_alpha=float(getattr(acq_cfg, "conformal_alpha", 0.10)),
+        )
+
+
+def ood_flags(model: Any, patterns: Sequence[Pattern],
+              *, margin: float | None = None) -> tuple[np.ndarray, str, int]:
+    """``(flags, guard_state, n_errors)`` from the serve-time feature/geometry guard.
+
+    ``flags[i]`` is True when candidate ``i`` carries at least one fresh type
+    outside the champion's training envelope (``PosValCnnBackend.feature_ood_types``
+    -> :func:`lpopt.model.ood_guard.feature_ood_vecs`).  The guard is REUSED as-is:
+    nothing here recomputes an envelope or a z-value.
+
+    ``guard_state`` is ``"available"`` when the model exposes the probe and
+    ``"absent"`` when it does not — a backend WITHOUT a guard flags nothing, which
+    is honest ("there is no guard here"), and is reported as such so a run can
+    never present an unguarded wave as a screened one.
+
+    A probe that RAISES is a different thing from a probe that says "clean": that
+    candidate is flagged (fail-closed, review §8.5 — ``unknown`` is not a safe
+    value) and counted in ``n_errors``.
+    """
+    patterns = list(patterns)
+    n = len(patterns)
+    flags = np.zeros(n, dtype=bool)
+    probe = getattr(model, "feature_ood_types", None)
+    if not callable(probe):
+        return flags, "absent", 0
+    errors = 0
+    for i, pat in enumerate(patterns):
+        try:
+            offenders = (probe(pat) if margin is None
+                         else probe(pat, margin=float(margin)))
+        except Exception:  # noqa: BLE001 — an unevaluable guard is NOT a pass
+            flags[i] = True
+            errors += 1
+            continue
+        flags[i] = bool(offenders)
+    return flags, "available", errors
+
+
+def conformal_upper(model: Any, ctx: CaseContext, patterns: Sequence[Pattern],
+                    *, alpha: float) -> np.ndarray | None:
+    """``[N, 7]`` split-conformal UPPER bounds, or ``None`` when unavailable.
+
+    Straight through ``PosValCnnBackend.predict_interval`` (:mod:`lpopt.model.conformal`
+    served unchanged): a champion with no ``conformal.json`` returns an
+    ``available=False`` all-NaN interval, which this reports as ``None`` — the gate
+    then screens nothing and every axis is recorded as unfit, rather than silently
+    passing candidates it never bounded.
+    """
+    fn = getattr(model, "predict_interval", None)
+    if not callable(fn):
+        return None
+    try:
+        iv = fn(list(patterns), ctx.case_key, ctx.e_core or 0.0, alpha=float(alpha))
+    except Exception:  # noqa: BLE001 — an interval is a screen, never a crash
+        return None
+    if iv is None or not getattr(iv, "available", False):
+        return None
+    upper = np.asarray(iv.upper, dtype=float)
+    return upper if upper.ndim == 2 else None
+
+
+def fxy_conformal_upper(model: Any, ctx: CaseContext, patterns: Sequence[Pattern],
+                        *, alpha: float) -> np.ndarray | None:
+    """Conformal UPPER bound for F_xy, or ``None`` — "keep the proxy sigma".
+
+    F_xy is served OUTSIDE the frozen seven-column surrogate contract, so it is
+    absent from ``predict_interval``.  A conformal bound therefore exists only when
+    BOTH hold:
+
+    * the loaded CHECKPOINT carries a real ``f_xy`` head (:func:`has_fxy_head` —
+      calling it is the only honest probe, ``hasattr`` is not), and
+    * the champion's ``conformal.json`` carries a fitted ``f_xy`` entry.
+
+    With either missing this returns ``None`` and the caller leaves the axis on its
+    existing screen.  Bounding the INTERIM PROXY conformally would be a category
+    error: the proxy is an affine function of predicted F_r whose dispersion is a
+    fit residual, not a calibrated model error, so a conformal quantile fitted for
+    a head does not certify it.
+
+    A checkpoint whose head sigma is BARRED (:func:`fxy_sigma_barred` — `s1j`, G4
+    FAIL) returns ``None`` here too: a conformal half-width is fitted ON that
+    sigma, so serving the bound would re-admit the very width the bar refuses.
+    ``None`` is already this function's "keep the proxy screen" answer, so the
+    caller needs no new branch.
+    """
+    if not has_fxy_head(model, ctx) or fxy_sigma_barred(model):
+        return None
+    artifact = getattr(model, "conformal", None) or {}
+    entry = (artifact.get("per_target") or {}).get("f_xy")
+    if entry is None:
+        return None
+    keys_fn = getattr(model, "conformal_cell_keys", None)
+    head = getattr(model, "predict_fxy", None)
+    if not callable(keys_fn) or not callable(head):
+        return None
+    try:
+        from ..model.conformal import halfwidths as _halfwidths
+
+        out = head(list(patterns), ctx.case_key, ctx.e_core or 0.0)
+        if out is None:
+            return None
+        mu = np.asarray(out[0], dtype=float).reshape(-1)
+        sd = np.asarray(out[1], dtype=float).reshape(-1)
+        keys = list(keys_fn(list(patterns), ctx.case_key, ctx.e_core or 0.0))
+        hw, _from_cell = _halfwidths(entry, keys, sd, float(alpha))
+    except Exception:  # noqa: BLE001 — no bound is "keep the proxy", never a crash
+        return None
+    return mu + np.asarray(hw, dtype=float).reshape(-1)
+
+
+def conformal_gate_axes(limits: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:
+    """The :data:`CONFORMAL_GATE_AXES` entries this mode actually GATES.
+
+    An axis the objective leaves ungated (``limits[key] is None`` — e.g. F_r under
+    ``flat_power`` / ``fr_boundary``) is not a hard constraint here either, so the
+    conformal gate must not invent one for it.
+    """
+    return tuple((key, col) for key, col in CONFORMAL_GATE_AXES
+                 if limits.get(key) is not None)
+
+
+def _subset_pool(scored: ScoredPool, keep: Sequence[int]) -> ScoredPool:
+    """A new :class:`ScoredPool` holding only the ``keep`` row indices (in order)."""
+    idx = np.asarray(list(keep), dtype=int)
+    return ScoredPool(
+        candidates=[scored.candidates[int(i)] for i in idx],
+        mean=scored.mean[idx], epistemic=scored.epistemic[idx],
+        calibrated=scored.calibrated[idx], conv=scored.conv[idx],
+        p_feas=scored.p_feas[idx], acq=scored.acq[idx], raw_epi=scored.raw_epi[idx],
+        in_region=scored.in_region[idx], exploit=scored.exploit[idx],
+        margin=scored.margin[idx], rank=scored.rank[idx],
+        fxy_source=scored.fxy_source,
+        fxy_mean=np.asarray(scored.fxy_mean, dtype=float)[idx],
+        fxy_sigma=np.asarray(scored.fxy_sigma, dtype=float)[idx],
+        ood_flag=np.asarray(scored.ood_flag, dtype=bool)[idx],
+        conformal_unfit=tuple(scored.conformal_unfit[int(i)] for i in idx),
+    )
+
+
+def apply_safety_shield(
+    model: Any,
+    ctx: CaseContext,
+    scored: ScoredPool,
+    shield: SafetyShield,
+    limits: Mapping[str, Any],
+) -> tuple[ScoredPool, dict[str, Any]]:
+    """Turn the OOD guard and the conformal intervals into SEARCH behaviour.
+
+    Returns ``(pool, report)``.  The report is the per-wave accounting the review
+    asks for (§6.5 item 5 — sigma, conformal width and OOD distance reported
+    SEPARATELY): how many candidates each gate flagged, demoted and removed.
+
+    Order matters and is deliberate: the OOD policy runs first (an off-manifold
+    candidate's conformal interval is calibrated on the SAME manifold and is not
+    a bound for it), then the conformal gate screens what survives.
+
+    * ``ood_policy = "warn"`` — the shipped behaviour.  Flags are still computed
+      and attached to the pool (so the delivery dossier can carry them) but no
+      score moves and no candidate is dropped.
+    * ``"escalate"`` — a flagged candidate's ``exploit`` and ``rank`` become
+      ``-inf``: it can no longer take an exploit slot, and
+      :meth:`CampaignDriver._run_wave`'s elite carry-over skips it (that filter is
+      ``isfinite(exploit)``).  It stays in the pool for the EXPLORE and CONTROL
+      slots, which rank on ``raw_epi`` and on chance — the review's rule is "no
+      surrogate-only exploit off-manifold", not "never evaluate it".
+    * ``"reject"`` — the candidate leaves the pool.
+
+    The conformal gate drops any candidate whose finite conformal upper bound on a
+    GATED axis (:func:`conformal_gate_axes`) exceeds that axis's limit.  A
+    candidate/axis with no finite bound is NOT dropped on that axis — its existing
+    ``mu + kappa*sigma`` screen still stands — and the axis is recorded in
+    :attr:`ScoredPool.conformal_unfit` for that candidate.
+    """
+    n0 = len(scored.candidates)
+    report: dict[str, Any] = {
+        "ood_policy": shield.policy,
+        "conformal_gate": bool(shield.conformal_gate),
+        "conformal_alpha": float(shield.conformal_alpha),
+        "n_candidates": n0,
+        "ood_guard": "absent",
+        "ood_flagged": 0,
+        "ood_guard_errors": 0,
+        "ood_escalated": 0,
+        "ood_rejected": 0,
+        "conformal_available": False,
+        "conformal_rejected": 0,
+        "conformal_rejected_by_axis": {},
+        "conformal_unfit_by_axis": {},
+        "n_remaining": n0,
+    }
+    if n0 == 0:
+        return scored, report
+
+    patterns = [c.pattern for c in scored.candidates]
+
+    # -- 1. OOD guard ------------------------------------------------------- #
+    flags, guard_state, errors = ood_flags(model, patterns, margin=shield.ood_margin)
+    scored.ood_flag = flags
+    report["ood_guard"] = guard_state
+    report["ood_flagged"] = int(flags.sum())
+    report["ood_guard_errors"] = int(errors)
+
+    policy = shield.policy
+    if policy == OOD_POLICY_ESCALATE and flags.any():
+        exploit = np.asarray(scored.exploit, dtype=float).copy()
+        rank = np.asarray(scored.rank, dtype=float).copy()
+        exploit[flags] = -np.inf
+        rank[flags] = -np.inf
+        scored.exploit = exploit
+        scored.rank = rank
+        report["ood_escalated"] = int(flags.sum())
+    elif policy == OOD_POLICY_REJECT and flags.any():
+        keep = np.flatnonzero(~flags)
+        report["ood_rejected"] = int(flags.sum())
+        scored = _subset_pool(scored, keep)
+        patterns = [c.pattern for c in scored.candidates]
+
+    # -- 2. conformal chance constraint ------------------------------------- #
+    if shield.conformal_gate and scored.candidates:
+        m = len(scored.candidates)
+        upper = conformal_upper(model, ctx, patterns, alpha=shield.conformal_alpha)
+        report["conformal_available"] = upper is not None
+        bounds: dict[str, np.ndarray] = {}
+        for key, col in conformal_gate_axes(limits):
+            bounds[key] = (np.full(m, np.nan) if upper is None
+                           else np.asarray(upper[:, col], dtype=float))
+        # F_xy has no surrogate column, so it never appears in ``predict_interval``.
+        # It joins the gate ONLY with a real head AND a fitted ``f_xy`` interval;
+        # with either missing the mode KEEPS its proxy-sigma screen (the interim
+        # F_r regression widened by ``FXY_PROXY_SIGMA_K``), which is a screen — not
+        # a gap — so those candidates are not "unfit", they are proxy-screened.
+        if limits.get("f_xy") is not None:
+            fxy_u = fxy_conformal_upper(model, ctx, patterns,
+                                        alpha=shield.conformal_alpha)
+            report["conformal_fxy"] = "proxy" if fxy_u is None else "head"
+            if fxy_u is not None:
+                bounds["f_xy"] = np.asarray(fxy_u, dtype=float).reshape(-1)
+        unfit: list[tuple[str, ...]] = []
+        violated = np.zeros(m, dtype=bool)
+        by_axis: dict[str, int] = {}
+        unfit_axis: dict[str, int] = {}
+        for i in range(m):
+            rows: list[str] = []
+            for key, arr in bounds.items():
+                bound = float(arr[i]) if arr.shape[0] > i else float("nan")
+                if not math.isfinite(bound):
+                    rows.append(key)
+                    unfit_axis[key] = unfit_axis.get(key, 0) + 1
+                    continue
+                if bound > float(limits[key]):
+                    violated[i] = True
+                    by_axis[key] = by_axis.get(key, 0) + 1
+            unfit.append(tuple(rows))
+        scored.conformal_unfit = tuple(unfit)
+        report["conformal_unfit_by_axis"] = unfit_axis
+        if violated.any():
+            report["conformal_rejected"] = int(violated.sum())
+            report["conformal_rejected_by_axis"] = by_axis
+            scored = _subset_pool(scored, np.flatnonzero(~violated))
+
+    report["n_remaining"] = len(scored.candidates)
+    return scored, report
+
+
+# --------------------------------------------------------------------------- #
 # local search refinement (plan sec. 4.6)
 # --------------------------------------------------------------------------- #
 def local_search(
@@ -1886,6 +2786,7 @@ def local_search(
     """
 
     from .construct import candidate_record_id
+    from .verify import lineage_anchor
 
     budget = int(cfg_ls.max_predictions)
     if budget <= 0 or len(scored) == 0:
@@ -1933,8 +2834,14 @@ def local_search(
                 if rid in seen:
                     continue
                 seen.add(rid)
+                # ``current`` is a surrogate-only board on every step but the
+                # first-verified one, so its record_id is a preimage of a row that
+                # does not exist.  Anchor the lineage on the nearest ancestor that
+                # IS a store row (see verify.lineage_anchor) -- a real multi-move
+                # edge instead of a dangling single-move one.
                 neighbours.append(
-                    Candidate(pattern, child, "local", current.record_id, rid, ctx.e_core)
+                    Candidate(pattern, child, "local",
+                              lineage_anchor(current, ledger_ids), rid, ctx.e_core)
                 )
                 if spent + len(neighbours) >= budget:
                     break
@@ -1957,6 +2864,10 @@ def local_search(
                         float(sub.acq[best]), float(sub.raw_epi[best]),
                         bool(sub.in_region[best]), float(sub.exploit[best]),
                         float(sub.margin[best]), float(sub.rank[best]),
+                        # the F_xy the hill-climb ranked THIS board on; without it
+                        # every ``origin="local"`` pick — which is most of them —
+                        # lands in selection.json with no F_xy at all (D-LOG).
+                        float(sub.fxy_mean[best]), float(sub.fxy_sigma[best]),
                     )
                 )
             else:
@@ -1979,11 +2890,18 @@ def _extend(scored: ScoredPool, cands: list[Candidate], rows: list) -> ScoredPoo
     exploit = np.concatenate([scored.exploit, np.asarray([r[8] for r in rows])])
     margin = np.concatenate([scored.margin, np.asarray([r[9] for r in rows])])
     rank = np.concatenate([scored.rank, np.asarray([r[10] for r in rows])])
+    fxy_mu = np.concatenate([
+        np.asarray(scored.fxy_mean, dtype=float),
+        np.asarray([(r[11] if len(r) > 11 else np.nan) for r in rows], dtype=float)])
+    fxy_sd = np.concatenate([
+        np.asarray(scored.fxy_sigma, dtype=float),
+        np.asarray([(r[12] if len(r) > 12 else np.nan) for r in rows], dtype=float)])
     return ScoredPool(
         candidates=scored.candidates + cands,
         mean=mean, epistemic=epi, calibrated=cal, conv=conv,
         p_feas=pf, acq=acq, raw_epi=raw, in_region=region, exploit=exploit,
-        margin=margin, rank=rank,
+        margin=margin, rank=rank, fxy_source=scored.fxy_source,
+        fxy_mean=fxy_mu, fxy_sigma=fxy_sd,
     )
 
 
@@ -2639,6 +3557,8 @@ __all__ = [
     "MaxCycleScore",
     "MinFrSpec",
     "MinFrScore",
+    "MinFxySpec",
+    "MinFxyScore",
     "MinFuelCostSpec",
     "MinFuelCostScore",
     "MinFrBoundarySpec",
@@ -2648,21 +3568,33 @@ __all__ = [
     "FLATPOWER_GATE_K",
     "flatpower_fr_gate",
     "predict_flatness",
+    "predict_fxy",
+    "has_fxy_head",
+    "fxy_sigma_barred",
+    "fxy_proxy",
+    "FXY_PROXY_SLOPE",
+    "FXY_PROXY_INTERCEPT",
+    "FXY_SOURCE_HEAD",
+    "FXY_SOURCE_PROXY",
+    "flatpower_fxy_gate",
     "OuterCellStat",
     "build_reward_model",
     "make_maxcycle_constraints",
     "make_minfr_constraints",
+    "make_minfxy_constraints",
     "make_minfuelcost_constraints",
     "make_fr_boundary_constraints",
     "make_flatpower_constraints",
     "score_max_cycle_min_fr",
     "score_min_fr_max_cycle",
+    "score_min_fxy",
     "score_min_fuel_cost",
     "score_fr_boundary",
     "score_flat_power",
     "fuel_charge_array",
     "score_pool_max_cycle",
     "score_pool_min_fr",
+    "score_pool_min_fxy",
     "score_pool_min_fuel_cost",
     "score_pool_fr_boundary",
     "score_pool_flat_power",

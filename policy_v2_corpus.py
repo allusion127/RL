@@ -11,6 +11,19 @@ Two one-off jobs, both append-only and both backed up before they write:
     the corpus already stores, with ``mine_policy_corpus.ring_profile`` itself —
     no second implementation, and no read of ``data/store`` at all.
 
+``backfill-fxy``
+    Add ``parent_f_xy`` / ``child_f_xy`` / ``d_f_xy`` / ``improved_fxy`` and
+    ``burn_state`` to the EXISTING ``steps.parquet`` rows
+    (``intervention_wave_r1_results_20260830.md`` s11-3: the F_xy-era waves make
+    F_xy their PRIMARY response and the 80-column schema had nowhere to put the
+    label, so the wave's own answers never reached the corpus).  The F_xy values
+    are JOINED from ``data/store/records.parquet`` on ``record_id`` - they are
+    MASTER readings and are not recomputable - while ``burn_state`` is recovered
+    from the ``parent_pattern`` / ``child_pattern`` strings the corpus already
+    stores, with ``mine_policy_corpus.move_burn_state`` itself.  ADD-ONLY: no
+    existing column is read back, rewritten or reordered.  Dry-run by default;
+    ``--apply`` writes, after a backup.
+
 ``verify``
     Re-mine one campaign that is already in the corpus and assert every column
     matches, which is the check ``ablation_analyze`` used to license its appender.
@@ -33,6 +46,13 @@ sys.path.insert(0, str(BASE))
 
 STEPS = BASE / "data/policy/steps.parquet"
 FUEL_TYPES = BASE / "data/store/fuel_types.parquet"
+STORE = BASE / "data/store/records.parquet"
+
+#: Where the F_xy-column migration parks its pre-write copy.  On the data drive,
+#: beside the wave backups, because a 9 MB sibling of the file being migrated is
+#: exactly the copy a mistaken `git clean` takes with it.
+FXY_BACKUP = Path("E:/lpopt_data/5_RL/backups/"
+                  "steps.parquet.bak_pre_fxy_cols_20260830")
 
 #: The three columns ``PHYSICS`` gained.  Inserted in ``build_steps`` order,
 #: i.e. immediately after the ``*_fresh_enr_r_center`` triple, so a backfilled
@@ -115,6 +135,105 @@ def cmd_backfill(args) -> int:
     return 0
 
 
+def fxy_columns(steps: pd.DataFrame, store: pd.DataFrame) -> pd.DataFrame:
+    """The five new columns for ``steps``, as ``build_steps`` would emit them.
+
+    ``f_xy`` is a MASTER reading (``FXYP`` in ``MAS_OUT``), so it can only be
+    JOINED - by ``record_id``, the store's own identity, on BOTH ends of the
+    edge.  ``improved_fxy`` reproduces ``build_steps``' rule exactly: pd.NA
+    unless both ends converged AND both readings exist, else ``child < parent``.
+    ``burn_state`` is recomputed with the shared implementation.
+    """
+    import mine_policy_corpus as M
+
+    fxy = pd.to_numeric(
+        store.set_index("record_id")["f_xy"], errors="coerce"
+    ) if "f_xy" in store.columns else pd.Series(dtype=float)
+    fxy = fxy[~fxy.index.duplicated(keep="last")]
+
+    parent = steps["parent_record_id"].map(fxy).astype(float).to_numpy()
+    child = steps["child_record_id"].map(fxy).astype(float).to_numpy()
+
+    both = steps["both_converged"].fillna(False).astype(bool).to_numpy()
+    known = both & np.isfinite(parent) & np.isfinite(child)
+    improved = pd.array(child < parent, dtype="boolean")
+    improved[~known] = pd.NA
+
+    genomes: dict[str, object] = {}
+    burn: list[str] = []
+    for ppat, cpat in zip(steps["parent_pattern"], steps["child_pattern"],
+                          strict=True):
+        pg = genomes.get(ppat)
+        if pg is None:
+            pg = genomes[ppat] = M.genome_of(ppat)
+        burn.append(M.move_burn_state(pg, ppat, cpat))
+
+    return pd.DataFrame({
+        "parent_f_xy": parent, "child_f_xy": child, "d_f_xy": child - parent,
+        "improved_fxy": improved, "burn_state": burn,
+    }, index=steps.index)
+
+
+def cmd_backfill_fxy(args) -> int:
+    import mine_policy_corpus as M
+
+    steps_path = Path(args.steps)
+    steps = pd.read_parquet(steps_path)
+    print(f"[fxy] {len(steps)} rows, {len(steps.columns)} columns")
+    already = [c for c in M.FXY_SCHEMA_COLUMNS if c in steps.columns]
+    if already and not args.force:
+        print(f"[fxy] already present: {already} - nothing to do")
+        return 0
+
+    import pyarrow.parquet as pq
+
+    store_path = Path(args.store)
+    if "f_xy" not in pq.ParquetFile(store_path).schema_arrow.names:
+        print(f"[fxy] {store_path} has no f_xy column - nothing to join; "
+              "back-fill the store first (lpopt/tools/backfill_fxy.py)")
+        return 1
+    store = pd.read_parquet(store_path, columns=["record_id", "f_xy"])
+    print(f"[fxy] store: {len(store)} records, "
+          f"{int(pd.to_numeric(store['f_xy'], errors='coerce').notna().sum())} "
+          "with an F_xy label")
+
+    new = fxy_columns(steps, store)
+    have_p = np.isfinite(new["parent_f_xy"].to_numpy())
+    have_c = np.isfinite(new["child_f_xy"].to_numpy())
+    both = have_p & have_c
+    print(f"[fxy] join coverage: parent {int(have_p.sum())}/{len(steps)}  "
+          f"child {int(have_c.sum())}/{len(steps)}  "
+          f"BOTH ENDS {int(both.sum())}/{len(steps)} "
+          f"({both.mean():.1%})")
+    print(f"[fxy] improved_fxy known on {int(new['improved_fxy'].notna().sum())} "
+          f"rows, True on {int((new['improved_fxy'] == True).sum())}")  # noqa: E712
+    print("[fxy] burn_state mix: "
+          f"{new['burn_state'].value_counts().to_dict()}")
+    by_src = (pd.DataFrame({"lineage_source": steps["lineage_source"],
+                            "both": both})
+              .groupby("lineage_source")["both"].agg(["sum", "size"]))
+    print("[fxy] rows with F_xy on both ends, by lineage_source:")
+    print(by_src.to_string())
+
+    for col in M.FXY_SCHEMA_COLUMNS:
+        steps[col] = new[col]
+
+    if not args.apply:
+        print("[fxy] DRY RUN (default) - steps.parquet not written; "
+              "re-run with --apply")
+        return 0
+    backup = Path(args.backup)
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if not backup.exists():
+        backup.write_bytes(steps_path.read_bytes())
+        print(f"[fxy] backup -> {backup}")
+    else:
+        print(f"[fxy] backup already exists, kept: {backup}")
+    steps.to_parquet(steps_path, index=False)
+    print(f"[fxy] wrote {steps_path}  ({len(steps.columns)} columns)")
+    return 0
+
+
 def cmd_verify(args) -> int:
     """Re-mine a campaign already in the corpus; every column must match."""
     import ablation_analyze as A
@@ -167,6 +286,14 @@ def main(argv=None) -> int:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_backfill)
+
+    p = sub.add_parser("backfill-fxy")
+    p.add_argument("--store", default=str(STORE))
+    p.add_argument("--backup", default=str(FXY_BACKUP))
+    p.add_argument("--apply", action="store_true",
+                   help="actually write (default is a dry run)")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_backfill_fxy)
 
     p = sub.add_parser("verify")
     p.add_argument("--campaign", default="fpcamp_minfr_T6T4")

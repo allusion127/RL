@@ -42,6 +42,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from ..data.fuel_types import fresh_fuel_charge
+from ..safelog import safe_logger
 from .construct import (
     CaseContext,
     build_pair_universe,
@@ -448,7 +449,9 @@ class FuelCostOuterSearch:
         self.store_df = store_df
         self.restart_pairs = restart_pairs
         self.driver_factory = driver_factory or self._default_driver_factory
-        self._log = log or (lambda m: print(m))
+        # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+        # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+        self._log = safe_logger(log)
         self.budget_spent = 0
         # -- active-learning retrain integration (plan 1c) ----------------- #
         # ``retrain_gate_callback(new_labels) -> gate_dict | None`` runs a FULL

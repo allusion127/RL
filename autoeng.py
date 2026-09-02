@@ -69,10 +69,20 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+import readout_axis as RA                                     # noqa: E402
 
 #: The proven OPEN recipe.  Every knob not listed in ``CELL_OVERRIDE_KEYS`` is
 #: carried from this deck byte-for-byte (after a TOML round-trip).
 DEFAULT_PARENT_DECK = "fpcamp_minfr_N1N2_f113_199.inp"
+
+#: The deck objective each ``objective_axis`` setting expects the parent deck to
+#: carry.  ``_do_prereg`` asserts the generated deck matches, so a config that
+#: says "read me on F_xy" while pointing at a min_fr parent deck is a hard error
+#: at prereg time — BEFORE any MASTER call — rather than a readout that silently
+#: labels an F_r campaign as an F_xy one.
+AXIS_PARENT_OBJECTIVE = {"f_r": "min_fr_max_cycle", "f_xy": "min_fxy"}
 
 #: ``[constraints]`` is INERT on ``min_fr_max_cycle`` and the f113 results report
 #: (defect 2) says to drop it from the next min_fr deck.  The automation carries
@@ -149,11 +159,38 @@ class AutoengConfig:
     probe_budget: int = 8
     open_budget: int = 100
     master_budget_total: int = 500
+    #: WHICH AXIS the state machine's OPEN / harvest gates and every mark it
+    #: prints are read on (design fxy_switch_design_20260829.md §3.5.5).
+    #:
+    #: ``"f_r"``  (DEFAULT) — today's behaviour exactly: the store floor, the
+    #:            OPENED-cell test and the SUCCESS marks are F_r <= 1.55.
+    #: ``"f_xy"`` — the same gates on MEASURED F_xy <= ``f_xy_limit`` (1.65).
+    #:
+    #: It is a config key and not a derived value because autoeng's gates run
+    #: BEFORE the per-cell deck exists (``opened_cells_from_store`` and the
+    #: PRECHECK marks are what decide whether a deck is written at all), so the
+    #: axis cannot be read off the deck the way ``anchor_readout.py``'s is.
+    #: ``_do_prereg`` then asserts the generated deck's own objective agrees
+    #: (:data:`AXIS_PARENT_OBJECTIVE`), so the two can never drift apart.
+    objective_axis: str = "f_r"
     pause_for_approval: tuple[str, ...] = (
         "new_assembly", "retrain_promote_fail", "budget_exceeded",
     )
     targets: tuple[Target, ...] = ()
     fleet: Fleet = field(default_factory=Fleet)
+
+    @property
+    def axis(self) -> RA.Axis:
+        """The resolved readout axis — ``RA.F_R_AXIS`` unless the config moved it.
+
+        On ``"f_r"`` this returns the shared default whose ``label`` is the
+        literal ``"F_r"`` and whose ``limit`` is the literal ``1.55``, so every
+        headline that formats ``axis.label`` / ``axis.limit`` renders exactly the
+        bytes it rendered before the switch.
+        """
+        return RA.resolve_axis(
+            objective=AXIS_PARENT_OBJECTIVE[self.objective_axis],
+            source=f"[autoeng] objective_axis = {self.objective_axis!r}")
 
     # -- resolved paths ----------------------------------------------------- #
     def p(self, rel: str) -> Path:
@@ -177,7 +214,7 @@ _FLEET_KEYS = {"campaign_host", "campaign_kit", "campaign_python", "train_deck",
 _AE_KEYS = {
     "run_id", "parent_deck", "main_deck", "champion_state", "store_dir", "package_root",
     "frontier_table", "mesh_dir", "notebook", "probe_budget", "open_budget",
-    "master_budget_total", "pause_for_approval",
+    "master_budget_total", "objective_axis", "pause_for_approval",
 }
 
 
@@ -210,6 +247,15 @@ def load_autoeng_config(path: str | Path, *, root: Path | None = None) -> Autoen
 
     if "pause_for_approval" in ae:
         ae["pause_for_approval"] = tuple(ae["pause_for_approval"])
+    if "objective_axis" in ae:
+        # Validated HERE, with the deck-loader's own discipline: an unknown axis
+        # must not survive to the point where a gate silently reads f_r.
+        axis = str(ae["objective_axis"]).strip()
+        if axis not in AXIS_PARENT_OBJECTIVE:
+            raise ValueError(
+                f"{path}: [autoeng] objective_axis = {axis!r} is not one of "
+                f"{sorted(AXIS_PARENT_OBJECTIVE)}")
+        ae["objective_axis"] = axis
     cfg = AutoengConfig(root=root, fleet=fleet, targets=tuple(targets), **ae)
 
     # Apply the run-level budgets to any target that did not name its own.
@@ -350,7 +396,11 @@ def measure_marks(cfg: AutoengConfig, target: Target) -> dict[str, Any]:
 
     sys.path.insert(0, str(cfg.root))
     pair, feed = target.pair, int(target.feed)
+    axis = cfg.axis
     m: dict[str, Any] = {"pair": pair, "feed": feed, "library": target.library,
+                         "axis": axis.key, "axis_label": axis.label,
+                         "axis_limit": axis.limit,
+                         "axis_provenance": axis.provenance(),
                          "sources": {}, "notes": []}
 
     # ---- store -------------------------------------------------------------
@@ -366,8 +416,27 @@ def measure_marks(cfg: AutoengConfig, target: Target) -> dict[str, Any]:
     m["store_f_r_p10"] = float(conv["f_r"].quantile(0.10)) if len(conv) else None
     m["store_cyclen_min"] = float(conv["cyclen"].min()) if len(conv) else None
     m["store_cyclen_max"] = float(conv["cyclen"].max()) if len(conv) else None
-    feas = conv[(conv["f_r"] <= 1.55) & (conv["cbc_max"] <= 1600.0)
-                & (conv["f_q"] <= 2.41) & (conv["ao_abs"].abs() <= 0.30)]
+    # THE OBJECTIVE AXIS.  F_r above is kept unconditionally — design §3.5.2
+    # keeps it a CONSTRAINT under min_fxy, so its floor stays a mark either way —
+    # and these are the marks the prereg headline and the SUCCESS block read.
+    # On the f_r axis they are the same numbers under a second name (asserted in
+    # tests/test_autoeng.py), which is what makes the min_fr output identical.
+    axis_conv, n_unlab = RA.split_labelled(conv, axis)
+    m["store_axis_labelled"] = int(len(axis_conv))
+    m["store_axis_unlabelled"] = int(n_unlab)
+    av = RA.axis_values(axis_conv, axis)
+    m["store_axis_floor"] = float(av.min()) if len(axis_conv) else None
+    m["store_axis_p10"] = float(av.quantile(0.10)) if len(axis_conv) else None
+    # The OPEN gate.  Under min_fxy the F_r constraint STAYS (design §3.5.2) and
+    # the measured F_xy gate is ADDED, so the feasible count can only shrink —
+    # never a row promoted by dropping an axis.  Rows with no measured F_xy are
+    # excluded and counted (``store_axis_unlabelled``), never passed through:
+    # this mark decides whether MASTER calls are spent, which is the deliverable
+    # side of the §3.5.4 split, not the permissive search side.
+    feas = axis_conv[(axis_conv["f_r"] <= 1.55) & (axis_conv["cbc_max"] <= 1600.0)
+                     & (axis_conv["f_q"] <= 2.41) & (axis_conv["ao_abs"].abs() <= 0.30)]
+    if axis.is_fxy:
+        feas = feas[RA.axis_values(feas, axis) <= axis.limit]
     m["store_feasible"] = int(len(feas))
     m["store_convergence_rate"] = round(len(conv) / len(cell), 4) if len(cell) else None
     e_core = lib[lib["case_pair"] == pair]["e_core"]
@@ -391,12 +460,17 @@ def measure_marks(cfg: AutoengConfig, target: Target) -> dict[str, Any]:
     # cross-feed elite parents: the mechanism the f113 campaign actually ran on.
     pair_rows = lib[lib["case_pair"] == pair]
     pconv = pair_rows[pair_rows["converged"].fillna(False).astype(bool)]
+    pconv, m["elite_parent_unlabelled"] = RA.split_labelled(pconv, axis)
     pfeas = pconv[(pconv["f_r"] <= 1.55) & (pconv["cbc_max"] <= 1600.0)
                   & (pconv["f_q"] <= 2.41) & (pconv["ao_abs"].abs() <= 0.30)]
+    if axis.is_fxy:
+        pfeas = pfeas[RA.axis_values(pfeas, axis) <= axis.limit]
     m["elite_parents_feasible"] = int(len(pfeas))
     m["elite_parent_feeds"] = {str(int(k)): int(v)
                                for k, v in pfeas["feed"].value_counts().items()}
     m["elite_parent_f_r_min"] = float(pfeas["f_r"].min()) if len(pfeas) else None
+    m["elite_parent_axis_min"] = (float(RA.axis_values(pfeas, axis).min())
+                                  if len(pfeas) else None)
 
     # ---- DB truth (dbx frontier table) -------------------------------------
     ft = cfg.p(cfg.frontier_table)
@@ -429,8 +503,13 @@ def measure_marks(cfg: AutoengConfig, target: Target) -> dict[str, Any]:
                     f"pin burnup (this cell's frontier core sits at "
                     f"{m.get('db_pin_node')} GWd/tU).  dbx_frontier_note_20260816.md sec. 5 "
                     f"calls that family a licensing dead end unless the ceiling is relaxed. "
-                    f"min_fr_max_cycle does NOT gate pin burnup, so a low-F_r core found "
-                    f"here may be undeliverable — registered in advance, not discovered after."
+                    + ("min_fr_max_cycle does NOT gate pin burnup, so a low-F_r core found "
+                       "here may be undeliverable"
+                       if not axis.is_fxy else
+                       f"min_fxy DOES gate PREDICTED pin burnup (minfxy_pin_bu_limit "
+                       f"78.0), so this cell is expected to come back mostly "
+                       f"infeasible rather than mostly undeliverable")
+                    + " — registered in advance, not discovered after."
                 )
         else:
             m["notes"].append("no DB frontier row for this cell (DB is silent here).")
@@ -505,6 +584,13 @@ def derive_deck_knobs(m: dict[str, Any]) -> dict[str, Any]:
                               ("below the store floor, above the corrected floor"),
                               0.01 apart, and it is a search knob that gates nothing.
     ``random_seed``         = deterministic per cell, never a spent seed.
+
+    ``near_miss_f_r`` stays on **F_r under every objective_axis**, deliberately.
+    It is the name of a real ``[search]`` knob in ``lpopt.config`` that admits
+    near-miss PARENTS by their F_r, and F_r remains a hard constraint under
+    ``min_fxy`` (design §3.5.2), so deriving it from the F_r floor is still the
+    correct derivation — there is no ``near_miss_f_xy`` knob to write to and
+    inventing one here would produce a deck the strict loader rejects.
     """
 
     store_floor = m.get("store_f_r_floor")
@@ -725,9 +811,23 @@ def build_deck(cfg: AutoengConfig, target: Target, marks: dict[str, Any],
     for sec in DROP_SECTIONS:
         data.pop(sec, None)
 
-    title = (f"min_fr_max_cycle AUTO-OPEN — {target.pair}/f{target.feed} "
+    # The parent deck IS the objective.  Checking it here — before the header is
+    # rendered — is what stops autoeng writing a prereg that says "PURE F_xy min"
+    # over a deck that optimises F_r, which is precisely the claim design §3.6
+    # forbids ("F_xy를 최적화했다 — 목적함수가 F_xy를 보지 못했다").
+    axis = cfg.axis
+    want = AXIS_PARENT_OBJECTIVE[cfg.objective_axis]
+    got = str(data.get("acquisition", {}).get("objective", "")).strip()
+    if got != want:
+        raise ValueError(
+            f"[autoeng] objective_axis = {cfg.objective_axis!r} needs a parent "
+            f"deck with objective = {want!r}, but {parent_path.name} carries "
+            f"{got!r}.  Point parent_deck at a {want} deck or change "
+            f"objective_axis; autoeng will not relabel a campaign it did not run.")
+
+    title = (f"{want} AUTO-OPEN — {target.pair}/f{target.feed} "
              f"({target.library}, e_core {marks.get('e_core')}), champion "
-             f"{Path(champion).name}, PURE F_r min, NO cycle band")
+             f"{Path(champion).name}, PURE {axis.label} min, NO cycle band")
     overrides: dict[tuple[str, str], Any] = {
         ("flow", "title"): title,
         ("flow", "random_seed"): int(marks["random_seed"]),
@@ -760,6 +860,7 @@ def render_prereg(cfg: AutoengConfig, target: Target, marks: dict[str, Any],
     """
 
     parent_sha = hashlib.sha256(parent_path.read_bytes()).hexdigest()
+    axis = cfg.axis
     n = lambda k, f="{}": ("n/a" if marks.get(k) is None else f.format(marks[k]))  # noqa: E731
     L: list[str] = []
     A = L.append
@@ -772,9 +873,14 @@ def render_prereg(cfg: AutoengConfig, target: Target, marks: dict[str, Any],
     A("#" * 79)
     A("#")
     A("# OBJECTIVE (registered, one line):")
-    A("#   PURE F_r MINIMISATION UNDER SAFETY GATES ONLY.  No cycle-length target and")
+    A(f"#   PURE {axis.label} MINIMISATION UNDER SAFETY GATES ONLY.  No cycle-length target and")
     A("#   no cycle-length band; cyclen is RECORDED on every row and is the objective's")
     A("#   subordinate tie-break, nothing more.  (User directive 2026-08-16.)")
+    if axis.is_fxy:
+        # Only on the F_xy axis, so the F_r header is unchanged byte for byte.
+        A(f"#   AXIS: {axis.provenance()}")
+        A(f"#   F_r STAYS A HARD CONSTRAINT at 1.55 (design 20260829 sec. 3.5.2); the")
+        A(f"#   objective and the gate are MEASURED {axis.label} (MASTER FXYP), never a proxy.")
     A("#")
     A("# ------------------------------------------------------------- THE MARKS --")
     A("# Measured, not assumed.  Every source is named so each number re-derives.")
@@ -782,7 +888,13 @@ def render_prereg(cfg: AutoengConfig, target: Target, marks: dict[str, Any],
     A(f"# 1. OUR STORE'S FLOOR IN THIS CELL  ({marks['sources']['store']})")
     A(f"#      rows {marks['store_rows']}   converged {marks['store_converged']}   "
       f"constraint-feasible {marks['store_feasible']}")
-    A(f"#      F_r floor {n('store_f_r_floor', '{:.4f}')}   p10 {n('store_f_r_p10', '{:.4f}')}")
+    A(f"#      {axis.label} floor {n('store_axis_floor', '{:.4f}')}   "
+      f"p10 {n('store_axis_p10', '{:.4f}')}")
+    if axis.is_fxy:
+        A(f"#      {axis.label} labelled {marks.get('store_axis_labelled')} / "
+          f"UNLABELLED {marks.get('store_axis_unlabelled')} converged rows EXCLUDED "
+          f"(no measured {axis.label})")
+        A(f"#      (F_r floor {n('store_f_r_floor', '{:.4f}')} kept as the constraint mark)")
     A(f"#      cyclen {n('store_cyclen_min', '{:.1f}')} - {n('store_cyclen_max', '{:.1f}')} EFPD")
     A(f"#      historical convergence {n('store_convergence_rate', '{:.1%}')} -> expect "
       f"~{int(target.budget * (marks.get('store_convergence_rate') or 1.0))} usable labels "
@@ -819,21 +931,27 @@ def render_prereg(cfg: AutoengConfig, target: Target, marks: dict[str, Any],
     A("# 4. THE ELITE PARENT SET (cross-feed transfer, the f113 mechanism)")
     A(f"#      {marks['elite_parents_feasible']} constraint-feasible {target.pair} rows exist "
       f"across all feeds; by feed {marks['elite_parent_feeds']}")
-    A(f"#      best parent F_r {n('elite_parent_f_r_min', '{:.4f}')}.  `_case_store_rows` "
+    A(f"#      best parent {axis.label} {n('elite_parent_axis_min', '{:.4f}')}.  `_case_store_rows` "
       f"filters by case_pair ONLY (no feed filter), so `_store_elites` sees them all and")
     A("#      `_parent_to_genome` feed-morphs each one to this cell's n_fresh.")
     A("#")
     A("# ------------------------------------------------------------- SUCCESS ----")
     A("#   PRIMARY   a MASTER-verified constraint-feasible core (F_r <= 1.55, CBC <= 1600,")
-    A("#             F_q <= 2.41, |AO| <= 0.30) at this cell.")
+    if axis.is_fxy:
+        A(f"#             F_q <= 2.41, |AO| <= 0.30, MEASURED {axis.gate}) at this cell.")
+    else:
+        A("#             F_q <= 2.41, |AO| <= 0.30) at this cell.")
     if marks.get("db_f_r_min") is not None:
         A(f"#   SECONDARY F_r <= {marks['db_f_r_min']:.4f} — matching or beating the DB's own best")
         A("#             core here with a loading pattern we actually hold.")
-    if marks.get("store_f_r_floor") is not None:
+        if axis.is_fxy:
+            A("#             (The DB carries NO F_xy, so this stays an F_r mark and is not")
+            A("#             evidence about the objective axis — design 20260829 sec. 3.6.)")
+    if marks.get("store_axis_floor") is not None:
         A(f"#   PARTIAL   no feasible row, but the cell's floor moves below "
-          f"{marks['store_f_r_floor']:.4f}.  Every 0.01")
+          f"{marks['store_axis_floor']:.4f}.  Every 0.01")
         A("#             of that is a FRONTIER LABEL in a region the champion has never seen.")
-        A(f"#   NULL      the floor does not move below ~{marks['store_f_r_floor']:.2f} in "
+        A(f"#   NULL      the floor does not move below ~{marks['store_axis_floor']:.2f} in "
           f"{target.budget} calls.  PUBLISHABLE.")
     A("#             The reading is NOT that the cell is closed; it is that cross-feed")
     A("#             elite transfer is insufficient here and the cell needs its own")
@@ -859,8 +977,16 @@ def render_prereg(cfg: AutoengConfig, target: Target, marks: dict[str, Any],
     A("#   Rules are in autoeng.derive_deck_knobs; only these differ from the parent.")
     for k, v in overrides.items():
         A(f"#   {k[0]}.{k[1]} = {v!r}")
-    A(f"#   [constraints] DROPPED: inert on min_fr_max_cycle "
-      f"(fpcamp_N1N2_f113_results_20260816.md, defect 2).")
+    if axis.is_fxy:
+        # The f113 measurement is about min_fr_max_cycle and does not transfer;
+        # state the ACTION without borrowing evidence from another objective.
+        A(f"#   [constraints] DROPPED (autoeng.DROP_SECTIONS) — the SDM/MTC "
+          f"post-verify knob")
+        A(f"#   surface, not the {axis.label} objective's gate, which is "
+          f"[acquisition] f_xy_limit.")
+    else:
+        A(f"#   [constraints] DROPPED: inert on min_fr_max_cycle "
+          f"(fpcamp_N1N2_f113_results_20260816.md, defect 2).")
     A("#")
     A("# CONSTRAINTS HONOURED: 198 / 181 untouched.  The canonical local store is")
     A("# READ-ONLY until the post-campaign merge.")
@@ -1222,13 +1348,24 @@ def opened_cells_from_store(cfg: AutoengConfig, library: str = "ga80") -> list[s
     recs = cfg.p(cfg.store_dir) / "records.parquet"
     if not recs.exists():
         return []
-    df = pd.read_parquet(recs, columns=["library_id", "case_pair", "feed", "converged",
-                                        "valid", "f_r", "cbc_max", "f_q", "ao_abs"])
+    axis = cfg.axis
+    cols = ["library_id", "case_pair", "feed", "converged",
+            "valid", "f_r", "cbc_max", "f_q", "ao_abs"]
+    if axis.key not in cols:
+        cols.append(axis.key)
+    df = pd.read_parquet(recs, columns=cols)
     g = df[(df["library_id"] == library)
            & df["converged"].fillna(False).astype(bool)
            & df["valid"].fillna(False).astype(bool)]
     f = g[(g["f_r"] <= 1.55) & (g["cbc_max"] <= 1600.0)
           & (g["f_q"] <= 2.41) & (g["ao_abs"].abs() <= 0.30)]
+    if axis.is_fxy:
+        # "OPENED" is a claim about DELIVERABLE labels, so an unmeasured F_xy is
+        # NOT opened (design §3.5.4: reject on the delivery side, pass only on the
+        # permissive search side).  A cell whose 40 rows were never harvested
+        # therefore reads as closed here, which is the correct instruction to the
+        # ordering: go and measure it.
+        f = f[RA.axis_values(f, axis) <= axis.limit]
     counts = f.groupby(["case_pair", "feed"]).size()
     return [f"{p}_f{int(fd)}" for (p, fd), n in counts.items() if n >= OPENED_MIN_FEASIBLE]
 
@@ -1363,7 +1500,11 @@ class AutoEngineer:
         from lpopt.config import load_config
         loaded = load_config(deck_path)
         assert loaded.case.pair == target.pair and int(loaded.case.feed) == int(target.feed)
-        assert loaded.acquisition.objective == "min_fr_max_cycle"
+        # The deck's objective and the config's readout axis are ONE decision.
+        # Asserting it here means the axis every mark, gate and headline was
+        # computed on is the axis the campaign will actually optimise.
+        assert loaded.acquisition.objective == AXIS_PARENT_OBJECTIVE[
+            self.cfg.objective_axis]
         assert loaded.acquisition.budget == target.budget
 
         sha = hashlib.sha256(deck_path.read_bytes()).hexdigest()
@@ -1474,16 +1615,28 @@ class AutoEngineer:
         pc = self.ctx.get("precheck", {})
         marks = pc.get("marks", {})
         probe = self.state.result(target.cell_id, "probe_readout")
+        axis = self.cfg.axis
         L = [f"# autoeng 셀 보고서 — {target.cell_id}", "",
              f"생성 {time.strftime('%Y-%m-%d %H:%M:%S')} · 챔피언 {pc.get('champion')} · "
              f"덱 sha256 `{self.ctx.get('deck_sha', 'n/a')}`", "",
              "## 등록한 마크 대비", "", "| 마크 | 등록값 | 결과 |", "|---|---|---|"]
-        for k, label in (("store_f_r_floor", "스토어 F_r 하한"),
+        for k, label in (("store_axis_floor", f"스토어 {axis.label} 하한"),
                          ("db_f_r_min", "DB 진실값"),
                          ("mesh_min_pred_f_r", "모델 예측 하한"),
                          ("corrected_floor", "편향보정 하한")):
             v = marks.get(k)
             L.append(f"| {label} | {v if v is None else f'{v:.4f}'} | (캠페인 결과로 채움) |")
+        if axis.is_fxy:
+            # The two model-side marks above are F_r quantities (the mesh has no
+            # F_xy head), so on the F_xy axis the table must say which rows are
+            # about the objective and which are not.
+            L += ["",
+                  f"판독 축: {axis.provenance()}.  "
+                  f"`DB 진실값` / `모델 예측 하한` / `편향보정 하한` 는 **F_r** 값이며 "
+                  f"목적함수 축이 아니다 (설계 20260829 §3.6 — 예측 F_xy 를 주장하지 않는다).",
+                  f"미측정 {axis.label} 로 제외된 수렴 행: "
+                  f"{marks.get('store_axis_unlabelled')} / "
+                  f"{marks.get('store_converged')}"]
         L += ["", "## 블라인드 전이 프로브 (사전 실력)", ""]
         if probe.get("per_target"):
             L += ["| target | n | MAE | bias | spearman | cov1 |", "|---|---|---|---|---|---|"]
@@ -1520,15 +1673,22 @@ class AutoEngineer:
         marks = pc.get("marks", {})
         spent = sum(int(e.get("master_calls", 0)) for e in self.state.events
                     if e.get("cell") == target.cell_id and e["kind"] == "step_done")
+        axis = self.cfg.axis
         fmt = lambda v, f="{:.4f}": ("n/a" if v is None else f.format(v))  # noqa: E731
         block = [
             "", "---", "",
             f"## {time.strftime('%Y-%m-%d %H:%M')} · {target.cell_id} "
             f"({target.library}, champion {pc.get('champion')})", "",
-            f"- 사전 마크: 스토어 하한 {fmt(marks.get('store_f_r_floor'))} · "
+            f"- 사전 마크: 스토어 하한 {fmt(marks.get('store_axis_floor'))} · "
             f"DB 진실값 {fmt(marks.get('db_f_r_min'))} · "
             f"모델 예측 하한 {fmt(marks.get('mesh_min_pred_f_r'))} "
-            f"(판정 {marks.get('mesh_verdict', 'n/a')})",
+            f"(판정 {marks.get('mesh_verdict', 'n/a')})",]
+        if axis.is_fxy:
+            block.append(
+                f"- 판독 축: {axis.label} (한계 {axis.limit:g}) · 미측정 제외 "
+                f"{marks.get('store_axis_unlabelled')}행 · "
+                f"DB/모델 마크는 F_r 값")
+        block += [
             f"- 자산: level {pc.get('assets', {}).get('fallback_level')} "
             f"`{pc.get('assets', {}).get('restart_provenance')}`",
             f"- 엘리트 부모: {marks.get('elite_parents_feasible')}개 "
@@ -1690,8 +1850,11 @@ class AutoEngineer:
 def _print_plan(cfg: AutoengConfig, plan: list[tuple[Target, list[Step]]],
                 *, show_marks: bool = True) -> None:
     champion = read_champion(cfg)
+    axis = cfg.axis
     print("=" * 100)
     print(f"autoeng DRY RUN — run_id={cfg.run_id}  champion={champion}")
+    if axis.is_fxy:
+        print(f"  READOUT AXIS: {axis.provenance()}")
     print(f"  fleet: campaigns/probe/mesh -> {cfg.fleet.campaign_host}  "
           f"training -> 238 via {cfg.fleet.train_deck} (GPU 1)")
     print(f"  forbidden: {', '.join(cfg.fleet.forbidden)}")
@@ -1712,7 +1875,11 @@ def _print_plan(cfg: AutoengConfig, plan: list[tuple[Target, list[Step]]],
                       f"{a.get('restart_provenance')}  resolvable={a.get('resolvable')}")
                 print(f"            store : {m.get('store_rows')} rows / "
                       f"{m.get('store_converged')} converged / {m.get('store_feasible')} feasible"
-                      f"   F_r floor {m.get('store_f_r_floor')}")
+                      f"   {axis.label} floor {m.get('store_axis_floor')}")
+                if axis.is_fxy:
+                    print(f"                    {axis.label} unlabelled "
+                          f"{m.get('store_axis_unlabelled')} converged rows EXCLUDED "
+                          f"(F_r floor {m.get('store_f_r_floor')} kept as constraint)")
                 print(f"            DB    : {m.get('db_n_cores')} cores  "
                       f"F_r_min {m.get('db_f_r_min')}  EFPD {m.get('db_best_efpd')}")
                 print(f"            model : predicted floor {m.get('mesh_min_pred_f_r')}  "

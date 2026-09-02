@@ -3,3 +3,6 @@ data/reports/cyclen_nodepeak_resolution_20260725_mapflat_rows.csv  (1520834 byte
 data/reports/model_accuracy_rows_20260725.csv  (13658362 bytes)
 data/reports/precision_ceiling_roadmap_20260725_near_replicate_pairs.csv  (2544227 bytes)
 data/reports/scoping_mesh_20260815/feasible_database.xlsx  (1209533 bytes)
+data/reports/fxy_backfill_lowfr_srv181_20260829.csv  (1478040 bytes)
+data/reports/fxy_backfill_lowfr_regen_20260829.csv  (1390844 bytes)
+data/reports/fxy_backfill_lowfr_srv181_20260829b.csv  (1048955 bytes)

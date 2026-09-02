@@ -94,8 +94,10 @@ def _seeded_store(tmp_path: Path, n_mapped: int = 3, n_bare: int = 2):
 def test_columns_are_appended_after_the_frozen_prefix() -> None:
     assert len(FROZEN_COLUMNS) == 36
     assert SCHEMA_COLUMNS[:36] == list(FROZEN_COLUMNS)
+    # Deliberate hard pin of the append-only ORDER: a new column may be added at
+    # the tail (f_xy / f_xya, 2026-08-29), never inserted or reordered.
     assert (SCHEMA_COLUMNS[36:] == list(LATE_COLUMNS)
-            == ["node_peak", "map_cov", "max_rod_avg_burnup"])
+            == ["node_peak", "map_cov", "max_rod_avg_burnup", "f_xy", "f_xya"])
 
 
 def test_new_columns_default_to_none() -> None:
@@ -108,7 +110,7 @@ def test_columns_round_trip_through_parquet(tmp_path: Path) -> None:
     StoreWriter(tmp_path).write_records(
         [_record("a", node_peak=1.42, map_cov=0.31), _record("b")], append=False)
     df = StoreReader(tmp_path).records.set_index("record_id")
-    assert list(df.columns)[-3:] == ["node_peak", "map_cov", "max_rod_avg_burnup"]
+    assert list(df.columns)[-len(LATE_COLUMNS):] == list(LATE_COLUMNS)
     assert df.loc["a", "node_peak"] == pytest.approx(1.42)
     assert df.loc["a", "map_cov"] == pytest.approx(0.31)
     assert pd.isna(df.loc["b", "node_peak"])

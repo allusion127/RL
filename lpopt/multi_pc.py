@@ -38,11 +38,12 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .config import LpoptConfig
+from .safelog import safe_logger
 from .curriculum import band_label, cell_id, select_cell_pairs
 from .search.genome import fresh_units_from_feed
 from .search.resolver import is_paramA_library, paramA_package_root
@@ -825,7 +826,9 @@ def export_frontier_kit(
     from .data.compliance import assert_mono_anchor
     from .data.store import MAPS_NAME, RECORDS_NAME, StoreReader
 
-    log = log or (lambda m: print(m))
+    # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+    # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+    log = safe_logger(log)
     base = cfg.source_path.parent if cfg.source_path else Path.cwd()
 
     roster_pairs = frontier_roster_pairs()
@@ -945,7 +948,9 @@ def export_produce_kit(
     location + master/produce defaults).  ``fuel_library`` is loaded from the
     store's ``fuel_types.parquet`` when not supplied.
     """
-    log = log or (lambda m: print(m))
+    # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+    # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+    log = safe_logger(log)
     if not cells:
         raise KitError("no cells given (use --cells a,b,c)")
 
@@ -1080,14 +1085,14 @@ def export_produce_kit(
 # --------------------------------------------------------------------------- #
 # merge
 # --------------------------------------------------------------------------- #
-def _has_flatness(node_peak: Any = None, map_cov: Any = None) -> bool:
-    """True when a row carries at least one populated flatness column.
+def _has_flatness(*values: Any) -> bool:
+    """True when a row carries at least one populated value among ``values``.
 
     Pandas-free on purpose (this module defers its pandas import): ``float()``
     rejects ``None`` / ``pd.NA`` / ``NaT`` and the ``v == v`` test rejects NaN,
     which covers every null shape the store writes.
     """
-    for value in (node_peak, map_cov):
+    for value in values:
         try:
             fv = float(value)               # type: ignore[arg-type]
         except (TypeError, ValueError):
@@ -1097,23 +1102,57 @@ def _has_flatness(node_peak: Any = None, map_cov: Any = None) -> bool:
     return False
 
 
+def _truthy(value: Any) -> bool:
+    """``bool(value)`` with every null shape folded to False.
+
+    Must match the store's ``df[col].fillna(False).astype(bool)`` exactly: a bare
+    ``bool()`` maps ``float('nan')`` to True and RAISES on ``pd.NA``, either of
+    which would make the merge's rank disagree with the rank that actually
+    decides what is persisted.
+    """
+    if value is None:
+        return False
+    try:
+        if value != value:                  # NaN / NaT
+            return False
+    except (TypeError, ValueError):
+        return False
+    try:
+        return bool(value)
+    except (TypeError, ValueError):         # pd.NA
+        return False
+
+
 def _quality_rank_row(converged: Any, valid: Any, node_peak: Any = None,
-                      map_cov: Any = None) -> int:
+                      map_cov: Any = None, f_xy: Any = None,
+                      f_xya: Any = None) -> int:
     """Row information quality for the merge's upgrade decision (higher = better).
 
-    ``converged*4 + valid*2 + has_flatness`` — the same ordering as the store's
-    :func:`..data.store._quality_rank`, which this must agree with or the merge
-    reports one thing and persists another.
+    ``converged*8 + valid*4 + has_flatness*2 + has_fxy`` — the same ordering as
+    the store's :func:`..data.store._quality_rank`, which this must agree with or
+    the merge reports one thing and persists another.  ``tests/test_multi_pc.py``
+    pins that agreement over the whole input matrix, nulls included.
 
-    The flatness bit is the low-order term and it MATTERS here: ``merge_store``
+    The TIE rule is part of that agreement: :func:`..data.store.dedup_upsert`
+    keeps the FIRST occurrence and the merge concatenates ``[existing, incoming]``,
+    so ``rank <= existing_rank`` means the stored row survives — which is exactly
+    how the loop below classifies it ("duplicate").  Before 20260829 the store
+    kept the LAST occurrence on a tie, so a kit row that merely tied silently
+    overwrote every column outside the rank (``e_core``, ``e_split``,
+    ``parent_record_id``, …) while being reported as a duplicate.
+
+    The label bits are the low-order terms and they MATTER here: ``merge_store``
     only rewrites the store when it classified at least one incoming row as new
     or upgraded, so a kit row that differs from the stored one ONLY by carrying
     ``node_peak`` / ``map_cov`` used to rank equal, be counted a duplicate, and
     have the whole merge skipped — the harvested flatness labels were silently
-    discarded at the door of the flatness-first program.
+    discarded at the door of the flatness-first program.  ``f_xy`` / ``f_xya``
+    (harvested from ``MAS_OUT``, which the maps are not) get their own bit for
+    the same reason.
     """
-    return ((4 if bool(converged) else 0) + (2 if bool(valid) else 0)
-            + (1 if _has_flatness(node_peak, map_cov) else 0))
+    return ((8 if _truthy(converged) else 0) + (4 if _truthy(valid) else 0)
+            + (2 if _has_flatness(node_peak, map_cov) else 0)
+            + (1 if _has_flatness(f_xy, f_xya) else 0))
 
 
 def _resolve_kit_paths(from_dir: Path) -> tuple[Path, Path, Path]:
@@ -1169,6 +1208,10 @@ def _merge_ledger(
     return result
 
 
+#: How many "would-change-existing-row" record_ids the text report lists by name.
+CHANGE_SAMPLE_LIMIT = 10
+
+
 @dataclass
 class MergeReport:
     from_dir: str
@@ -1184,6 +1227,47 @@ class MergeReport:
     per_campaign: list[dict[str, Any]]
     flagged_campaigns: list[dict[str, str]]
     dry_run: bool
+    #: ``--new-only``: incoming rows whose record_id is already in the local store
+    #: were filtered out BEFORE the upsert (safe mode for a kit whose store is a
+    #: stale mirror of the local one).
+    new_only: bool = False
+    filtered_existing: int = 0
+    #: change accounting over the record_ids present in BOTH stores.  ``applied``
+    #: are the strict upgrades (the stored row really is replaced); ``blocked``
+    #: are the ties/worse rows the store now keeps — the ones the old classifier
+    #: reported as harmless "duplicates (kept)" while they clobbered the row.
+    changed_rows: int = 0
+    changed_rows_applied: int = 0
+    changed_rows_blocked: int = 0
+    changed_by_column: dict[str, int] = field(default_factory=dict)
+    changed_sample: list[dict[str, Any]] = field(default_factory=list)
+
+    def _change_block(self) -> str:
+        """Rows already in the store whose kit copy differs — the clobber audit.
+
+        A merge that only ADDS rows shows "0"; anything else names the columns (and
+        up to :data:`CHANGE_SAMPLE_LIMIT` record_ids) that a merge would rewrite,
+        so a stale-mirror kit cannot hide behind the "duplicates (kept)" count.
+        """
+        lines: list[str] = []
+        a = lines.append
+        a(f"would-change existing rows: {self.changed_rows}"
+          f"   (of {self.new_rows + self.upgraded_rows + self.duplicate_rows} kit rows)")
+        if not self.changed_rows:
+            return "\n".join(lines)
+        a(f"  applied (strict upgrade)      : {self.changed_rows_applied}")
+        verb = "NOT merged (--new-only)" if self.new_only else "local row kept"
+        a(f"  blocked (tie/worse) — {verb}: {self.changed_rows_blocked}")
+        a("  differing columns:")
+        for col, n in sorted(self.changed_by_column.items(),
+                             key=lambda kv: (-kv[1], kv[0])):
+            a(f"    {col:24s} {n:>7d}")
+        if self.changed_sample:
+            a(f"  first {len(self.changed_sample)} record_id(s):")
+            for row in self.changed_sample:
+                a(f"    {str(row['record_id']):40s} {str(row['outcome']):8s} "
+                  f"{','.join(row['columns'])}")
+        return "\n".join(lines)
 
     def text(self) -> str:
         lines: list[str] = []
@@ -1195,7 +1279,12 @@ class MergeReport:
         a(f"  new              : {self.new_rows}")
         a(f"  upgraded         : {self.upgraded_rows}")
         a(f"  duplicates (kept): {self.duplicate_rows}")
+        if self.new_only:
+            a(f"new-only mode      : ON — {self.filtered_existing} kit row(s) whose "
+              "record_id is already in the store were NOT merged")
         a(f"store total        : {self.total_before} -> {self.total_after}")
+        a("")
+        a(self._change_block())
         if self.maps_new:
             a(f"maps merged        : {self.maps_new}")
         a(f"ledger             : +{self.ledger.get('appended', 0)} lines "
@@ -1238,6 +1327,77 @@ def _known_cells(cfg: LpoptConfig) -> set[str] | None:
     return None
 
 
+def _row_change_audit(
+    existing: "pd.DataFrame",                       # noqa: F821
+    incoming: "pd.DataFrame",                       # noqa: F821
+    columns: Sequence[str],
+    outcome_of: Callable[[str], str],
+    *,
+    limit: int = CHANGE_SAMPLE_LIMIT,
+) -> dict[str, Any]:
+    """Audit every record_id present in BOTH frames for column-value differences.
+
+    The quality rank covers ``converged`` / ``valid`` / the label bits and nothing
+    else, so two rows can rank EQUAL and still disagree on ``e_core``,
+    ``e_split``, ``parent_record_id``, ``cyclen``, …  Those are precisely the
+    rows a stale-mirror kit would have reverted while the classifier called them
+    "duplicates (kept)", so the merge counts and names them instead of folding
+    them into a single reassuring number.
+
+    Null-aware: two nulls are equal, a null against a value is a difference.
+    """
+    import numpy as np
+
+    empty = {"changed_rows": 0, "changed_rows_applied": 0, "changed_rows_blocked": 0,
+             "changed_by_column": {}, "changed_sample": []}
+    if existing is None or not len(existing) or not len(incoming):
+        return empty
+
+    def _by_rid(df: "pd.DataFrame") -> "pd.DataFrame":   # noqa: F821
+        out = df.copy()
+        out["__rid"] = out["record_id"].astype(str)
+        return out.drop_duplicates("__rid").set_index("__rid")
+
+    e, i = _by_rid(existing), _by_rid(incoming)
+    have = set(e.index)
+    shared = [rid for rid in i.index if rid in have]      # kit order (stable sample)
+    if not shared:
+        return empty
+
+    ev, iv = e.loc[shared], i.loc[shared]
+    per_column: dict[str, int] = {}
+    per_row: dict[str, list[str]] = {rid: [] for rid in shared}
+    for col in columns:
+        if col == "record_id" or col not in ev.columns or col not in iv.columns:
+            continue
+        a, b = ev[col], iv[col]
+        both_null = (a.isna() & b.isna()).to_numpy()
+        try:
+            eq = np.asarray(a.to_numpy() == b.to_numpy(), dtype=bool)
+        except Exception:                                # pragma: no cover
+            eq = np.array([x == y for x, y in zip(a, b)], dtype=bool)
+        differs = ~(eq | both_null)
+        n = int(differs.sum())
+        if not n:
+            continue
+        per_column[col] = n
+        for rid in np.asarray(shared, dtype=object)[differs]:
+            per_row[str(rid)].append(col)
+
+    changed = [rid for rid in shared if per_row[rid]]
+    outcomes = {rid: outcome_of(rid) for rid in changed}
+    return {
+        "changed_rows": len(changed),
+        "changed_rows_applied": sum(1 for r in changed if outcomes[r] == "upgrade"),
+        "changed_rows_blocked": sum(1 for r in changed if outcomes[r] != "upgrade"),
+        "changed_by_column": per_column,
+        "changed_sample": [
+            {"record_id": rid, "outcome": outcomes[rid], "columns": per_row[rid]}
+            for rid in changed[:limit]
+        ],
+    }
+
+
 def merge_store(
     cfg: LpoptConfig,
     from_dir: str | Path,
@@ -1246,6 +1406,7 @@ def merge_store(
     log: Callable[[str], None] | None = None,
     store_dir: str | Path | None = None,
     ledger: str | Path | None = None,
+    new_only: bool = False,
 ) -> MergeReport:
     """Merge a returned kit ``data/`` folder into the main store + ledger.
 
@@ -1256,6 +1417,24 @@ def merge_store(
     relative override resolves against the CURRENT WORKING DIRECTORY (the natural
     CLI expectation); a deck-config value keeps resolving against the deck's
     parent as before.
+
+    ``new_only`` (CLI: ``--new-only``) drops every incoming row whose ``record_id``
+    is ALREADY in the local store before the upsert, so only genuinely new
+    evaluations are harvested.  Use it whenever the remote kit shipped with a COPY
+    of the local store rather than an empty one: such a kit carries a stale mirror
+    of every local row, and while :func:`..data.store.dedup_upsert` now keeps the
+    incumbent on a tie, a stale row that happens to rank STRICTLY HIGHER (it
+    carries a label the local row lost, say) would still overwrite the local
+    corrections in the columns outside the rank.  ``--new-only`` takes that whole
+    class off the table; the report still classifies (and the change audit still
+    names) what was skipped.  Maps are filtered the same way — a stale kit
+    ``maps.npz`` cannot overwrite a locally harvested stack either.
+
+    The report's change audit (:meth:`MergeReport._change_block`) counts and names
+    every record_id present in both stores whose kit copy differs on ANY column,
+    split into the strict upgrades that are applied and the ties/worse rows the
+    local store keeps.  Read it before a non-dry-run merge: a "duplicates (kept)"
+    count alone cannot tell a harmless re-send from a clobber.
     """
     import pandas as pd
 
@@ -1264,7 +1443,9 @@ def merge_store(
         RECORDS_NAME, StoreWriter, dedup_upsert, ensure_schema_columns,
     )
 
-    log = log or (lambda m: print(m))
+    # Encoding-safe default logger: a redirected Windows stdout is cp949 and a
+    # single em-dash used to raise UnicodeEncodeError mid-run (2026-08-30).
+    log = safe_logger(log)
     base = cfg.source_path.parent if cfg.source_path else Path.cwd()
     if store_dir is not None:
         store_dir = Path(store_dir)
@@ -1300,34 +1481,56 @@ def merge_store(
     # by carrying node_peak / map_cov counts as an upgrade and the merge persists
     # (``changed`` below is what decides whether the store is rewritten at all).
     def _rank_cols(df: "pd.DataFrame") -> tuple:
-        peak = df["node_peak"] if "node_peak" in df.columns else [None] * len(df)
-        cov = df["map_cov"] if "map_cov" in df.columns else [None] * len(df)
-        return peak, cov
+        def _col(name: str):
+            return df[name] if name in df.columns else [None] * len(df)
+        return _col("node_peak"), _col("map_cov"), _col("f_xy"), _col("f_xya")
 
     existing_rank: dict[str, int] = {}
     if existing is not None and len(existing):
-        e_peak, e_cov = _rank_cols(existing)
-        for rid, cv, vl, pk, mc in zip(
+        e_peak, e_cov, e_fxy, e_fxya = _rank_cols(existing)
+        for rid, cv, vl, pk, mc, fx, fa in zip(
             existing["record_id"].astype(str),
-            existing["converged"], existing["valid"], e_peak, e_cov,
+            existing["converged"], existing["valid"], e_peak, e_cov, e_fxy, e_fxya,
         ):
-            existing_rank[rid] = _quality_rank_row(cv, vl, pk, mc)
+            existing_rank[rid] = _quality_rank_row(cv, vl, pk, mc, fx, fa)
 
-    i_peak, i_cov = _rank_cols(incoming) if kit_rows else ([], [])
+    i_peak, i_cov, i_fxy, i_fxya = (
+        _rank_cols(incoming) if kit_rows else ([], [], [], []))
     new_rows = upgraded = duplicate = 0
-    for rid, cv, vl, pk, mc in zip(
+    incoming_rank: dict[str, int] = {}
+    for rid, cv, vl, pk, mc, fx, fa in zip(
         incoming["record_id"].astype(str) if kit_rows else [],
         incoming["converged"] if kit_rows else [],
         incoming["valid"] if kit_rows else [],
-        i_peak, i_cov,
+        i_peak, i_cov, i_fxy, i_fxya,
     ):
-        rank = _quality_rank_row(cv, vl, pk, mc)
+        rank = _quality_rank_row(cv, vl, pk, mc, fx, fa)
+        incoming_rank[rid] = rank
         if rid not in existing_rank:
             new_rows += 1
         elif rank > existing_rank[rid]:
             upgraded += 1
         else:
             duplicate += 1
+
+    # CLOBBER AUDIT: which already-stored rows would this merge rewrite, and in
+    # which columns.  ``--new-only`` blocks every one of them, so a strict upgrade
+    # is reported as "upgrade" only when the row is actually going to be written.
+    def _outcome(rid: str) -> str:
+        if new_only:
+            return "skipped"
+        return ("upgrade" if incoming_rank.get(rid, -1) > existing_rank.get(rid, -1)
+                else "kept")
+
+    audit = _row_change_audit(existing, incoming, SCHEMA_COLUMNS, _outcome)
+
+    # -- --new-only: harvest ONLY record_ids the local store has never seen ---- #
+    to_write = incoming
+    filtered_existing = 0
+    if new_only and kit_rows and existing_rank:
+        keep = ~incoming["record_id"].astype(str).isin(existing_rank.keys())
+        to_write = incoming[keep]
+        filtered_existing = kit_rows - int(len(to_write))
 
     # per-campaign converged BEFORE (P & converged)
     def _conv_by_campaign(df: "pd.DataFrame | None") -> dict[str, int]:
@@ -1340,15 +1543,17 @@ def merge_store(
 
     before_conv = _conv_by_campaign(existing)
 
-    # projected merged frame (also what we persist when not dry-run)
-    if kit_rows:
+    # projected merged frame (also what we persist when not dry-run).  Existing
+    # rows go FIRST: dedup_upsert keeps the first occurrence on a rank tie, so the
+    # local row is authoritative unless the kit row is strictly better.
+    if len(to_write):
         if existing is not None and len(existing):
-            combined = pd.concat([existing, incoming[SCHEMA_COLUMNS]], ignore_index=True)
+            combined = pd.concat([existing, to_write[SCHEMA_COLUMNS]], ignore_index=True)
             merged = dedup_upsert(combined)
         else:
-            merged = dedup_upsert(incoming[SCHEMA_COLUMNS])
+            merged = dedup_upsert(to_write[SCHEMA_COLUMNS])
     else:
-        merged = existing if existing is not None else incoming
+        merged = existing if existing is not None else to_write
     after_conv = _conv_by_campaign(merged)
     total_after = int(len(merged)) if merged is not None else 0
 
@@ -1371,12 +1576,13 @@ def merge_store(
     ]
 
     # -- persist (skip a pure no-op so we never rewrite the store needlessly) -- #
-    changed = (new_rows > 0 or upgraded > 0)
+    changed = (new_rows > 0) if new_only else (new_rows > 0 or upgraded > 0)
     maps_new = 0
     if not dry_run and changed:
-        StoreWriter(store_dir).write_records(incoming, append=True)
+        StoreWriter(store_dir).write_records(to_write, append=True)
     if kit_maps.exists():
-        maps_new = _merge_maps(store_dir, kit_maps, dry_run=dry_run)
+        maps_new = _merge_maps(store_dir, kit_maps, dry_run=dry_run,
+                               new_only=new_only)
 
     ledger_stats = _merge_ledger(main_ledger, kit_ledger, dry_run=dry_run)
 
@@ -1385,14 +1591,22 @@ def merge_store(
         new_rows=new_rows, upgraded_rows=upgraded, duplicate_rows=duplicate,
         total_before=total_before, total_after=total_after, maps_new=maps_new,
         ledger=ledger_stats, per_campaign=per_campaign, flagged_campaigns=flagged,
-        dry_run=dry_run,
+        dry_run=dry_run, new_only=bool(new_only),
+        filtered_existing=int(filtered_existing), **audit,
     )
     return report
 
 
-def _merge_maps(store_dir: Path, kit_maps: Path, *, dry_run: bool) -> int:
+def _merge_maps(store_dir: Path, kit_maps: Path, *, dry_run: bool,
+                new_only: bool = False) -> int:
     """Merge kit EDIT5 map stacks into the store's ``maps.npz`` (keyed by
-    record_id).  Returns the number of NEW keys added."""
+    record_id).  Returns the number of NEW keys added.
+
+    ``write_maps`` is a plain dict update, so an already-stored key is OVERWRITTEN
+    by the kit's stack.  Under ``new_only`` the payload is trimmed to keys the
+    store has never seen, which is the maps-side half of the same guarantee: a kit
+    shipped as a stale mirror cannot revert a locally harvested map either.
+    """
     import numpy as np
 
     from .data.store import MAPS_NAME, StoreReader, StoreWriter
@@ -1407,6 +1621,8 @@ def _merge_maps(store_dir: Path, kit_maps: Path, *, dry_run: bool) -> int:
     if main_maps.exists():
         existing_keys = StoreReader(store_dir).maps_keys()
     new_keys = [k for k in kit_keys if k not in existing_keys]
+    if new_only:
+        payload = {k: payload[k] for k in new_keys}
     if new_keys and not dry_run:
         StoreWriter(store_dir).write_maps(payload, append=True)
     return len(new_keys)
@@ -1414,6 +1630,7 @@ def _merge_maps(store_dir: Path, kit_maps: Path, *, dry_run: bool) -> int:
 
 __all__ = [
     "CELL_ID_RE",
+    "CHANGE_SAMPLE_LIMIT",
     "GA80_PACKAGE_SUBDIRS",
     "KIT_DESIGN_PACKAGE_REL",
     "KIT_GA80_PACKAGE_REL",

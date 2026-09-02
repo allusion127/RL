@@ -208,3 +208,65 @@ def test_normalized_regret_is_bounded(universe: pd.DataFrame,
     assert len(keys) >= 5
     finite = norm[np.isfinite(norm)]
     assert (finite >= 0).all() and (finite <= 1).all()
+
+
+# --------------------------------------------------------------------------- #
+# the F_xy / burn_state columns (intervention_wave_r1_results_20260830.md s11-3)
+# --------------------------------------------------------------------------- #
+def test_corpus_carries_the_fxy_axis_and_the_burn_state(
+        universe: pd.DataFrame) -> None:
+    """The F_xy-era waves make F_xy the PRIMARY response; the corpus must hold it.
+
+    Round 1 produced 791 F_xy labels that the 80-column schema had nowhere to
+    put, so a v3 F_xy head would have had to re-join them from the store by
+    hand.  Both ends of the axis, the delta, the improvement label and the
+    residence stratum are columns now.
+    """
+    import mine_policy_corpus as M
+
+    for col in M.FXY_SCHEMA_COLUMNS:
+        assert col in universe.columns, col
+
+    d = universe["d_f_xy"].to_numpy(float)
+    known = np.isfinite(d)
+    assert known.sum() > 700, "the intervention wave's F_xy labels are missing"
+    # d_f_xy is child - parent, exactly, wherever both ends are labelled.
+    parent = universe["parent_f_xy"].to_numpy(float)
+    child = universe["child_f_xy"].to_numpy(float)
+    assert np.allclose(d[known], (child - parent)[known], atol=0, rtol=0)
+
+    # improved_fxy is "lower is better", masked where either end is unknown.
+    lab = universe["improved_fxy"]
+    assert lab.notna().to_numpy().sum() > 700
+    both = universe["both_converged"].fillna(False).to_numpy(bool)
+    assert not lab[~(both & known)].notna().any()
+    ok = lab.notna().to_numpy()
+    assert np.array_equal(lab[ok].to_numpy(bool), (child < parent)[ok])
+
+
+def test_burn_state_is_the_wave_stratum_not_a_new_axis(
+        universe: pd.DataFrame) -> None:
+    import intervention_wave as I
+    import mine_policy_corpus as M
+
+    assert set(universe["burn_state"]) <= set(I.BURN_STATES)
+    assert universe["burn_state"].notna().all()
+    # A fresh-only move can never be classified as a burnt-unit move, and the
+    # two burnt classes are what the wave blocked its pairs on.
+    fresh_only = universe["move_class"].isin(["batch_flip", "batch_swap"])
+    assert set(universe.loc[fresh_only, "burn_state"]) <= {"fresh", "center"}
+    # ...and the column agrees with the shared implementation, row for row.
+    sample = universe.sample(n=min(200, len(universe)), random_state=0)
+    for ppat, cpat, got in zip(sample["parent_pattern"], sample["child_pattern"],
+                               sample["burn_state"], strict=True):
+        assert M.move_burn_state(M.genome_of(ppat), ppat, cpat) == got
+
+
+def test_the_fxy_axis_is_forbidden_to_the_feature_block(
+        universe: pd.DataFrame) -> None:
+    """An F_xy head must not be able to read its own label off the scalars."""
+    for col in ("child_f_xy", "d_f_xy", "improved_fxy", "parent_f_xy"):
+        assert col in FORBIDDEN_COLUMNS
+    _, names = scalar_features_v2(universe)
+    assert not any("f_xy" in n for n in names)
+    assert "burn_state" not in names

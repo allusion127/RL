@@ -74,6 +74,45 @@ from .genome import depth2_edges_for_fresh_units
 PRODUCE_DECK_KNOBS = "ga80_produce"
 
 
+# --------------------------------------------------------------------------- #
+# lineage
+# --------------------------------------------------------------------------- #
+def lineage_anchor(cand: Any, ledger_ids: "set[str] | Mapping[str, Any]") -> str | None:
+    """The nearest ancestor of ``cand`` that is a REAL store row, else ``None``.
+
+    ``parent_record_id`` is a store foreign key: every value written into it must
+    name a row that exists in ``records.parquet``.  A pool ``Candidate`` does NOT
+    satisfy that — its ``record_id`` is only the *preimage* a row WOULD get if the
+    board were ever verified (:func:`~..data.schema.compute_record_id`), and the
+    overwhelming majority of pool candidates are surrogate-scored and discarded
+    without ever reaching MASTER.  Stamping such an id on a child therefore minted
+    a dangling reference to a board that never existed: measured 2026-08-29 over
+    ``dataset == "P"``, only 27 of 2,200 ``local`` children and 864 of 1,219
+    ``elite`` children had a resolvable parent -- 2,461 of the store's 8,811
+    non-null parents dangled, and ``mine_policy_corpus.build_steps`` silently
+    dropped every one of those edges.
+
+    The invariant this restores, maintained inductively by every producer of a
+    ``Candidate``:
+
+        ``Candidate.parent_record_id`` is ``None`` or the ``record_id`` of a row
+        that exists (or is reserved and about to exist) in the store.
+
+    A candidate that has itself been verified (its id is in ``ledger_ids``) is its
+    own anchor; otherwise the anchor is the candidate's own parent, which is a real
+    id by induction.  The resulting edge may span more than one move -- callers
+    that need the move count must diff the two patterns rather than assume 1 --
+    but it always names a board that was actually evaluated, which a phantom id
+    never did.
+    """
+
+    rid = getattr(cand, "record_id", None)
+    if rid and str(rid) in ledger_ids:
+        return str(rid)
+    parent = getattr(cand, "parent_record_id", None)
+    return str(parent) if parent else None
+
+
 class MissingCaseAssetError(RuntimeError):
     """A verify entry cannot be staged because its restart and/or template deck
     did not resolve.  Raised (instead of silently substituting a ``Path('.')``
@@ -564,6 +603,41 @@ def _eq_provenance(result: Any) -> dict[str, str] | None:
         return None
 
 
+def _fxy_from_equilibrium_result(result: Any) -> Any:
+    """Best-effort ``(f_xy, f_xya)`` from the converged chain's final ``MAS_OUT``.
+
+    ``F_xy`` (MASTER ``FXYP``, pin planar) is the target of the 2026-08-29
+    objective switch and is **absent from MAS_SUM**, so the only source is the
+    ``MAS_OUT`` of the final equilibrium cycle.  That file is here for free: the
+    work dir this reads is the one ``PurgingEquilibriumRunner`` deliberately does
+    NOT purge, and ``harvest_maps`` already forces ``keep_success``, so the cost
+    is one ~1 MB sequential scan per candidate and zero extra MASTER calls.
+
+    Same never-abort contract as the map harvest: any failure -> ``None`` and the
+    F_r/cyclen labels stand on their own.  A ``NONFINITE_FLUX`` dir and an
+    out-of-range (diverged) FXYP are both refused rather than recorded — a
+    diverging solve's peaking factor is not an equilibrium label
+    (:mod:`..data.fxy`, design 20260829 §5.2/§5.4).
+    """
+    try:
+        from ..data.fxy import fxy_from_work_dir
+        cycles = getattr(result, "cycles", None)
+        candidates: list[Path] = []
+        if cycles:
+            wd = getattr(cycles[-1], "work_dir", None)
+            if wd is not None:
+                candidates.append(Path(wd))
+        for wd in (getattr(result, "retained_work_dirs", None) or ()):
+            candidates.append(Path(wd))
+        for wd in candidates:
+            peaks = fxy_from_work_dir(wd)
+            if peaks is not None and peaks.sane:
+                return peaks
+    except Exception:  # noqa: BLE001 — optional; never abort a wave
+        return None
+    return None
+
+
 class HarvestingEquilibriumEvaluator:
     """:class:`EquilibriumEvaluator` that also harvests the converged EDIT5 map.
 
@@ -599,6 +673,11 @@ class HarvestingEquilibriumEvaluator:
             if provenance:
                 base = _rp(base, metadata={**base.metadata,
                                            "eq_provenance": provenance})
+            # F_xy / F_xya from the same retained final work dir — additive
+            # metadata key, same shape as ``maps`` (design 20260829 §3.2-B).
+            peaks = _fxy_from_equilibrium_result(result)
+            if peaks is not None:
+                base = _rp(base, metadata={**base.metadata, "fxy": peaks})
         return base
 
     def _inner_evaluation(self, result: Any) -> Any:
@@ -678,6 +757,10 @@ class WaveOutcome:
     #: two files; ``None`` means the candidate is honestly unverifiable, never that
     #: another candidate's restart may be substituted.
     eq_provenance: dict[str, str] | None = None
+    #: :class:`..data.fxy.FxyResult` of the CONVERGED final cycle's ``MAS_OUT``
+    #: (``metadata["fxy"]``), or ``None`` when the dir was purged / unparseable /
+    #: physics-killed.  Supplies the ``f_xy`` / ``f_xya`` record columns.
+    fxy: Any = None
 
 
 def classify_outcome(outcome: WaveOutcome) -> str:
@@ -763,7 +846,22 @@ class WaveVerifier:
         self.use_all_cores = bool(use_all_cores)
         self.host_reserve = max(0, int(host_reserve))
         self._factory = evaluator_factory
-        self.resolver = resolver or CaseAssetResolver(self.package_root or ".")
+        # The resolver is the ONLY thing that translates a pattern's fresh
+        # ``type_id`` labels into the deck's 2-char ``%LPD_B&C`` batch ids
+        # (``alias_pattern`` / ``alias_case_key`` / ``prepare_cycle1_deck``), so it
+        # MUST be the resolver of the package this verifier emits decks for.  The
+        # old fallback ``CaseAssetResolver(self.package_root or ".")`` rooted an
+        # alias-less resolver at the CWD whenever a caller forgot ``resolver=``;
+        # its bridge was empty, every translation became a silent no-op, and a
+        # whole wave's decks carried untranslated 13-character type_ids that
+        # MASTER absorbed without a diagnostic (memo 20260830 §3 — 160 chains).
+        # Now it is DERIVED from ``package_root``, whose ``registry.json`` is
+        # exactly where the bridge lives, and the ``%LPD_SHF`` roster check in
+        # :func:`validate_reload_deck` refuses the deck if it is still missing.
+        self.resolver = resolver if resolver is not None else CaseAssetResolver(
+            self.package_root if self.package_root is not None else ".",
+            library_dims=self.library_dims,
+        )
         self.cases_dir = self.run_dir / "produce_cases"
         self.work_root = self.run_dir / "master_work"
         self.cache_dir = Path(cache_dir) if cache_dir is not None else self.run_dir / "master_cache"
@@ -915,7 +1013,11 @@ class WaveVerifier:
             # Pre-Popen sanity gate: a malformed reload deck (missing depletion
             # chain / EOC restart write, stray fresh-core batch map, wrong restart
             # reference, or wrong library dims) drives MASTER into a NaN loop.
-            # Refuse it here — a clean error, never a launched divergence.
+            # Refuse it here — a clean error, never a launched divergence.  The
+            # gate ALSO checks that every ``F <id>`` fresh card names a batch id
+            # the deck's own ``%LPD_B&C`` declares: an untranslated type_id is the
+            # one defect MASTER does NOT diverge on — it silently computes a core
+            # nobody designed (memo 20260830), so chain 1 must die here instead.
             validate_reload_deck(
                 prepared, resolved.restart_path.name, expected_dims=self.library_dims
             )
@@ -1060,6 +1162,11 @@ class WaveVerifier:
             maps_hires=maps_hires,
             core_class=core_class,
             eq_provenance=(meta.get("eq_provenance") if converged else None),
+            # NOT gated on ``harvest_maps``: the harvest is a pure read of a dir
+            # that either exists or does not, and a ``None`` here is already the
+            # honest "not measured".  (In practice only a harvest_maps verifier
+            # ever has the dir, because that is what forces ``keep_success``.)
+            fxy=(meta.get("fxy") if converged else None),
         )
 
     @staticmethod
@@ -1140,6 +1247,12 @@ def outcome_to_record(
     # never raises: no map (or an odd one) simply leaves both columns null.
     node_peak, map_cov = record_flatness(getattr(outcome, "maps", None))
 
+    # F_xy / F_xya ride the SAME atomic record write as F_r/cyclen (no second
+    # pass, no window where the MAS_OUT is gone but the row is not written yet).
+    peaks = getattr(outcome, "fxy", None)
+    f_xy = getattr(peaks, "f_xy", None) if peaks is not None else None
+    f_xya = getattr(peaks, "f_xya", None) if peaks is not None else None
+
     return CanonicalRecord(
         record_id=record_id,
         dataset=dataset,
@@ -1182,6 +1295,8 @@ def outcome_to_record(
         maps_key=(record_id if getattr(outcome, "maps", None) is not None else None),
         node_peak=node_peak,
         map_cov=map_cov,
+        f_xy=f_xy,
+        f_xya=f_xya,
     )
 
 
@@ -1197,5 +1312,6 @@ __all__ = [
     "WaveOutcome",
     "WaveVerifier",
     "classify_outcome",
+    "lineage_anchor",
     "outcome_to_record",
 ]

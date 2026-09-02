@@ -1,0 +1,173 @@
+# pinbu_wave_minfxy_r1_199.inp -- PHASE-2 WAVE for the min_fxy T6_T4/f121 round r1,
+# box 199.  Registered in data/reports/minfxy_T6T4_f121_r1_results_20260830.md
+# section 11.3 ("phase-2 wave ... pinbu_wave_fxyera_r1 형식으로 즉시 편성") and
+# pre-registered in data/reports/pinbu_wave_minfxy_r1_prereg_20260830.md.
+#
+# CLONE of pinbu_wave_fxyera_r1_199.inp.  The four deltas, and only these four --
+# ALL FOUR ARE INERT ON THE RUN PATH; none can change a single MASTER call:
+#
+#   (1) [model]  model_dir  = "data/models/s1j"  (was "data/models/s1i") -- no
+#                checkpoint is loaded here; set to the campaign's OWN serving
+#                champion so the deck reads as a min_fxy-r1-era artifact and
+#                matches the manifest's model_dir
+#   (2) [model]  library_id = "paramA"  (was "ga80") -- resolver DEFAULT only;
+#                pinbu_wave.py passes the per-core library_id explicitly
+#                (pinbu_wave.py:_verifier_for), and all 25 targets are paramA, so
+#                the default is set to the value the wave actually uses instead
+#                of one it never reaches
+#   (3) [case]   pair = "T6_T4", feed = 121  (was "N1_N2" / 113) -- `pinbu_wave.py
+#                run` never reads [case]; every CaseKey comes from the manifest's
+#                own rows.  Set to the wave's actual cell so the deck cannot
+#                mislead a reader
+#   (4) header/title text
+#
+# `[model] cond_schema = "v8"` is UNCHANGED: s1j's PROMOTION.md states the deck
+# key does not move from s1i.  `[master]`, `[produce]`, `[verify]` and `[design]`
+# -- the only four sections this harness acts on -- are BYTE-IDENTICAL to
+# pinbu_wave_fxyera_r1_199.inp apart from their comments.
+#
+# The run dir is a CLI argument, not a deck knob: `--run-dir runs/pinbu_wave_minfxy_r1`
+# (see run_pinbu_wave_minfxy_r1_199.bat).  It stays RELATIVE, so it follows the
+# `runs/` junction if `runs/` is redirected to another volume -- nothing in this
+# deck names a drive.
+#
+# This deck does NOT drive `lpopt optimize`.  It is read by `pinbu_wave.py run`
+# for exactly three things:
+#
+#   (1) [master]  + [produce]  -> the MASTER executable, worker/core policy and
+#                                 equilibrium protocol that
+#                                 `curriculum.make_pin_burnup_verifier` reads
+#                                 (it takes its wave size from [produce], not
+#                                 [master] -- curriculum.py:1091-1132);
+#   (2) [verify]  package_root + harvest_maps;
+#   (3) [design]  package_root -> the paramA routing, selected per-core by
+#                                 `build_case_resolver(cfg, fuel, library_id)`.
+#
+# WHAT THIS WAVE MEASURES (25 chains, all paramA, all T6_T4/f121):
+#   A. minfxy_r1_top20    -- the 20 lowest MEASURED F_xy joint-clean cores of
+#                            campaign fpcamp_minfxy_t6t4_f121_r1, run with
+#                            enable_pin_burnup=True.  Ranks 1-5 are the top-5
+#                            named in the r1 results section 11.3; rank 1 is the
+#                            round's optimum (F_xy 1.5322).  This is the ONLY
+#                            path to a DELIVERY verdict on that optimum: r1
+#                            produced pin BU on 0/95 rows by construction
+#                            (verify.py:851).
+#   B. frera_fxy_measure  -- 5 replays of F_r-era cores of the SAME cell that
+#                            carry NO f_xy label: the F_r record 4d70ab6f
+#                            (F_r 1.4605) and the lambda-opt 188c9a33 (1.4749),
+#                            plus the 3 next lowest-F_r joint-clean unlabelled
+#                            cores.  Purpose: MEASURE F_xy on the F_r-record
+#                            family, so "min_fxy picks a better core than min_fr"
+#                            stops being a statement about a labelled subset.
+#   Both sets are exact replays under the identity gate below.  Set A also feeds
+#   the F_xy determinism readout (it has stored f_xy to compare against); set B
+#   cannot -- its f_xy is a FIRST label, not a replicate -- but it does feed the
+#   scalar determinism readout on f_r / f_q / cbc_max / cyclen / ao_abs.
+#
+# WHY A REPLICATE CAN RUN HERE AT ALL.  `produce` dedups on
+# record_id = sha256(canonical_pattern | library_id | case_pair | deck_knobs),
+# replayed from the ledger AND the store at start (produce.py:_reconstruct), so a
+# produce stratum cannot re-run a stored pattern.  `pinbu_wave.py run` never
+# touches that path: it builds `WaveEntry` objects directly from the manifest and
+# calls `WaveVerifier.evaluate_wave` (pinbu_wave.py:481-512).  There is no dedup
+# to bypass.  The identity check runs the OPPOSITE way -- pinbu_wave.py:495-503
+# REQUIRES `compute_record_id(pattern.canonical(), library_id, case_pair,
+# PRODUCE_DECK_KNOBS)` to reproduce the manifest's record_id, else the chain is
+# skipped.  `PRODUCE_DECK_KNOBS` is the module CONSTANT "ga80_produce"
+# (search/verify.py:74), not a hash of this file, so `keep_success` /
+# `harvest_maps` / `workers` cannot move the id: this deck replays the stored
+# core, it does not mint a new one.  Verified offline on all 25 targets before
+# this deck was hashed (0 drift).
+#
+# WHY keep_success = true.  F_xy is MASTER's FXYP and is printed ONLY in MAS_OUT;
+# it is not on `WaveFom`, so `pinbu_wave.py` cannot report it and the replay's
+# F_xy must be read OFFLINE from the retained final-cycle MAS_OUT with the same
+# scanner that produced fxy_backfill_199_pinbu_wave_fxyera_r1_20260830.csv.
+# keep_success=false purges 100% of those dirs (pinbu_rodavg_20260820.md).  No
+# retained MAS_OUT, no F_xy on set B at all -- and set B's F_xy is half of what
+# this wave is for.
+#
+# WHY harvest_maps = true.  Two effects on this path, both wanted:
+#   * curriculum.py widens keep_success to `keep_success OR harvest` (:1075), so
+#     retention is belt-and-braces rather than resting on one knob;
+#   * `_factory` installs HarvestingEquilibriumEvaluator, so `WaveOutcome.maps`
+#     carries the final EDIT5 map instead of None (curriculum.py:1100-1104).
+#   HONEST LIMIT: `pinbu_wave.py._outcome_record` does NOT persist `outcome.maps`,
+#   so this writes no maps.npz.  All 25 targets already carry a non-null
+#   `maps_key`; the map that matters here is the retained MAS_SUM/MAS_OUT on
+#   disk, which keep_success guarantees.
+#
+# PROVENANCE, RESOLVED AT PLAN TIME.  All 25 targets carry the SAME stored
+# restart, `native:MAS_RST.APRQ_10_0615.11`.  None resolves out of
+# data/produce/promoted, so no promoted-cache state -- grown or pruned -- can
+# move a resolution.  That is the fix for the failure that refused 8/40 on
+# pinbu_wave_fxyera_r1 (results 20260830 section 1): there, r1 had GROWN the
+# cache after the store rows were written and 8 `pair_*` rows resolved
+# `promoted:` restarts.  All 14 `native:` targets of that wave resolved correctly
+# under exactly that growth.  The launcher additionally gates on the promoted
+# cache's CELL COUNT (not mere presence), which is that results report's own
+# recommended next step.
+#
+# NOTHING HERE TOUCHES boxes 198 / 181 / 238, nor any runs/ dir other than
+# runs/pinbu_wave_minfxy_r1.  The canonical store is READ-ONLY on the run path
+# (fuel_types.parquet only); merging is a separate, backed-up `pinbu_wave.py
+# patch` step, dry-run first.
+
+[flow]
+title = "phase-2 min_fxy r1: measured pin burnup on the T6_T4/f121 F_xy optimum + F_xy on the F_r-record family"
+output_root = "runs"
+random_seed = 830          # inert: no sampling happens on this path
+
+[master]
+executable = "C:/DeCART_MASTER/BIN/master4.0m4_r1.exe"   # BOX 199
+timeout = 3600
+max_cycles = 16            # matches fpcamp_minfxy_T6T4_f121_r1_199.inp -- the
+consecutive = 2            # equilibrium protocol must be identical or the replay
+                           # is not the same evaluation and determinism is untestable
+keep_success = true        # see header: MAS_OUT is the F_xy carrier
+
+[produce]
+# make_pin_burnup_verifier reads its wave size / core policy / chain timeout /
+# purge policy from HERE (curriculum.py:1091-1132), not from [master].
+store_dir = "data/store"
+workers = 12
+use_all_cores = true       # 199 is all-P: the whole 24-core pool is assignable
+host_reserve = 0
+chain_timeout = 3600
+max_cycles = 16
+consecutive = 2
+purge_intermediate = true  # only the converged cycle is needed; keep_success
+                           # retains exactly that one, which is the MAS_OUT we read
+ledger = "data/produce/ledger.jsonl"
+promoted_root = "data/produce/promoted"
+template_fallbacks = []    # EMPTY, as in the r1 campaign deck.  On paramA a ga80
+                           # glob fallback would win resolution and then fail the
+                           # %GEN_DIM gate.
+
+[verify]
+package_root = "FEASIBLE_PACKAGE"   # ga80 routing.  UNUSED by this wave -- all 25
+                                    # targets are paramA -- but kept so the deck is
+                                    # byte-comparable to pinbu_wave_fxyera_r1_199.inp
+                                    # and stays legal if a ga80 core is ever added.
+harvest_maps = true                 # see header
+
+[design]
+store_dir = "data/design"
+package_root = "data/design/package"   # paramA: the routing all 25 targets use
+
+[case]
+mode = "fixed"
+pair = "T6_T4"             # INERT: every CaseKey comes from the manifest's own rows.
+feed = 121                 # Present only so the deck reads as a legal fixed-case
+                           # config; `pinbu_wave.py run` never reads [case].  Set to
+                           # the wave's actual cell so it cannot mislead a reader.
+
+[model]
+backend = "posval_cnn"
+model_dir = "data/models/s1j"   # INERT on the run path (no model is loaded); the
+cond_schema = "v8"              # predictions were pinned in the MANIFEST, on the
+device = "cpu"                  # coordinator box, before any spend.  s1j is the
+inference = "local_cpu"         # r1 campaign's own serving champion; its
+library_id = "paramA"           # cond_schema is unchanged from s1i (PROMOTION.md).
+                                # library_id is a resolver DEFAULT only;
+store_dir = "data/store"        # pinbu_wave.py passes "paramA" explicitly.

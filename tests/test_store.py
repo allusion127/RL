@@ -11,6 +11,7 @@ import pytest
 
 from lpopt.data.schema import CanonicalRecord, SCHEMA_COLUMNS, compute_record_id
 from lpopt.data.store import StoreReader, StoreWriter, _atomic_write, records_to_frame
+from lpopt.vendor.masterrl.domain import SLOTS
 
 
 def _make_record(
@@ -93,7 +94,11 @@ def test_write_and_read_records(tmp_path: Path) -> None:
 
 
 def test_dedup_same_record_id(tmp_path: Path) -> None:
-    """Two EQUAL-quality writes (both converged) collapse to one; last wins."""
+    """Two EQUAL-quality writes (both converged) collapse to one; the FIRST wins.
+
+    Ties keep the incumbent: the row already in the store is local truth and is
+    only ever displaced by strictly higher-quality evidence.
+    """
     writer = StoreWriter(tmp_path)
     writer.write_records([_make_record("dup", cyclen=680.0)], append=False)
     stats = writer.write_records([_make_record("dup", cyclen=999.0)], append=True)
@@ -101,7 +106,83 @@ def test_dedup_same_record_id(tmp_path: Path) -> None:
 
     df = StoreReader(tmp_path).records
     assert len(df) == 1
-    assert df.iloc[0]["cyclen"] == pytest.approx(999.0)   # equal quality -> last write wins
+    assert df.iloc[0]["cyclen"] == pytest.approx(680.0)   # equal quality -> stored row kept
+
+
+# --------------------------------------------------------------------------- #
+# TIE => THE EXISTING ROW SURVIVES (clobber defect, measured 20260829)
+#
+# The quality rank encodes converged / valid / the two label bits and NOTHING
+# else, so two rows can tie and still disagree on every other column.  Under the
+# old "ties keep the last write" rule the tie handed those columns to the
+# INCOMING row: merging a remote kit whose store was a stale copy of the local
+# one would have reverted 397 corrected ``e_core`` values and un-nulled 1,203
+# repaired ``parent_record_id``s — all of them reported as "duplicates (kept)".
+# --------------------------------------------------------------------------- #
+def _corrected(rid: str, *, e_core: float, e_split, parent, **kw) -> CanonicalRecord:
+    rec = _make_record(rid, **kw)
+    rec.e_core = e_core
+    rec.e_split = e_split
+    rec.parent_record_id = parent
+    return rec
+
+
+def test_tie_keeps_the_existing_rows_corrected_columns(tmp_path: Path) -> None:
+    """A tie must not let a stale row reinstate the values a repair removed."""
+    writer = StoreWriter(tmp_path)
+    # local truth: e_core corrected by the backfill, parent_record_id repaired to null
+    writer.write_records(
+        [_corrected("rid", e_core=5.4712, e_split=1.0, parent=None)], append=False)
+    # the stale mirror: same record_id, same quality, pre-repair values
+    stats = writer.write_records(
+        [_corrected("rid", e_core=5.4, e_split=None, parent="bogus_parent")],
+        append=True)
+    assert stats["total"] == 1
+
+    row = StoreReader(tmp_path).records.iloc[0]
+    assert row["e_core"] == pytest.approx(5.4712)      # correction survives
+    assert row["e_split"] == pytest.approx(1.0)
+    assert pd.isna(row["parent_record_id"])            # repair survives
+
+
+def test_tie_keeps_the_first_row_within_one_batch(tmp_path: Path) -> None:
+    """The rule is positional, not per-call: first occurrence wins inside a batch."""
+    stats = StoreWriter(tmp_path).write_records(
+        [_make_record("rid", cyclen=680.0), _make_record("rid", cyclen=999.0)],
+        append=False,
+    )
+    assert stats["total"] == 1
+    assert StoreReader(tmp_path).records.iloc[0]["cyclen"] == pytest.approx(680.0)
+
+
+def test_strictly_better_incoming_still_replaces_the_whole_row(tmp_path: Path) -> None:
+    """Ties-keep-existing must NOT have blunted the upgrade path.
+
+    (a) converged beats non-converged, (b) an f_xy-labelled row beats a null one,
+    and in both cases the winner brings its OWN values for the columns outside
+    the rank (the upgrade is a row replacement, not a column-wise merge).
+    """
+    # (a) converged over non-converged
+    writer = StoreWriter(tmp_path)
+    writer.write_records(
+        [_corrected("rid", e_core=5.4, e_split=None, parent="old", converged=False)],
+        append=False)
+    writer.write_records(
+        [_corrected("rid", e_core=5.9, e_split=0.5, parent="new")], append=True)
+    row = StoreReader(tmp_path).records.iloc[0]
+    assert bool(row["converged"]) is True
+    assert row["e_core"] == pytest.approx(5.9)         # the upgrade's own values
+    assert row["parent_record_id"] == "new"
+
+    # (b) f_xy-filled over null, at otherwise identical quality
+    b = tmp_path / "b"
+    writer_b = StoreWriter(b)
+    writer_b.write_records([_make_record("rid", cyclen=680.0)], append=False)
+    labelled = {**_make_record("rid", cyclen=999.0).__dict__, "f_xy": 1.431}
+    writer_b.write_records([CanonicalRecord(**labelled)], append=True)
+    got = StoreReader(b).records.iloc[0]
+    assert float(got["f_xy"]) == pytest.approx(1.431)
+    assert got["cyclen"] == pytest.approx(999.0)       # strict upgrade -> its row
 
 
 # --------------------------------------------------------------------------- #
@@ -379,3 +460,142 @@ def test_replace_retry_budget_is_generous() -> None:
                 for i in range(store_mod._REPLACE_ATTEMPTS - 1))
     assert store_mod._REPLACE_ATTEMPTS >= 30
     assert total >= 60.0
+
+
+# --------------------------------------------------------------------------- #
+# e_core / e_split are DERIVED, not caller metadata (regression 20260829)
+#
+# ``outcome_to_record`` takes e_core/e_split as plain kwargs, and the produce /
+# campaign path passed its CaseContext's NOMINAL enrichment — the planned 50/50
+# (or 1/N) split of the case, constant across a whole campaign, always with
+# ``e_split=None``.  A realized pattern almost never lands on the nominal split,
+# so 979 store rows advertised a core that was never loaded (max drift 0.068 w/o).
+# The writer is the one choke point every producer funnels through, so it
+# re-derives both columns from the row's own ``(pattern, library_id)``.
+# --------------------------------------------------------------------------- #
+def _fuel_parquet(store_dir: Path) -> None:
+    """A 2-type ``fuel_types.parquet`` next to the records store."""
+    store_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([
+        dict(library_id="260624", type_id="B1", u_avg_enrichment=5.0,
+             u_mass_g=100.0, n_gd=None, source_flags=None, axial_zone=None,
+             feature_poor=False),
+        dict(library_id="260624", type_id="C2", u_avg_enrichment=6.0,
+             u_mass_g=200.0, n_gd=None, source_flags=None, axial_zone=None,
+             feature_poor=False),
+    ]).to_parquet(store_dir / "fuel_types.parquet")
+
+
+def _pattern_record(rid: str, packed: str, *, e_core, e_split) -> CanonicalRecord:
+    rec = _make_record(rid)
+    rec.pattern = packed
+    rec.e_core = e_core
+    rec.e_split = e_split
+    return rec
+
+
+def _full_pattern(head: str, tail: str, k: int = 35) -> str:
+    """A real 69-slot pattern: the first ``k`` orbits ``head``, the rest ``tail``.
+
+    ``batch_feed`` weights each slot by its ORBIT MULTIPLICITY, so the feed of
+    this pattern is (115, 126) full-core positions, not (35, 34) — the derivation
+    has to go through the geometry, which a 2-token toy string never exercises.
+    """
+    return "|".join([f"F:{head}:0"] * k + [f"F:{tail}:0"] * (len(SLOTS) - k))
+
+
+#: B1 (e=5.0, m=100) x 115 positions + C2 (e=6.0, m=200) x 126 positions.
+_MIXED = _full_pattern("B1", "C2")
+_MIXED_MASS_WEIGHTED = (115 * 100 * 5.0 + 126 * 200 * 6.0) / (115 * 100 + 126 * 200)
+_MIXED_COUNT_WEIGHTED = (115 * 5.0 + 126 * 6.0) / 241
+
+
+def test_mixed_fixture_feed_matches_the_orbit_multiplicities() -> None:
+    """Guard the fixture itself: if the 69-slot geometry ever changes, the two
+    derived-column tests below must fail loudly rather than drift."""
+    assert sum(s.multiplicity for s in SLOTS[:35]) == 115
+    assert sum(s.multiplicity for s in SLOTS[35:]) == 126
+
+
+def test_writer_overrides_a_nominal_e_core_with_the_pattern_derived_value(tmp_path
+                                                                          ) -> None:
+    _fuel_parquet(tmp_path)
+    StoreWriter(tmp_path).write_records([
+        # the produce path's exact signature: a nominal e_core + a null e_split
+        _pattern_record("r1", _MIXED, e_core=5.4, e_split=None),
+    ])
+    got = StoreReader(tmp_path).records.iloc[0]
+    assert got["e_core"] == pytest.approx(_MIXED_MASS_WEIGHTED)
+    assert got["e_split"] == pytest.approx(1.0)       # 6.0 - 5.0, filled not null
+    # the nominal is gone, and the result is the MASS-weighted mean specifically
+    assert abs(got["e_core"] - 5.4) > 1e-3
+    assert abs(got["e_core"] - _MIXED_COUNT_WEIGHTED) > 1e-3
+
+
+def test_writer_leaves_the_caller_value_when_the_recipe_cannot_resolve(tmp_path
+                                                                       ) -> None:
+    """An unresolvable feed must never BLANK a supplied value — the recipe's
+    ``(None, None)`` is a fallback, not a verdict."""
+    _fuel_parquet(tmp_path)
+    StoreWriter(tmp_path).write_records([
+        _pattern_record("r1", _full_pattern("ZZ", "C2"), e_core=5.4, e_split=0.1),
+        # a truncated / foreign pattern must not raise out of a records write
+        _pattern_record("r2", "F:B1:0|F:C2:0", e_core=5.3, e_split=0.2),
+    ])
+    rows = StoreReader(tmp_path).records.set_index("record_id")
+    assert rows.loc["r1", "e_core"] == pytest.approx(5.4)
+    assert rows.loc["r1", "e_split"] == pytest.approx(0.1)
+    assert rows.loc["r2", "e_core"] == pytest.approx(5.3)
+    assert rows.loc["r2", "e_split"] == pytest.approx(0.2)
+
+
+def test_writer_without_a_fuel_table_writes_verbatim(tmp_path) -> None:
+    """No ``fuel_types.parquet`` (a multi-PC kit, a synthetic fixture) -> the
+    derivation is simply unavailable and the frame is written as handed over."""
+    writer = StoreWriter(tmp_path)
+    assert writer.fuel_library is None
+    writer.write_records([_pattern_record("r1", _MIXED, e_core=5.4, e_split=0.1)])
+    got = StoreReader(tmp_path).records.iloc[0]
+    assert got["e_core"] == pytest.approx(5.4) and got["e_split"] == pytest.approx(0.1)
+
+
+def test_writer_opt_out_preserves_a_verbatim_frame(tmp_path) -> None:
+    _fuel_parquet(tmp_path)
+    StoreWriter(tmp_path).write_records(
+        [_pattern_record("r1", _MIXED, e_core=5.4, e_split=None)],
+        derive_enrichment_columns=False,
+    )
+    assert StoreReader(tmp_path).records.iloc[0]["e_core"] == pytest.approx(5.4)
+
+
+def test_backfill_e_core_is_dry_run_by_default(tmp_path) -> None:
+    from lpopt.data.store import backfill_e_core
+
+    _fuel_parquet(tmp_path)
+    # write the bad rows PAST the writer guard, exactly as the old produce path did
+    StoreWriter(tmp_path).write_records(
+        [_pattern_record("r1", _MIXED, e_core=5.4, e_split=None),       # nominal
+         _pattern_record("r2", _MIXED, e_core=None, e_split=None),      # never filled
+         _pattern_record("r3", _MIXED, e_core=_MIXED_MASS_WEIGHTED,     # already right
+                         e_split=1.0)],
+        derive_enrichment_columns=False,
+    )
+    report = backfill_e_core(tmp_path)
+    assert report["applied"] is False and report["backup"] is None
+    assert report["rows"] == 3 and report["resolvable"] == 3
+    assert report["corrected"] == 1                 # r1
+    assert report["null_filled"] == 1               # r2
+    assert report["unchanged"] == 1                 # r3
+    # the dry run wrote NOTHING
+    assert StoreReader(tmp_path).records.set_index("record_id").loc[
+        "r1", "e_core"] == pytest.approx(5.4)
+
+    applied = backfill_e_core(tmp_path, dry_run=False, backup_suffix="t")
+    assert applied["applied"] is True
+    assert Path(applied["backup"]).is_file()
+    rows = StoreReader(tmp_path).records.set_index("record_id")
+    for rid in ("r1", "r2", "r3"):
+        assert rows.loc[rid, "e_core"] == pytest.approx(_MIXED_MASS_WEIGHTED)
+        assert rows.loc[rid, "e_split"] == pytest.approx(1.0)
+    # idempotent: a second pass finds nothing left to correct
+    assert backfill_e_core(tmp_path)["corrected"] == 0

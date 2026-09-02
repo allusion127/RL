@@ -6,6 +6,14 @@ Pre-registration: ``data/reports/batchswap_wave_prereg_20260815.md`` §4.
      ga80 incumbent 1.4636.
 §4b  per-parent improvement distribution, and the audit of the ablation wave's
      DIRECTION-BALANCED estimate against this wave's PROPORTIONAL one.
+
+THE OBJECTIVE AXIS (design ``data/reports/fxy_switch_design_20260829.md`` §3.5.5).
+§4a is the frontier readout and follows the deck: F_r by default (unchanged), or
+MEASURED F_xy under ``objective = "min_fxy"``, with the unmeasured rows excluded
+and counted.  §4b is a per-parent DELTA distribution over ``data/policy/steps.parquet``,
+whose corpus carries no ``d_f_xy`` column (``mine_policy_corpus.build_steps``
+predates the switch and is out of this change's scope), so §4b stays on F_r and
+says so; it is a move-effect measurement, not a frontier claim.
 """
 
 from __future__ import annotations
@@ -19,6 +27,8 @@ import pandas as pd
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
+
+import readout_axis as RA                                     # noqa: E402
 
 CAMPAIGN = "batchswap_enum_T6T4"
 CELL_RECORD_PRIOR = 1.4685
@@ -34,7 +44,9 @@ def main(argv=None) -> int:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="data/reports/batchswap_wave_tables.txt")
+    RA.add_axis_args(ap)
     args = ap.parse_args(argv)
+    axis = RA.axis_from_args(args)
 
     out: list[str] = []
 
@@ -42,9 +54,18 @@ def main(argv=None) -> int:
         out.append(s)
         print(s)
 
+    if axis.is_fxy:
+        add(f"axis: {axis.provenance()}")
     store = pd.read_parquet(BASE / "data/store/records.parquet")
     wave = store[store["campaign"] == CAMPAIGN].copy()
     wave["feasible"] = M.feasibility(wave)
+    if axis.is_fxy:
+        # ADD the measured F_xy gate; F_r stays in (design §3.5.2) and an
+        # unmeasured F_xy stays <NA> rather than passing (design §3.5.4).
+        av = RA.axis_values(wave, axis)
+        ok = (av <= axis.limit).astype("boolean")
+        ok[av.isna()] = pd.NA
+        wave["feasible"] = wave["feasible"] & ok
     conv = wave[wave["converged"].astype(bool)]
     add(f"chains {len(wave)}  converged {len(conv)}  "
         f"feasible {int(wave['feasible'].fillna(False).sum())}")
@@ -52,13 +73,26 @@ def main(argv=None) -> int:
     add()
 
     # ---- §4a best feasible ------------------------------------------------ #
-    add("## §4a  PRIMARY - best feasible F_r found")
+    add(f"## §4a  PRIMARY - best feasible {axis.label} found")
     add()
-    feas = conv[conv["feasible"].fillna(False).astype(bool)].sort_values("f_r")
+    feas = conv[conv["feasible"].fillna(False).astype(bool)]
+    feas, _ = RA.split_labelled(feas, axis)
+    feas = feas.sort_values(axis.key)
+    # Counted over the CONVERGED population, not over the survivors: on the F_xy
+    # axis the unmeasured rows are already dropped by the tri-state gate above,
+    # so counting them here is the only place a reader learns why `feasible`
+    # collapsed.
+    note = RA.unlabelled_note(axis, RA.split_labelled(conv, axis)[1], len(conv),
+                              what="converged cores")
+    if note:
+        add(note)
+    cols = ["record_id", "parent_record_id", "f_r", "f_q",
+            "cbc_max", "ao_abs", "cyclen", "node_peak"]
+    if axis.is_fxy:
+        cols.insert(2, axis.key)
     steps = A.build_wave_steps(CAMPAIGN, None)
     smap = steps.set_index("child_record_id")
-    top = feas.head(10)[["record_id", "parent_record_id", "f_r", "f_q",
-                         "cbc_max", "ao_abs", "cyclen", "node_peak"]].copy()
+    top = feas.head(10)[cols].copy()
     top["parent_f_r"] = [float(smap.loc[r, "parent_f_r"]) if r in smap.index else np.nan
                          for r in top["record_id"]]
     top["d_f_r"] = top["f_r"] - top["parent_f_r"]
@@ -67,21 +101,33 @@ def main(argv=None) -> int:
     add()
     if len(feas):
         b = feas.iloc[0]
-        add(f"BEST FEASIBLE: {b.record_id[:12]}  F_r {b.f_r:.4f}")
+        b_axis = float(b[axis.key])
+        add(f"BEST FEASIBLE: {b.record_id[:12]}  {axis.label} {b_axis:.4f}")
         add(f"  parent {b.parent_record_id[:12]}  F_q {b.f_q:.4f}  "
             f"CBC {b.cbc_max:.2f}  |AO| {b.ao_abs:.4f}  cyclen {b.cyclen:.3f}  "
             f"node_peak {b.node_peak:.4f}")
-        add(f"  vs prior cell record {CELL_RECORD_PRIOR:.4f}: "
-            f"{b.f_r - CELL_RECORD_PRIOR:+.4f}"
-            f"  {'NEW CELL RECORD' if b.f_r < CELL_RECORD_PRIOR else 'no improvement'}")
-        add(f"  vs ga80 incumbent   {GA80_INCUMBENT:.4f}: "
-            f"{b.f_r - GA80_INCUMBENT:+.4f}"
-            f"  {'BEATS INCUMBENT' if b.f_r < GA80_INCUMBENT else 'incumbent stands'}")
+        if axis.is_fxy:
+            # Both marks are F_r records; there is no F_xy record for this cell.
+            add(f"  vs prior cell record {CELL_RECORD_PRIOR:.4f} / ga80 incumbent "
+                f"{GA80_INCUMBENT:.4f}: NOT COMPARED — F_r records, no "
+                f"{axis.label} record exists (design 20260829 sec. 3.6).  This "
+                f"core's F_r is {float(b.f_r):.4f}, the constraint reading only.")
+        else:
+            add(f"  vs prior cell record {CELL_RECORD_PRIOR:.4f}: "
+                f"{b_axis - CELL_RECORD_PRIOR:+.4f}"
+                f"  {'NEW CELL RECORD' if b_axis < CELL_RECORD_PRIOR else 'no improvement'}")
+            add(f"  vs ga80 incumbent   {GA80_INCUMBENT:.4f}: "
+                f"{b_axis - GA80_INCUMBENT:+.4f}"
+                f"  {'BEATS INCUMBENT' if b_axis < GA80_INCUMBENT else 'incumbent stands'}")
     add()
 
     # ---- §4b distribution + the registered audit -------------------------- #
     add("## §4b  SECONDARY - improving fraction: proportional vs balanced")
     add()
+    if axis.is_fxy:
+        add("  (ON F_r — data/policy/steps.parquet carries no d_f_xy column; this "
+            "is a move-effect measurement, not a frontier claim on the objective "
+            "axis.)")
     ok = steps["both_converged"].fillna(False).astype(bool)
     s = steps[ok].copy()
     imp = s["improved_fr"].astype("boolean")

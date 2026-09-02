@@ -20,11 +20,14 @@ paramA curriculum cell does).  ga80 callers get byte-identical behaviour.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
-from .assets import CaseAssetResolver, LIBRARY_DIMS
+from .assets import (
+    CaseAssetResolver,
+    LIBRARY_DIMS,
+    registry_aliases_from_package,
+)
 
 if TYPE_CHECKING:
     from ..config import LpoptConfig
@@ -54,14 +57,15 @@ def paramA_package_root(cfg: "LpoptConfig") -> Path:
 
 
 def paramA_registry_aliases(pkg: Path) -> dict[str, str]:
-    """``{type_id: alias}`` from the package ``registry.json`` (``{}`` if absent)."""
+    """``{type_id: alias}`` from the package ``registry.json`` (``{}`` if absent).
 
-    try:
-        data = json.loads((pkg / "registry.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    aliases = data.get("aliases", {})
-    return {str(t): str(a) for t, a in aliases.items()} if isinstance(aliases, dict) else {}
+    Thin re-export of :func:`lpopt.search.assets.registry_aliases_from_package`,
+    which is also what :class:`CaseAssetResolver` now calls for itself when a
+    caller passes no ``registry_aliases``: ONE reader of the bridge, so a
+    hand-wired caller and the resolver's own default can never disagree.
+    """
+
+    return registry_aliases_from_package(pkg)
 
 
 def paramA_library_dims(pkg: Path, registry_aliases: Mapping[str, str]) -> tuple[int, int]:

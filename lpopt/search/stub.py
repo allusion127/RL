@@ -21,6 +21,11 @@ taxonomy (converged / nonconverged / error) from patterns it generated:
 
 * ``fail_prefixes``        -> the evaluator raises (verifier reports ``error``)
 * ``nonconverge_prefixes`` -> a non-converged FOM (verifier reports ``nonconverged``)
+
+A converged stub outcome also carries a deterministic ``metadata["fxy"]``, the
+same channel the live ``HarvestingEquilibriumEvaluator`` uses for the MAS_OUT
+planar peaks, so the ``min_fxy`` objective can be exercised end to end without a
+MASTER run.  It respects the MEASURED physics ordering ``F_r <= F_xy <= F_q``.
 """
 
 from __future__ import annotations
@@ -29,9 +34,17 @@ from dataclasses import replace
 from hashlib import sha256
 from typing import Sequence
 
+from ..data.fxy import FxyResult, FxyStep
 from ..vendor.masterrl.dataset import CaseData
 from ..vendor.masterrl.domain import FOM, Pattern
 from ..vendor.masterrl.search import EvaluationResult
+
+#: Stub F_xy generator (design fxy_switch_20260829 §1.2 pooled fit, plus a
+#: deterministic per-digest spread of the measured residual scale).  It is a
+#: FIXTURE, not a model: it exists so a dry run produces an f_xy column at all.
+_FXY_SLOPE = 1.1221
+_FXY_INTERCEPT = -0.0831
+_FXY_SPREAD = 0.06
 
 
 def _unit(digest: str, salt: str) -> float:
@@ -82,6 +95,24 @@ class StubEvaluator:
             converged=True,
         )
 
+    def fxy_for(self, digest: str, feed: int) -> FxyResult:
+        """Deterministic planar peaks for one ``(digest, feed)``.
+
+        Built from the SAME ``fom_for`` F_r/F_q so the stub honours the measured
+        inequality ``F_r <= F_xy <= F_q`` (192/192 real cores): a test that
+        asserts on the F_xy gate must not be fed a physically impossible row.
+        """
+        fom = self.fom_for(digest, feed)
+        f_r = float(fom.f_r)
+        f_q = float(fom.f_q)
+        raw = (_FXY_SLOPE * f_r + _FXY_INTERCEPT
+               + _FXY_SPREAD * (_unit(digest, "fxy") - 0.5))
+        f_xy = min(max(raw, f_r), f_q)
+        f_xya = f_xy / (1.05 + 0.10 * _unit(digest, "fxya"))
+        step = FxyStep(efpd=float(fom.cyclen), fxyp=f_xy, fxya=f_xya)
+        return FxyResult(f_xy=f_xy, f_xya=f_xya, steps=(step,), n_steps=1,
+                         sane=True, reason="")
+
     def n_cycles_for(self, digest: str, feed: int) -> int:
         """Deterministic chain length: 3..8 (feed != 121 stays comfortably < 14)."""
 
@@ -111,6 +142,10 @@ class StubEvaluator:
                 "n_cycles": n_cycles,
                 "tolerance_margin": tol_margin,
                 "wall_s": self.wall_s,
+                # same channel HarvestingEquilibriumEvaluator uses; the verifier
+                # only reads it for a CONVERGED outcome, so a nonconverged stub
+                # row keeps a null f_xy exactly as a real one does.
+                "fxy": self.fxy_for(digest, feed) if converged else None,
             },
         )
 

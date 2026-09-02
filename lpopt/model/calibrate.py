@@ -23,7 +23,7 @@ from typing import Any, Sequence
 import numpy as np
 import torch
 
-from .dataset_torch import LPDataset, TARGETS
+from .dataset_torch import LPDataset, TARGETS, targets_for
 from .featurize import DEFAULT_COND_SCHEMA, FeatureEncoder
 from .train import (
     DEFAULT_SPLITS,
@@ -115,7 +115,18 @@ def fit_calibration(
     store_dir: str | Path = DEFAULT_STORE,
     splits_dir: str | Path = DEFAULT_SPLITS,
 ) -> Path:
-    """Fit isotonic (per target) + Platt (conv) on the ``split`` val fold."""
+    """Fit isotonic (per target) + Platt (conv) on the ``split`` val fold.
+
+    The target inventory comes from the CHECKPOINT (``meta["target_names"]``),
+    not from the module-level :data:`TARGETS` tuple.  A promoted checkpoint
+    (``max_assembly_burnup`` / ``f_xy``) predicts more columns than the frozen
+    7-tuple, and fitting only the 7 left every promoted axis on RAW σ forever:
+    ``predict_fxy``'s "calibrated" σ was the head's uncalibrated output, which is
+    exactly why the 20260829 f_xy arm measured a 68% coverage of 0.99 (σ 1.7x the
+    label spread).  :func:`apply_calibration` already maps BY NAME, so a fitted
+    curve simply lands on its own column; a checkpoint without the promotion is
+    byte-identical because its ``target_names`` IS ``TARGETS``.
+    """
     from ..data.fuel_types import FuelLibrary
     from ..data.store import StoreReader
 
@@ -127,6 +138,11 @@ def fit_calibration(
         members.append(m)
         metas.append(meta)
     tmean, tstd = norm_from_meta(metas[0])
+    names = tuple(metas[0].get("target_names") or TARGETS)
+    if names != targets_for("max_assembly_burnup" in names, "f_xy" in names):
+        raise ValueError(
+            "calibration needs a checkpoint whose target_names is one of the "
+            f"append-only promotions; got {names!r}")
 
     reader = StoreReader(store_dir)
     fuel = FuelLibrary.from_parquet(Path(store_dir) / "fuel_types.parquet")
@@ -138,7 +154,9 @@ def fit_calibration(
     # calibration fits on the FULL label set (censoring is a training-loss
     # concern only); Dataset-A pin residuals stay in the isotonic fit as before.
     val_ds = LPDataset(reader, manifest, fuel, augment=False, fold="val",
-                       encoder=encoder, censor_dataset_a_pin_labels=False)
+                       encoder=encoder, censor_dataset_a_pin_labels=False,
+                       promote_max_asm_bu="max_assembly_burnup" in names,
+                       promote_fxy="f_xy" in names)
 
     pred = predict_dataset(members, val_ds, device)
     mean_raw, _epi, total = ensemble_stats(pred, tmean, tstd)
@@ -146,7 +164,7 @@ def fit_calibration(
     tmask = pred["target_mask"]
 
     isotonic: dict[str, dict[str, list[float]]] = {}
-    for k, name in enumerate(TARGETS):
+    for k, name in enumerate(names):
         sel = tmask[:, k] > 0
         abs_err = np.abs(mean_raw[sel, k] - true[sel, k])
         isotonic[name] = _fit_isotonic(total[sel, k], abs_err)
@@ -158,7 +176,7 @@ def fit_calibration(
     platt = _fit_platt(mean_logit[cmask], pred["conv_label"][cmask])
 
     calib = {
-        "targets": list(TARGETS),
+        "targets": list(names),
         "split": split,
         "n_members": len(members),
         "isotonic": isotonic,

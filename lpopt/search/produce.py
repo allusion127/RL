@@ -45,6 +45,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import LpoptConfig, ProduceConfig, StratumConfig
+from ..safelog import safe_print
 from ..data.fuel_types import case_e_core as _case_e_core
 from ..data.schema import CanonicalRecord, compute_record_id, unpack_pattern
 from ..data.store import StoreReader, StoreWriter
@@ -1209,7 +1210,7 @@ class ProduceDriver:
                 except (PermissionError, OSError) as exc:
                     self.maps_skipped_waves += 1
                     self.maps_skipped_records += len(wave_maps)
-                    print(f"[produce] WARNING maps write failed ({type(exc).__name__}: "
+                    safe_print(f"[produce] WARNING maps write failed ({type(exc).__name__}: "
                           f"{exc}); SKIPPED {len(wave_maps)} map(s) for this wave — "
                           f"labels are unaffected. cumulative skipped: "
                           f"{self.maps_skipped_records} map(s) in "

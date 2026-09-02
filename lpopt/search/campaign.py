@@ -34,11 +34,12 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 
 from ..config import LpoptConfig
+from ..safelog import safe_logger, safe_print
 from ..data import flat_scale as _FS
 from ..data.flat_scale import FlatScale
 from ..data.map_calibration import (
@@ -49,7 +50,9 @@ from ..vendor.masterrl.domain import CaseKey, Pattern
 from ..vendor.masterrl.ga import GAEvaluation, archive_candidate
 from ..vendor.masterrl.reward import is_fom_feasible
 from ..model.cell_calibrate import CampaignBiasCorrector, cyclen_cell_key
-from .delivery import LICENSING_FR_LIMIT, compliance_margin, select_delivery
+from .delivery import (
+    LICENSING_FR_LIMIT, LICENSING_FXY_LIMIT, compliance_margin,
+    compliance_margin_fxy, select_delivery)
 from .assets import CaseAssetResolver
 from .construct import (
     Candidate, CaseContext, PairCell, build_pair_universe, build_pool,
@@ -57,7 +60,8 @@ from .construct import (
 )
 from .construct import _parent_to_genome as _pattern_to_case_genome
 from .genome import GenomeError, mutate
-from .verify import PRODUCE_DECK_KNOBS, WaveEntry, WaveVerifier, outcome_to_record
+from .verify import (
+    PRODUCE_DECK_KNOBS, WaveEntry, WaveVerifier, lineage_anchor, outcome_to_record)
 from . import acquisition as acq
 from . import rule_metrics as acq_rules
 from .update import WaveUpdater
@@ -75,6 +79,49 @@ _RETIRED_PRODUCTION_OBJECTIVES = ("max_cycle_min_fr", "min_fr_max_cycle")
 #: next to it so the two never drift: :meth:`CampaignDriver._is_wave_champion`
 #: uses it to recognise THIS run's own fine-tuned descendants.
 _WAVE_CHAMPION_RE = re.compile(r"champion_wave_\d+")
+
+
+class FxySigmaBarLost(RuntimeError):
+    """A checkpoint's f_xy serve-sigma bar (G4) did not survive a save/reload.
+
+    The bar is stamped on the artifact (``ensemble.json`` ->
+    ``fxy_head.serve_sigma = "barred"``) and decides the WIDTH every ``min_fxy``
+    UCB is built from.  Losing it does not crash anything and does not look
+    wrong in any artifact — it just silently swaps the served sigma for the
+    over-wide one the G4 verdict refused (defect D3,
+    ``data/reports/minfxy_T6T4_f121_r1_results_20260830.md`` §9).  So it is
+    raised, loudly, rather than warned.
+    """
+
+
+def checkpoint_fxy_serve_sigma(ckpt: str | Path) -> str:
+    """The f_xy serve-sigma a checkpoint DIRECTORY declares on disk (``""`` = none).
+
+    Deliberately reads the files rather than a loaded backend: the question here
+    is what a future ``--resume`` will find, and only the bytes answer that.
+    Mirrors :meth:`..model.model_api.PosValCnnBackend.from_dir`'s resolution —
+    ``ensemble.json`` first, then any member meta (any member asserting the bar
+    bars the ensemble).
+    """
+    d = Path(str(ckpt))
+    ens = d / "ensemble.json"
+    if ens.is_file():
+        try:
+            meta = json.loads(ens.read_text(encoding="utf-8"))
+            v = (meta.get("fxy_head") or {}).get("serve_sigma")
+            if v:
+                return str(v).strip().lower()
+        except (OSError, ValueError, AttributeError):
+            pass
+    for md in sorted(d.glob("member_*")):
+        try:
+            meta = json.loads((md / "meta.json").read_text(encoding="utf-8"))
+            v = (meta.get("fxy_head") or {}).get("serve_sigma")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if v and str(v).strip().lower() == "barred":
+            return "barred"
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -105,6 +152,15 @@ class WaveReport:
     #: wave where every chain died at staging is indistinguishable from a wave
     #: that merely failed to converge — both report conv=0 (ECC audit 2026-08-12).
     errors: int = 0
+    #: SAFETY SHIELD accounting (review §6.5 item 5 — report the gates separately).
+    #: ``ood_flagged`` is what the guard SAW, ``ood_escalated`` what lost its
+    #: exploit tier, ``ood_rejected`` / ``conformal_rejected`` what each gate
+    #: REMOVED from the pool.  All 0 at the shipped defaults, and defaulted so an
+    #: older ``state.json`` still loads.
+    ood_flagged: int = 0
+    ood_escalated: int = 0
+    ood_rejected: int = 0
+    conformal_rejected: int = 0
 
 
 class MapHarvestAbort(RuntimeError):
@@ -159,6 +215,24 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         handle.flush()
 
 
+def _opt_float(value: Any) -> float | None:
+    """``float(value)`` or ``None`` for an absent / zero / non-finite knob.
+
+    The deck spells "this optional limit is off" as an absent key OR as ``0.0``
+    (the convention ``flatpower_peak_scale`` already uses), and both must reach
+    the spec as ``None`` rather than as a limit of zero that vetoes everything.
+    """
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(out) or out == 0.0:
+        return None
+    return out
+
+
 def _objective(cyclen: float | None, target: float) -> float:
     """Campaign objective for a feasible label: higher is better (−|cyclen−target|)."""
 
@@ -174,7 +248,14 @@ def _objective(cyclen: float | None, target: float) -> float:
 #: means that axis is UNGATED for the objective (reported, never a rejection).
 FEASIBILITY_LIMIT_KEYS: tuple[str, ...] = (
     "f_r", "cbc_max", "f_q", "ao_abs", "max_pin_burnup", "cyclen_lo", "cyclen_hi",
+    "f_xy",
 )
+
+#: The LICENSING pin-burnup limit :func:`is_deliverable` judges against — the
+#: LEU+ 80 GWd/tU, deliberately NOT the 78.0 the search-time gates use.  That 2.0
+#: is MODEL margin on a PREDICTION; a MEASURED 79.4 is deliverable and a search
+#: gate must not be re-used as a licensing verdict.
+DELIVERABLE_PIN_BU_LIMIT = 80.0
 
 
 def feasibility_limits_for(acq_cfg: Any, objective: str, *,
@@ -196,6 +277,10 @@ def feasibility_limits_for(acq_cfg: Any, objective: str, *,
         "max_pin_burnup": None,
         "cyclen_lo": None,
         "cyclen_hi": None,
+        # F_xy (MASTER FXYP) gates only where the objective screens it: the
+        # min_fxy mode it IS the objective of, and flat_power's safety gate.
+        # Everywhere else it is a REPORTED column, never a rejection.
+        "f_xy": None,
     }
     if objective not in ("max_cycle_min_fr", "fr_boundary", "flat_power"):
         limits["f_r"] = float(acq_cfg.f_r_limit)
@@ -214,6 +299,18 @@ def feasibility_limits_for(acq_cfg: Any, objective: str, *,
         # over the limit as feasible.
         limits["max_pin_burnup"] = float(
             getattr(acq_cfg, "minfr_pin_bu_limit", 78.0))
+    elif objective == "min_fxy":
+        # F_xy is BOTH the objective and a hard limit (user decision 2026-08-29),
+        # and F_r STAYS a constraint at f_r_limit (set above) — design §3.5.2:
+        # the two axes disagree on real cores, so neither implies the other.
+        # Pin BU gates at the same model-margin haircut min_fr uses.
+        limits["f_xy"] = float(getattr(acq_cfg, "f_xy_limit", 1.65))
+        limits["max_pin_burnup"] = float(
+            getattr(acq_cfg, "minfxy_pin_bu_limit", 78.0))
+        lo = getattr(acq_cfg, "minfxy_cyclen_lo", None)
+        hi = getattr(acq_cfg, "minfxy_cyclen_hi", None)
+        limits["cyclen_lo"] = None if lo is None else float(lo)
+        limits["cyclen_hi"] = None if hi is None else float(hi)
     elif objective == "fr_boundary":
         # NO F_r gate, NO cyclen band (cyclen recorded but never gated).
         limits["max_pin_burnup"] = float(
@@ -227,6 +324,10 @@ def feasibility_limits_for(acq_cfg: Any, objective: str, *,
                          else float(getattr(acq_cfg, "flatpower_fr_limit", 1.7)))
         limits["max_pin_burnup"] = float(
             getattr(acq_cfg, "flatpower_pin_bu_limit", 80.0))
+        # F_xy SAFETY GATE (design §3.5.3) — node_peak is NOT F_xy (corr 0.74-0.85),
+        # so a flat pattern carries no F_xy guarantee.  0 / non-finite disables it.
+        fxy_gate = float(getattr(acq_cfg, "flatpower_fxy_limit", 0.0) or 0.0)
+        limits["f_xy"] = fxy_gate if math.isfinite(fxy_gate) and fxy_gate > 0.0 else None
     return limits
 
 
@@ -260,13 +361,25 @@ def _is_missing(value: Any) -> bool:
         return False
 
 
-def is_feasible(row: Mapping[str, Any], limits: Mapping[str, Any]) -> bool:
-    """Constraint feasibility of a verified row under ``limits``.
+def is_feasible_search(row: Mapping[str, Any], limits: Mapping[str, Any]) -> bool:
+    """SEARCH-TIME constraint feasibility of a verified row under ``limits``.
 
-    The ONE predicate: :meth:`CampaignDriver._is_feasible` and the report's
-    feasible set are the same function of the same limits, because a report that
-    restates the campaign's rule drifts from it — it did, by omitting the pin-BU
-    gate, and then called rows feasible that the campaign had rejected.
+    One of the TWO predicates (review 2026-08-29 §6.4 / P0-03, design §3.5.4).
+    This is the SEARCH contract — candidate ranking, elite pools, best-tracking,
+    the outer weights, ``n_feasible`` — and it is DELIBERATELY tolerant of an
+    axis MASTER did not report: a strict reject would zero the feasible set and
+    starve the search before the first label of a new axis ever arrives.  For the
+    DELIVERY verdict use :func:`is_deliverable`, which refuses exactly what this
+    one tolerates.
+
+    **The search-time contract, stated once:** ``max_pin_burnup`` and ``f_xy``
+    PASS when missing; every other gated axis REJECTS when missing.
+
+    :meth:`CampaignDriver._is_feasible` and the report's search statistics are
+    the same function of the same limits, because a report that restates the
+    campaign's rule drifts from it — it did, by omitting the pin-BU gate the
+    campaign applies, and then called rows feasible that the campaign had
+    rejected.
 
     **Missing values (2026-07-31 contract, see :func:`_is_missing`): ``NaN`` is
     treated exactly like ``None``.**  Two groups, each internally consistent:
@@ -276,12 +389,16 @@ def is_feasible(row: Mapping[str, Any], limits: Mapping[str, Any]) -> bool:
       called satisfied.  (Unchanged: ``None`` and ``NaN`` both already rejected;
       the checks are now spelled out with :func:`_is_missing` so that is auditable
       rather than a side effect of ``nan <= x`` being ``False``.)
-    * ``max_pin_burnup`` — a missing value PASSES.  MASTER adjudicates it, and a
-      strict reject would zero feasibility on every row that lacks the field,
-      starving elites / best-tracking / the outer weights.  This is the axis the
-      NaN hole broke, and folding NaN into "missing" here CHANGES the reported
-      feasible set: parquet-sourced rows with no pin-BU label now count as
-      feasible, exactly as this docstring has always claimed they did.
+    * ``max_pin_burnup`` / ``f_xy`` — a missing value PASSES.  MASTER adjudicates
+      both, and a strict reject would zero feasibility on every row that lacks
+      the field, starving elites / best-tracking / the outer weights.  ``f_xy``
+      joins this group for the same reason and one sharper one: at the moment the
+      objective switched, 98.2% of the store had no F_xy label at all, so a
+      strict reject would have made the first ``min_fxy`` campaign unable to
+      start.  ``max_pin_burnup`` is the axis the NaN hole broke, and folding NaN
+      into "missing" here CHANGES the reported feasible set: parquet-sourced rows
+      with no pin-BU label now count as feasible, exactly as this docstring has
+      always claimed they did.
     """
     try:
         ok = bool(
@@ -310,9 +427,160 @@ def is_feasible(row: Mapping[str, Any], limits: Mapping[str, Any]) -> bool:
             # ``is not None`` here was the whole defect.
             if not _is_missing(pin_bu):
                 ok = ok and float(pin_bu) <= float(pin_limit)
+        fxy_limit = limits.get("f_xy")
+        if fxy_limit is not None:
+            f_xy = row.get("f_xy")
+            # MISSING PASSES at SEARCH time (design §3.5.4) — and REJECTS in
+            # :func:`is_deliverable`.  That split is the whole point.
+            if not _is_missing(f_xy):
+                ok = ok and float(f_xy) <= float(fxy_limit)
         return ok
     except (TypeError, ValueError, KeyError):
         return False
+
+
+#: Back-compat alias.  Every historical caller means the SEARCH predicate, and
+#: they were all audited when the split landed; new delivery-side code must name
+#: :func:`is_deliverable` explicitly rather than inherit a tolerant default.
+is_feasible = is_feasible_search
+
+
+def deliverable_limits(limits: Mapping[str, Any]) -> dict[str, float | None]:
+    """The limits :func:`is_deliverable` judges at, from a search-limit mapping.
+
+    ONE axis is re-resolved: ``max_pin_burnup`` gates at
+    :data:`DELIVERABLE_PIN_BU_LIMIT` (LEU+ 80), never at the 78.0 model-margin
+    haircut the search applies.  That 2.0 GWd/tU is head margin on a PREDICTION
+    and has no meaning against a MEASURED burnup, so re-using it as a licensing
+    verdict would reject deliverable cores.
+
+    Everything else (``f_r`` / ``cbc_max`` / ``f_q`` / ``ao_abs`` / the cyclen
+    band / ``f_xy``) is exactly the run's own gate, and an axis the objective
+    leaves UNGATED stays ungated here too.  In particular this does NOT narrow
+    ``flat_power``'s 1.70 F_r safety gate to the licensing 1.55: that would be a
+    new rejection rule, and program §2.2 already answers "how compliant is this
+    row on F_r" with ``compliance_margin``, which every report row prints.  What
+    the delivery predicate adds is the MEASUREMENT requirement, not new limits.
+    """
+    return {
+        "cbc_max": limits.get("cbc_max"),
+        "f_q": limits.get("f_q"),
+        "ao_abs": limits.get("ao_abs"),
+        "f_r": limits.get("f_r"),
+        "max_pin_burnup": DELIVERABLE_PIN_BU_LIMIT,
+        "cyclen_lo": limits.get("cyclen_lo"),
+        "cyclen_hi": limits.get("cyclen_hi"),
+        "f_xy": limits.get("f_xy"),
+    }
+
+
+#: Gated-axis name -> the row column that must carry its measurement.  The cyclen
+#: band's two limit keys share one column, which is why this is a table and not
+#: ``limits.keys()``.
+_DELIVERABLE_AXIS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("cbc_max", "cbc_max"),
+    ("f_q", "f_q"),
+    ("ao_abs", "ao_abs"),
+    ("f_r", "f_r"),
+    ("max_pin_burnup", "max_pin_burnup"),
+    ("cyclen_lo", "cyclen"),
+    ("cyclen_hi", "cyclen"),
+    ("f_xy", "f_xy"),
+)
+
+
+def unknown_axes(row: Mapping[str, Any], limits: Mapping[str, Any]) -> tuple[str, ...]:
+    """Gated licensing axes of ``row`` that carry NO measurement (UNKNOWN state).
+
+    The third state of the review's §6.4 table (measured PASS / measured FAIL /
+    UNKNOWN), surfaced as data so the report can say WHICH axis is unmeasured
+    instead of only that the row is undeliverable.  Column names, de-duplicated,
+    in the fixed order of :data:`_DELIVERABLE_AXIS_COLUMNS`.
+    """
+    resolved = deliverable_limits(limits)
+    out: list[str] = []
+    for axis, column in _DELIVERABLE_AXIS_COLUMNS:
+        if resolved.get(axis) is None:
+            continue
+        if column in out:
+            continue
+        if _is_missing(row.get(column)):
+            out.append(column)
+    return tuple(out)
+
+
+def build_delivery_payload(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    objective: str,
+    limits: Mapping[str, Any],
+    cell: str | None,
+    safety: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """The ``delivery.json`` payload for a finished campaign, or ``None``.
+
+    Single source of truth for the §2.2 / D2 delivery dossier: shared by the live
+    driver (:meth:`CampaignDriver._write_delivery`) and by the offline
+    :func:`rerender_run_artifacts` path, so a regenerated ``delivery.json`` can
+    never drift from the one the run itself would have written.
+
+    ``None`` when ``objective`` is not ``flat_power`` — only that mode defines a
+    delivery ranking.  ``safety`` supplies the §8.5 uncertainty fields per entry;
+    omitted (the offline path) they are ``None`` = NOT EVALUATED, which is what
+    the review's rule requires — never a pass.
+    """
+
+    if objective != "flat_power":
+        return None
+    # DELIVERY, so the DELIVERY predicate: a row whose F_xy or pin burnup was
+    # never measured is UNKNOWN and must not be handed over as a candidate
+    # (review §6.4; this used the tolerant search predicate before the split).
+    kept = [r for r in rows if r.get("converged") and is_deliverable(r, limits)]
+    dossier = select_delivery(kept).as_dict()
+    # Stamp the §8.5 uncertainty fields onto every dossier entry.  The RANKING
+    # and the deliverable predicate are untouched — this only makes each entry
+    # SAY whether its fuel population was OOD and which gated axes its
+    # conformal calibration does not cover, so a hand-off cannot read a
+    # flagged or uncalibrated candidate as clean.
+    for group in ("ranked", "excluded"):
+        for entry in dossier.get(group, []):
+            entry.update(
+                safety(entry) if safety is not None
+                else {"ood_flag": None, "conformal_unfit_axes": None}
+            )
+    return {
+        "rule": "flatness-first program 2.2 (decision D2)",
+        "note": ("search objective = flatness (no F_r); this ranking is a "
+                 "downstream LICENSING filter only, and the flattest "
+                 "candidate is excluded by the band floor on purpose"),
+        "cell": cell,
+        "compliance_limit": LICENSING_FR_LIMIT,
+        "next_step": "SDM / MTC / axial confirmation on the top candidates "
+                     "(outside the search loop, program 2.2 step 3)",
+        "sdm_mtc_gate": ("decision D9 — the top-K entries below are the SDM/MTC "
+                         "pre-delivery gate's targets; see the sdm_mtc block "
+                         "and sdm_mtc.json when [constraints] enables it"),
+        **dossier,
+    }
+
+
+def is_deliverable(row: Mapping[str, Any], limits: Mapping[str, Any]) -> bool:
+    """DELIVERY-TIME verdict: every gated axis MEASURED and inside its limit.
+
+    The strict twin of :func:`is_feasible_search` (review §6.4 / P0-03, design
+    §3.5.4).  Where the search predicate lets an unmeasured ``max_pin_burnup`` or
+    ``f_xy`` pass so the search can run at all, this one REJECTS them: an
+    unmeasured licensing axis cannot be called satisfied, and the review's Phase-A
+    exit criterion is "zero UNKNOWN deliveries".
+
+    Judged against :func:`deliverable_limits` — the LICENSING numbers, not the
+    search-time model-margin gates.  ``unknown_axes`` names what is missing.
+    """
+    if unknown_axes(row, limits):
+        return False
+    # every gated axis is now MEASURED, so the tolerant branches of the search
+    # predicate are unreachable and the two agree by construction.
+    return is_feasible_search(row, deliverable_limits(limits))
 
 
 # --------------------------------------------------------------------------- #
@@ -346,7 +614,11 @@ class CampaignDriver:
         self.early_stop_enabled = bool(early_stop)
         self.backend_factory = backend_factory
         self.progress = progress
-        self._log = log or (lambda m: print(m))
+        # Encoding-safe: a redirected Windows stdout is cp949, and a single
+        # em-dash in a log line used to raise UnicodeEncodeError and sink a
+        # finished 100-call run (incident 2026-08-30).  Wraps a supplied
+        # ``log`` too -- that stream belongs to the caller, not to lpopt.
+        self._log = safe_logger(log)
         self.acq = cfg.acquisition
         self.search = cfg.search
 
@@ -386,8 +658,16 @@ class CampaignDriver:
         # "max_cycle_min_fr" mode maximizes cyclen + minimizes F_r under the F_q /
         # CBC / |AO| constraints (F_r ungated) via ``acq.score_pool_max_cycle``.
         self.objective = str(getattr(self.acq, "objective", "target_cycle"))
+        #: The f_xy serve-sigma mode the deck LAUNCHED with — ``"barred"`` when the
+        #: constructed champion stamps ``fxy_head.serve_sigma = "barred"`` (G4),
+        #: else ``"head"``.  Frozen here, before any wave checkpoint can replace the
+        #: served weights, so :meth:`_load_state` has a launch-time reference to
+        #: assert the resumed checkpoint against (defect D3,
+        #: ``data/reports/minfxy_T6T4_f121_r1_results_20260830.md`` §9).
+        self._fxy_sigma_mode_launch = self._fxy_sigma_mode()
         self.max_cycle_spec: acq.MaxCycleSpec | None = None
         self.min_fr_spec: acq.MinFrSpec | None = None
+        self.min_fxy_spec: acq.MinFxySpec | None = None
         self.min_fuel_cost_spec: acq.MinFuelCostSpec | None = None
         self.fr_boundary_spec: acq.MinFrBoundarySpec | None = None
         self.flat_power_spec: acq.FlatPowerSpec | None = None
@@ -460,6 +740,69 @@ class CampaignDriver:
                 ao_abs_limit=float(self.acq.ao_abs_limit),
                 pin_bu_limit=float(getattr(self.acq, "minfr_pin_bu_limit", 78.0)),
             )
+        elif self.objective == "min_fxy":
+            # F_xy PRIMARY (user decision 2026-08-29) — the same lambda structure
+            # min_fr_max_cycle uses, with F_xy in F_r's place and F_r rejoining
+            # the hard set as a pure constraint (design §3.5.2).
+            self.min_fxy_spec = acq.MinFxySpec(
+                lam_fxy=float(getattr(self.acq, "minfxy_lambda", 1000.0)),
+                risk_z=float(self.acq.risk_z),
+                f_xy_limit=float(getattr(self.acq, "f_xy_limit", 1.65)),
+                f_r_limit=float(self.acq.f_r_limit),
+                cbc_limit=float(self.acq.cbc_limit),
+                f_q_limit=float(self.acq.f_q_limit),
+                ao_abs_limit=float(self.acq.ao_abs_limit),
+                pin_bu_limit=float(getattr(self.acq, "minfxy_pin_bu_limit", 78.0)),
+                cyclen_lo=_opt_float(getattr(self.acq, "minfxy_cyclen_lo", None)),
+                cyclen_hi=_opt_float(getattr(self.acq, "minfxy_cyclen_hi", None)),
+                cyclen_width=float(getattr(self.acq, "minfxy_cyclen_width", 10.0)),
+            )
+            # The objective is DEFINED on the harvested MAS_OUT column ``f_xy``,
+            # which only exists when the final work dir survives — and
+            # ``harvest_maps`` is what forces ``keep_success``
+            # (verify.WaveVerifier).  Without it EVERY verified row is unscorable
+            # (``_campaign_objective`` -> -inf) and the run would rank on nothing,
+            # which is precisely the flat_power §1.3 failure one axis over.
+            if not bool(getattr(cfg.verify, "harvest_maps", False)):
+                raise ValueError(
+                    "objective='min_fxy' requires [verify] harvest_maps = true: "
+                    "F_xy is parsed from the final cycle's MAS_OUT, which only "
+                    "survives because harvest_maps forces keep_success. Without "
+                    "it no verified row carries f_xy and the objective has "
+                    "nothing to rank (design fxy_switch_20260829 §3.2)."
+                )
+            has_head = acq.has_fxy_head(self.model, self.ctx)
+            self._log(
+                f"[optimize] min_fxy objective = cyclen_LCB - "
+                f"{self.min_fxy_spec.lam_fxy:g} * F_xy_UCB | HARD F_xy <= "
+                f"{self.min_fxy_spec.f_xy_limit:.3f} | F_r stays a CONSTRAINT at "
+                f"{self.min_fxy_spec.f_r_limit:.3f} | pin BU <= "
+                f"{self.min_fxy_spec.pin_bu_limit:.1f}"
+            )
+            if not has_head:
+                self._log(
+                    "[optimize][F_xy PROXY] the served model exposes NO "
+                    "`predict_fxy` head: candidates are ranked on the INTERIM "
+                    f"proxy F_xy ~ {acq.FXY_PROXY_SLOPE:g}*F_r "
+                    f"{acq.FXY_PROXY_INTERCEPT:+g} with an inflated sigma "
+                    "(design §1.2). Every wave records fxy_source='proxy'. This "
+                    "is an F_r-surrogate search with F_xy MEASURED after the "
+                    "fact — it is NOT 'F_xy was optimized' (design §3.6)."
+                )
+            elif acq.fxy_sigma_barred(self.model):
+                # A head whose MEAN promoted but whose WIDTH did not (G4).  The
+                # readout must not let "fxy_source='head'" be read as covering the
+                # UCB too — the UCB half is still the interim proxy convention.
+                self._log(
+                    "[optimize][F_xy SIGMA BARRED] the served checkpoint has a "
+                    "`predict_fxy` head and its MEAN ranks the candidates "
+                    "(fxy_source='head'), but the checkpoint stamps "
+                    "fxy_head.serve_sigma='barred': its own 68% coverage failed "
+                    "the registered [0.55, 0.80] gate (over-wide). F_xy_UCB "
+                    f"therefore uses the INTERIM proxy sigma (resid_sd "
+                    f"{acq.FXY_PROXY_RESID_SD:g} x K {acq.FXY_PROXY_SIGMA_K:g}), "
+                    "not the head's, and no f_xy conformal bound is served."
+                )
         elif self.objective == "min_fuel_cost":
             self.min_fuel_cost_spec = acq.MinFuelCostSpec(
                 lam_fr=float(getattr(self.acq, "fuelcost_lambda_fr", 20.0)),
@@ -552,6 +895,8 @@ class CampaignDriver:
                 f_q_limit=float(self.acq.f_q_limit),
                 ao_abs_limit=float(self.acq.ao_abs_limit),
                 pin_bu_limit=float(getattr(self.acq, "flatpower_pin_bu_limit", 80.0)),
+                fxy_limit=_opt_float(
+                    getattr(self.acq, "flatpower_fxy_limit", 0.0)),
                 rule_penalty_weights=self._rule_penalty_weights(),
             )
             # program §1.3: the objective is DEFINED on the harvested map columns.
@@ -568,6 +913,21 @@ class CampaignDriver:
             cal = self.map_calibration.describe(self.flat_cell_key)
             gate_note = ("bias-corrected per cell" if fr_bias is not None
                          else "HELD — no map-head bias correction available")
+            fxy_gate_val = self.flat_power_spec.fxy_gate
+            if fxy_gate_val is None:
+                self._log("[optimize] flat_power F_xy safety gate OFF "
+                          "(flatpower_fxy_limit unset/0)")
+            elif acq.has_fxy_head(self.model, self.ctx):
+                self._log(f"[optimize] flat_power F_xy SAFETY GATE at "
+                          f"{fxy_gate_val:.3f} on the predict_fxy head")
+            else:
+                self._log(
+                    f"[optimize] flat_power F_xy safety gate {fxy_gate_val:.3f} is "
+                    "INERT in the acquisition (the served model has no predict_fxy "
+                    "head, and the interim F_r proxy would re-impose an F_r screen "
+                    "at ~1.53 — program §10). It STILL applies to every verified "
+                    "row's MEASURED f_xy, so rows over it are reported infeasible."
+                )
             self._log(
                 f"[optimize] flat_power objective = -(node_peak/{peak_scale:.4f} "
                 f"+ {self.flat_w_cov} * map_cov/{cov_scale:.4f}) | cell "
@@ -635,11 +995,26 @@ class CampaignDriver:
         self.campaign_rows: list[dict[str, Any]] = []
         self.control_rows: list[dict[str, Any]] = []
         self.wave_reports: list[WaveReport] = []
-        self.prev_top: list[tuple[str | None, Pattern]] = []
+        #: Previous wave's top exploit-ranked pool candidates, kept as whole
+        #: Candidates (not (id, Pattern) pairs) so their lineage anchor is
+        #: resolved at USE time -- by then this wave's rows are in the ledger, so
+        #: a top candidate that actually got verified anchors on itself instead of
+        #: on its grandparent.  See :func:`~.verify.lineage_anchor`.
+        self.prev_top: list[Candidate] = []
         self.reward_model: Any = None
         self.trust_region = acq.TrustRegion.from_store(
             self.main_store_dir, self.search.trust_region, self.ctx
         )
+        #: OOD policy + conformal chance constraint (review §6.5 / §8.5).  Inert
+        #: at the defaults (``ood_policy = "warn"``, ``conformal_gate = false``).
+        self.safety_shield = acq.SafetyShield.from_config(self.acq)
+        #: ``{record_id: {"ood_flag": bool|None, "conformal_unfit_axes": [...]}}``
+        #: for the candidates THIS session verified — the delivery dossier's
+        #: uncertainty fields.  Rows carried over by a resume are absent from the
+        #: map and report ``None`` (= "not evaluated"), never a clean ``False``.
+        self._row_safety: dict[str, dict[str, Any]] = {}
+        #: Last wave's :func:`acquisition.apply_safety_shield` accounting.
+        self._shield_report: dict[str, Any] = {}
 
     # -- construction helpers ---------------------------------------------- #
     def _resolve(self, path_str: str | Path) -> Path:
@@ -1184,6 +1559,55 @@ class CampaignDriver:
         rows.sort(key=lambda r: str(r["record_id"]))
         return rows[: self.acq.holdout_size]
 
+    # -- f_xy serve-sigma mode (defect D3) ---------------------------------- #
+    def _fxy_sigma_mode(self) -> str:
+        """``"barred"`` / ``"head"`` — which f_xy SIGMA the served model gives out.
+
+        The G4 bar is a property of the CHECKPOINT (``ensemble.json`` ->
+        ``fxy_head.serve_sigma``), so it moves whenever the served weights are
+        replaced — construction, a resume that reloads a persisted champion, a
+        wave champion swap.  A plain attribute read, never a model call, so it is
+        free to take at every one of those moments.
+        """
+        return ("barred" if acq.fxy_sigma_barred(self.model) else "head")
+
+    def _assert_fxy_sigma_mode(self, context: str) -> None:
+        """Log the sigma mode ACTUALLY in effect and refuse a silent un-barring.
+
+        Defect D3 (``minfxy_T6T4_f121_r1`` §9): ``_save_champion`` wrote per-wave
+        checkpoints without ``ensemble.json``, so a ``--resume`` reloading one
+        served an `s1j` descendant whose bar had evaporated — the last 12 calls
+        ranked on the head's own over-wide sigma, silently, under a pre-registered
+        STAMP that said otherwise.  The checkpoint now carries the block
+        (:meth:`PosValCnnBackend._save_ensemble_meta`); this is the assertion that
+        the carry actually worked, because a bar that fails quietly is the whole
+        defect.  Loosening (barred -> head) ABORTS; the harmless direction
+        (head -> barred, a strictly narrower UCB) is reported, not fatal.
+        """
+        mode = self._fxy_sigma_mode()
+        launch = getattr(self, "_fxy_sigma_mode_launch", mode)
+        self._log(
+            f"[optimize][F_xy SIGMA] {context}: serving mode={mode!r} "
+            f"(launch={launch!r}) from champion {self.champion_ckpt}"
+        )
+        if launch == "barred" and mode != "barred":
+            raise FxySigmaBarLost(
+                f"[{context}] the deck launched on a champion stamping "
+                f"fxy_head.serve_sigma='barred' (G4), but the checkpoint now "
+                f"served ({self.champion_ckpt}) reports mode={mode!r}: the head's "
+                "own sigma would be served un-barred and every F_xy UCB would be "
+                "inflated against the registered convention. This is defect D3 of "
+                "data/reports/minfxy_T6T4_f121_r1_results_20260830.md: the "
+                "checkpoint was written without its ensemble.json fxy_head block. "
+                "Re-save it from the source champion (or point model_dir at the "
+                "source) rather than resuming un-barred."
+            )
+        if launch != "barred" and mode == "barred":
+            self._log(
+                "[optimize][F_xy SIGMA] the resumed checkpoint asserts a bar the "
+                "launch champion did not; the narrower (proxy) width is served."
+            )
+
     # -- resume ------------------------------------------------------------ #
     def _load_state(self) -> bool:
         if not (self.resume and self.state_path.exists()):
@@ -1245,6 +1669,9 @@ class CampaignDriver:
                 self._log(f"[optimize][WARNING] champion reload FAILED -> "
                           f"{self.champion_ckpt}: {type(exc).__name__}: {exc}; "
                           f"resuming on the construction-time model")
+        # State the sigma mode the resumed run is ACTUALLY serving, and refuse a
+        # bar that the reload dropped (defect D3).
+        self._assert_fxy_sigma_mode("resume")
         return True
 
     def _reconcile_flat_scale(self, stored: Any) -> None:
@@ -1385,11 +1812,28 @@ class CampaignDriver:
         )
 
     def _is_feasible(self, row: dict[str, Any]) -> bool:
-        """Constraint feasibility of a verified row (:func:`is_feasible`)."""
+        """SEARCH feasibility of a verified row (:func:`is_feasible_search`).
+
+        Every search-side consumer (elites, best-tracking, ``n_feasible``, the
+        outer weights, the wave log) goes through here.  The DELIVERY verdict is
+        :meth:`_is_deliverable` and is deliberately a different question.
+        """
 
         if not row.get("converged"):
             return False
-        return is_feasible(row, self.feasibility_limits())
+        return is_feasible_search(row, self.feasibility_limits())
+
+    def _is_deliverable(self, row: dict[str, Any]) -> bool:
+        """DELIVERY verdict of a verified row (:func:`is_deliverable`).
+
+        Strictly narrower than :meth:`_is_feasible`: every gated licensing axis
+        must be MEASURED and inside its limit, so an unmeasured ``f_xy`` (or pin
+        burnup) is UNKNOWN, not satisfied (review 2026-08-29 §6.4 / P0-03).
+        """
+
+        if not row.get("converged"):
+            return False
+        return is_deliverable(row, self.feasibility_limits())
 
     def _fuel_charge(self, row: dict[str, Any]) -> float | None:
         """Fresh fuel-economics metric FE of a verified row (min_fuel_cost).
@@ -1499,6 +1943,16 @@ class CampaignDriver:
             if f_r is None:
                 return float("-inf")
             return -float(f_r) * 1.0e6 + float(cyclen)
+        if self.objective == "min_fxy":
+            # The SAME strict lexicographic encoding as min_fr_max_cycle with F_xy
+            # in F_r's place: (F_xy asc, cyclen desc).  A converged row with NO
+            # MEASURED f_xy is NOT "worse" — it is UNSCORABLE on this objective's
+            # axis, exactly as a flat_power row with no map is (§1.3), so it
+            # returns -inf and best-tracking simply cannot see it.
+            f_xy = row.get("f_xy")
+            if _is_missing(f_xy):
+                return float("-inf")
+            return -float(f_xy) * 1.0e6 + float(cyclen)
         if self.objective == "min_fuel_cost":
             # minimize FE (primary) with F_r the subordinate tie-break — the exact
             # exploit scalar (−FE − λ_Fr·F_r) so verified best-tracking agrees with
@@ -1518,7 +1972,7 @@ class CampaignDriver:
         # max_cycle_min_fr / min_fr_max_cycle have no target window: any
         # constraint-feasible label is a usable result (drives the early-stop
         # "have a keeper" condition; for min_fr, feasible == F_r<=1.55 too).
-        if self.objective in ("max_cycle_min_fr", "min_fr_max_cycle",
+        if self.objective in ("max_cycle_min_fr", "min_fr_max_cycle", "min_fxy",
                               "min_fuel_cost", "fr_boundary", "flat_power"):
             return True
         cyclen = row.get("cyclen")
@@ -1610,13 +2064,56 @@ class CampaignDriver:
         self._render_report(result)
         return result
 
+    def _prev_top_seeds(
+        self, claimed: set[str]
+    ) -> list[tuple[str | None, Pattern]]:
+        """``self.prev_top`` as ``(lineage anchor, Pattern)`` build_pool seeds.
+
+        Each carried-forward candidate is resolved to the nearest ancestor that is
+        a REAL store row (:func:`~.verify.lineage_anchor`); by now the ledger holds
+        last wave's verified rows, so a top candidate that actually reached MASTER
+        anchors on itself rather than on its parent.
+
+        ``claimed`` is the set of parent ids the earlier seed lists (near-miss,
+        store elites) already occupy.  ``build_pool`` deduplicates its parent set
+        by that id -- a rule written when the id WAS board identity -- so once
+        several distinct boards legitimately share one anchor, passing the anchor
+        on each would make build_pool silently drop all but the first and shrink
+        the elite arm.  The duplicates therefore travel with ``None``: they stay
+        parents exactly as they did before (``None`` is never deduplicated), and
+        the lineage is recorded on the one seed that can carry it unambiguously.
+        Omitting a true edge costs the corpus one step; inventing a phantom one
+        cost it every step, which is the defect this replaces.
+        """
+
+        seeds: list[tuple[str | None, Pattern]] = []
+        seen = set(claimed)
+        for cand in self.prev_top:
+            rid = lineage_anchor(cand, self.ledger_ids)
+            if rid is not None and rid in seen:
+                rid = None
+            elif rid is not None:
+                seen.add(rid)
+            seeds.append((rid, cand.pattern))
+        return seeds
+
     def _run_wave(self, size: int, *, reserve: bool) -> WaveReport:
         # 1. pool
+        store_elites = self._store_elites()
+        near_miss = self._near_miss_parents()
+        claimed = {rid for rid, _ in (*near_miss, *store_elites) if rid is not None}
+        # What the policy prior actually did this wave (mode / version / fallback,
+        # plus shadow scores under shadow_v2).  Filled by build_pool and written
+        # into selection.json, so a readout can never mistake a WARNING fallback
+        # for a policy-on wave (external review section 6.12).
+        self._pool_meta: dict[str, Any] = {}
         pool = build_pool(
-            self.ctx, self.model, self._store_elites(), self.ledger_ids,
+            self.ctx, self.model, store_elites, self.ledger_ids,
             self.rng, self.cfg, wave_index=self.wave_index,
-            prev_top=self.prev_top, near_miss_parents=self._near_miss_parents(),
+            prev_top=self._prev_top_seeds(claimed),
+            near_miss_parents=near_miss,
             size=self.pool_size,
+            meta=self._pool_meta,
         )
         # 2. score + gate.  ``have_feasible`` selects the τ schedule (feasibility-
         # first until a verified constraint-feasible label exists); it also selects
@@ -1651,6 +2148,21 @@ class CampaignDriver:
                 self.trust_region, self.local_search_cfg, self.rng, self.ledger_ids,
                 tie_epsilon=tie_epsilon,
                 score_fn=lambda nb: acq.score_pool_min_fr(
+                    self.model, self.ctx, nb, spec, self.trust_region,
+                    tie_epsilon=tie_epsilon,
+                ),
+            )
+        elif self.objective == "min_fxy":
+            spec = self.min_fxy_spec
+            scored = acq.score_pool_min_fxy(
+                self.model, self.ctx, pool, spec, self.trust_region,
+                tie_epsilon=tie_epsilon,
+            )
+            scored = acq.local_search(
+                self.model, self.ctx, scored, None, None,
+                self.trust_region, self.local_search_cfg, self.rng, self.ledger_ids,
+                tie_epsilon=tie_epsilon,
+                score_fn=lambda nb: acq.score_pool_min_fxy(
                     self.model, self.ctx, nb, spec, self.trust_region,
                     tie_epsilon=tie_epsilon,
                 ),
@@ -1718,11 +2230,36 @@ class CampaignDriver:
                 incumbent_distance=incumbent, have_feasible=have_feasible,
                 tie_epsilon=tie_epsilon,
             )
+        # 3b. SAFETY SHIELD (review §6.5 P0-04 / §8.5).  Runs on the FINISHED pool
+        # — after local search, before the elite carry-over and the wave
+        # composition — so an escalated candidate loses its exploit tier in BOTH
+        # places at once and a rejected one is gone from both.  Inert (and skipped
+        # entirely) at the shipped defaults.
+        self._shield_report = {}
+        if self.safety_shield.active:
+            scored, self._shield_report = acq.apply_safety_shield(
+                self.model, self.ctx, scored, self.safety_shield,
+                self.feasibility_limits(),
+            )
+            r = self._shield_report
+            if r.get("ood_rejected") or r.get("conformal_rejected") or r.get("ood_escalated"):
+                self._log(
+                    f"[optimize][shield] wave {self.wave_index}: "
+                    f"ood({r['ood_policy']}) flagged={r['ood_flagged']} "
+                    f"escalated={r['ood_escalated']} rejected={r['ood_rejected']}; "
+                    f"conformal rejected={r['conformal_rejected']} "
+                    f"{r.get('conformal_rejected_by_axis') or ''}; "
+                    f"pool {r['n_candidates']} -> {r['n_remaining']}")
+
         # keep the top exploit-ranked patterns for the next wave's elite parents
         # (ranking on acq would seed next wave from high-σ OOD candidates).
+        # The CANDIDATES are kept, not their record_ids: most of them are never
+        # verified, so their ids name no store row and stamping one on a child
+        # minted a dangling parent_record_id.  _run_wave resolves each to a real
+        # lineage anchor when it consumes them next wave.
         top_order = np.argsort(-scored.rank)[: self.search.elite_top_k]
         self.prev_top = [
-            (scored.candidates[int(i)].record_id, scored.candidates[int(i)].pattern)
+            scored.candidates[int(i)]
             for i in top_order
             if np.isfinite(scored.exploit[int(i)])
         ]
@@ -1750,6 +2287,18 @@ class CampaignDriver:
                 "parent_record_id": cand.parent_record_id, "record_id": cand.record_id,
             }
             entries.append((WaveEntry(cand.pattern, self.ctx.case_key, resolved, meta), wslot))
+        # DELIVERY dossier uncertainty fields (review §8.5), evaluated for the
+        # SELECTED candidates in EVERY mode — including the default report-only
+        # one.  The shield decides what the search DOES about OOD/conformal; the
+        # dossier must state it either way, so a hand-off can never present an
+        # unscreened row as a clean one.  Cheap: one guard probe + one interval
+        # call over at most ``wave_size`` patterns.
+        sel_flags, sel_unfit = self._selected_safety(
+            [scored.candidates[w.index].pattern for _, w in entries])
+        #: the guard verdict per SELECTED slot, in ``entries`` order — read back by
+        #: :meth:`_write_wave_artifacts` so ``selection.json`` and the delivery
+        #: dossier can never disagree about the same board.
+        self._sel_flags: list[bool | None] = list(sel_flags)
         outcomes = self.verifier.evaluate_wave([e for e, _ in entries])
 
         # 6. store rows + ledger + archive
@@ -1761,7 +2310,8 @@ class CampaignDriver:
         # staging otherwise surface only as conv=0, which reads as "the search is
         # hard" instead of "nothing ran" (ECC audit 2026-08-12).
         wave_failures: list[str] = []
-        for (entry, wslot), outcome in zip(entries, outcomes, strict=True):
+        for _i, ((entry, wslot), outcome) in enumerate(
+                zip(entries, outcomes, strict=True)):
             cand = scored.candidates[wslot.index]
             record = outcome_to_record(
                 outcome, dataset="P", library_id=self.library_id,
@@ -1770,6 +2320,10 @@ class CampaignDriver:
                 e_core=self.ctx.e_core, e_split=None, deck_knobs=PRODUCE_DECK_KNOBS,
             )
             records.append(record)
+            self._row_safety[str(record.record_id)] = {
+                "ood_flag": sel_flags[_i],
+                "conformal_unfit_axes": list(sel_unfit[_i]),
+            }
             if getattr(outcome, "maps", None) is not None:
                 wave_maps[record.record_id] = outcome.maps
             # High-res siblings under suffixed keys (legacy (4,9,9) key untouched).
@@ -1824,7 +2378,7 @@ class CampaignDriver:
             except (PermissionError, OSError) as exc:
                 self.maps_skipped_waves += 1
                 self.maps_skipped_records += len(wave_maps)
-                print(f"[optimize] WARNING maps write failed ({type(exc).__name__}); "
+                safe_print(f"[optimize] WARNING maps write failed ({type(exc).__name__}); "
                       f"SKIPPED {len(wave_maps)} map(s) this wave — labels unaffected. "
                       f"cumulative: {self.maps_skipped_records} map(s) in "
                       f"{self.maps_skipped_waves} wave(s)")
@@ -1906,14 +2460,76 @@ class CampaignDriver:
             best_cyclen=self.best["cyclen"] if self.best else None,
             gate_mode=gate.mode, gate_accepted=gate.accepted, tau=tau,
             map_harvest=harvest, errors=errors,
+            ood_flagged=int(self._shield_report.get("ood_flagged", 0)),
+            ood_escalated=int(self._shield_report.get("ood_escalated", 0)),
+            ood_rejected=int(self._shield_report.get("ood_rejected", 0)),
+            conformal_rejected=int(self._shield_report.get("conformal_rejected", 0)),
         )
+
+    # -- safety shield / delivery uncertainty fields ------------------------ #
+    def _selected_safety(
+        self, patterns: Sequence[Pattern]
+    ) -> tuple[list[bool | None], list[list[str]]]:
+        """``(ood_flags, conformal_unfit_axes)`` for the wave's SELECTED patterns.
+
+        ``ood_flags[i]`` is ``None`` when the backend exposes NO feature-OOD guard
+        (there is nothing to report, which is not the same as a clean verdict) and
+        a bool otherwise.  ``conformal_unfit_axes[i]`` names the GATED licensing
+        axes for which this candidate has no finite conformal interval — the
+        review's "calibration cell unsupported" state (§8.5).  A champion with no
+        ``conformal.json`` therefore lists every gated axis, which is the honest
+        report, not a defect.
+
+        Best-effort by construction: this feeds a dossier, so any failure degrades
+        to "unknown" rather than aborting a verified wave.
+        """
+        patterns = list(patterns)
+        n = len(patterns)
+        flags: list[bool | None] = [None] * n
+        unfit: list[list[str]] = [[] for _ in range(n)]
+        if n == 0:
+            return flags, unfit
+        try:
+            raw, guard_state, _errors = acq.ood_flags(self.model, patterns)
+            if guard_state != "absent":
+                flags = [bool(v) for v in raw]
+        except Exception:  # noqa: BLE001 — a dossier field never fails a wave
+            pass
+        try:
+            limits = self.feasibility_limits()
+            axes = acq.conformal_gate_axes(limits)
+            upper = acq.conformal_upper(
+                self.model, self.ctx, patterns,
+                alpha=float(getattr(self.acq, "conformal_alpha", 0.10)))
+            for i in range(n):
+                for key, col in axes:
+                    bound = (float("nan") if upper is None or upper.shape[0] <= i
+                             else float(upper[i, col]))
+                    if not math.isfinite(bound):
+                        unfit[i].append(key)
+        except Exception:  # noqa: BLE001
+            pass
+        return flags, unfit
+
+    def _row_safety_fields(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """The dossier's OOD / conformal fields for one verified row.
+
+        ``{"ood_flag": bool|None, "conformal_unfit_axes": [...]|None}`` — ``None``
+        means NOT EVALUATED (a row carried over by a resume), which the review's
+        §8.5 rule treats as a state needing more computation, never as a pass.
+        """
+        entry = self._row_safety.get(str(row.get("record_id")))
+        if entry is None:
+            return {"ood_flag": None, "conformal_unfit_axes": None}
+        return {"ood_flag": entry.get("ood_flag"),
+                "conformal_unfit_axes": list(entry.get("conformal_unfit_axes") or [])}
 
     # -- best / archive / helpers ------------------------------------------ #
     def _best_dict(self, row: dict[str, Any], obj: float) -> dict[str, Any]:
         distance = (
             None if self.objective in
-            ("max_cycle_min_fr", "min_fr_max_cycle", "min_fuel_cost", "fr_boundary",
-             "flat_power")
+            ("max_cycle_min_fr", "min_fr_max_cycle", "min_fxy", "min_fuel_cost",
+             "fr_boundary", "flat_power")
             else abs(float(row["cyclen"]) - self.acq.cycle_target_efpd)
         )
         # Margin to the F_r limit THIS MODE actually gates at (>=0 feasible, <0 the
@@ -1942,6 +2558,18 @@ class CampaignDriver:
         # so the outer cell-race can compare cells on the verified FE of their best.
         fe = self._fuel_charge(row) if self.objective == "min_fuel_cost" else None
         peak, cov = self._flat_columns(row)
+        # MEASURED F_xy (MASTER FXYP) and its headroom.  ``f_xy_limit_applied`` is
+        # the gate THIS mode judged at (None where F_xy is a reported column only),
+        # while ``compliance_margin_fxy`` is always against the LICENSING 1.65 —
+        # the same two-number split ``f_r_margin_to_limit`` / ``compliance_margin``
+        # already draws for F_r.
+        f_xy = row.get("f_xy")
+        fxy_gate = self.feasibility_limits().get("f_xy")
+        fxy_margin = (None if (_is_missing(f_xy) or fxy_gate is None)
+                      else round(float(fxy_gate) - float(f_xy), 4))
+        cfxy = None if _is_missing(f_xy) else compliance_margin_fxy(f_xy)
+        if cfxy is not None:
+            cfxy = round(cfxy, 4)
         return {
             "record_id": row.get("record_id"),
             "objective": obj,
@@ -1959,8 +2587,28 @@ class CampaignDriver:
             "cbc_max": row.get("cbc_max"), "f_q": row.get("f_q"),
             "ao_abs": row.get("ao_abs"), "n_cycles": row.get("n_cycles"),
             "max_pin_burnup": row.get("max_pin_burnup"),
+            "f_xy": (None if _is_missing(f_xy) else float(f_xy)),
+            "f_xya": (None if _is_missing(row.get("f_xya"))
+                      else float(row.get("f_xya"))),
+            "f_xy_margin_to_limit": fxy_margin,
+            "f_xy_limit_applied": (None if fxy_gate is None
+                                   else round(float(fxy_gate), 4)),
+            "compliance_margin_fxy": cfxy,
+            "compliance_limit_fxy": LICENSING_FXY_LIMIT,
             "pattern": row.get("pattern"), "wave": self.wave_index,
             "feasible": self._is_feasible(row),
+            # the DELIVERY verdict alongside the SEARCH one, never instead of it
+            # (review §6.4): a row can be search-feasible and undeliverable, and
+            # ``unknown_axes`` names exactly which measurement is missing.
+            "deliverable": self._is_deliverable(row),
+            "unknown_axes": list(unknown_axes(row, self.feasibility_limits())),
+            # UNCERTAINTY provenance (review §8.5): the OOD verdict on this row's
+            # fuel population and the gated axes whose conformal calibration does
+            # not cover it.  Reported ALONGSIDE ``deliverable`` and deliberately
+            # NOT folded into it: the boolean stays exactly the measured-and-inside
+            # -limits predicate, while these two fields make an OOD-flagged or
+            # uncalibrated candidate impossible to read as a clean deliverable.
+            **self._row_safety_fields(row),
         }
 
     def _maybe_update_overall(self, row: dict[str, Any]) -> None:
@@ -1983,7 +2631,7 @@ class CampaignDriver:
     def _maybe_update_best(self, row: dict[str, Any], cand: Any) -> None:
         obj = self._campaign_objective(row)
         if self.best is None or obj > self.best["objective"]:
-            if self.objective in ("fr_boundary", "flat_power"):
+            if self.objective in ("fr_boundary", "flat_power", "min_fxy"):
                 # Route through _best_dict so the outer race reads only keys that
                 # EXIST (max_pin_burnup, feasible, f_r_margin_to_limit,
                 # compliance_margin, node_peak/map_cov, distance=None) and a
@@ -2004,6 +2652,11 @@ class CampaignDriver:
                 "n_cycles": row.get("n_cycles"),
                 "pattern": row.get("pattern"),
                 "wave": self.wave_index,
+                # UNCERTAINTY provenance (review §8.5) — the same two fields
+                # ``_best_dict`` carries, so EVERY objective's ``best`` states the
+                # OOD verdict and the uncalibrated axes, not just the modes that
+                # route through the richer dossier.
+                **self._row_safety_fields(row),
             }
 
     def _wave_improved(self, prior_best_obj: float | None) -> bool:
@@ -2040,12 +2693,18 @@ class CampaignDriver:
         """Can this wave's outcome be judged as better/worse at all? (§1.3)
 
         For ``flat_power`` the objective is defined on the harvested map columns,
-        so a wave that converged but harvested NO map produced no comparable
-        value.  Counting that as "no improvement" would walk the campaign into the
+        and for ``min_fxy`` on the harvested MAS_OUT ``f_xy`` column, so a wave
+        that converged but harvested NEITHER produced no comparable value.
+        Counting that as "no improvement" would walk the campaign into the
         early-stop path on a HARVEST failure — the label pipeline breaking would
         look exactly like the search converging.  Every other objective is always
         judgeable (its inputs are unconditional record columns).
         """
+        if self.objective == "min_fxy":
+            conv = [r for r in wave_rows if r.get("converged")]
+            if not conv:
+                return True                # nothing converged: a real non-result
+            return any(not _is_missing(r.get("f_xy")) for r in conv)
         if self.objective != "flat_power":
             return True
         conv = [r for r in wave_rows if r.get("converged")]
@@ -2086,11 +2745,40 @@ class CampaignDriver:
                       f"{type(exc).__name__}: {exc}; keeping stale pointer "
                       f"{self.champion_ckpt}")
             return Path(self.champion_ckpt)
+        # Defect D3: the bar has to survive the WRITE, not only the read.  A wave
+        # checkpoint is exactly what a later ``--resume`` reloads, so a missing
+        # ``ensemble.json`` fxy_head block here IS the silent un-barring — caught
+        # at the moment it is created, naming the wave, instead of 12 calls later
+        # in a results readout.
+        if self._fxy_sigma_mode_launch == "barred":
+            declared = checkpoint_fxy_serve_sigma(out)
+            if declared != "barred":
+                raise FxySigmaBarLost(
+                    f"wave {self.wave_index} champion {out} was written WITHOUT "
+                    f"the f_xy serve-sigma bar (declared={declared!r}) while the "
+                    "launch champion stamps fxy_head.serve_sigma='barred' (G4). "
+                    "A --resume would reload it and serve the head's own "
+                    "over-wide sigma. See defect D3, "
+                    "data/reports/minfxy_T6T4_f121_r1_results_20260830.md §9."
+                )
+            self._log(f"[optimize][F_xy SIGMA] wave {self.wave_index} checkpoint "
+                      f"{out.name} carries serve_sigma='barred'")
         return out
 
     def _write_wave_artifacts(self, wave, entries, outcomes, scored, gate, tau) -> None:
         wdir = self.run_dir / "waves" / f"wave_{wave:02d}"
         wdir.mkdir(parents=True, exist_ok=True)
+        sel_flags = list(getattr(self, "_sel_flags", []))
+        fxy_src = str(getattr(scored, "fxy_source", "") or "")
+
+        def _num(arr, i):
+            """A JSON-safe scalar from a pool column (``None`` for NaN/absent)."""
+            try:
+                v = float(np.asarray(arr, dtype=float)[i])
+            except (IndexError, TypeError, ValueError):
+                return None
+            return None if not np.isfinite(v) else round(v, 6)
+
         selection = [
             {
                 "slot": w.slot, "origin": scored.candidates[w.index].origin,
@@ -2102,10 +2790,39 @@ class CampaignDriver:
                 "margin": round(float(scored.margin[w.index]), 4),
                 "raw_epi": round(float(scored.raw_epi[w.index]), 4),
                 "pred_mean": [round(float(x), 4) for x in scored.mean[w.index]],
+                # The OBJECTIVE-AXIS prediction for min_fxy, per candidate, as
+                # predict_fxy SERVED it: the mean the exploit scalar is built from
+                # and the width its UCB is built from -- under the G4 bar the
+                # PROXY width, not the head's, which is exactly the distinction a
+                # readout must be able to make without re-loading the wave's
+                # checkpoint (defect D-LOG, minfxy_T6T4_f121_r1 section 9).
+                # ``None`` (not 0) for every mode that does not predict F_xy.
+                "fxy_mean": _num(scored.fxy_mean, w.index),
+                "fxy_sigma": _num(scored.fxy_sigma, w.index),
+                "fxy_source": (fxy_src or None),
+                # SAFETY SHIELD provenance (review §6.5): the serve-time OOD
+                # verdict for this board, read from the SAME evaluation the
+                # delivery dossier uses so the two can never disagree.  ``None``
+                # means the backend exposes no guard — not "clean".  Reported in
+                # every mode, including the report-only default; what the POLICY
+                # then did about it is the wave's ``shield`` block below.
+                "ood_flag": (sel_flags[i] if i < len(sel_flags) else None),
             }
-            for _, w in entries
+            for i, (_, w) in enumerate(entries)
         ]
-        _atomic_json(wdir / "selection.json", {"wave": wave, "tau": tau, "selection": selection})
+        payload: dict[str, Any] = {"wave": wave, "tau": tau, "selection": selection}
+        # Per-wave gate accounting (review §6.5 item 5).  Absent when the shield is
+        # inert, so a default-deck selection.json is unchanged apart from the
+        # per-candidate ``ood_flag``.
+        if getattr(self, "_shield_report", None):
+            payload["shield"] = dict(self._shield_report)
+        # Where the F_xy numbers that ranked this wave came from — "head" (a real
+        # predict_fxy) or "proxy" (the interim F_r regression).  Absent for every
+        # mode that does not read F_xy, so old readers are unaffected.
+        if getattr(scored, "fxy_source", ""):
+            payload["fxy_source"] = str(scored.fxy_source)
+        payload.update(getattr(self, "_pool_meta", {}))
+        _atomic_json(wdir / "selection.json", payload)
         results = [
             {
                 "slot": w.slot, "record_id": scored.candidates[w.index].record_id,
@@ -2161,6 +2878,11 @@ class CampaignDriver:
         elif self.objective == "min_fr_max_cycle":
             scored = acq.score_pool_min_fr(
                 self.model, self.ctx, pool, self.min_fr_spec, self.trust_region,
+                tie_epsilon=float(self.acq.tie_epsilon),
+            )
+        elif self.objective == "min_fxy":
+            scored = acq.score_pool_min_fxy(
+                self.model, self.ctx, pool, self.min_fxy_spec, self.trust_region,
                 tie_epsilon=float(self.acq.tie_epsilon),
             )
         elif self.objective == "min_fuel_cost":
@@ -2242,25 +2964,15 @@ class CampaignDriver:
         The flattest point is deliberately NOT a delivery candidate.  Nothing here
         feeds back into the objective, the elites or the pool.
         """
-        if self.objective != "flat_power":
+        payload = build_delivery_payload(
+            self.campaign_rows,
+            objective=self.objective,
+            limits=self.feasibility_limits(),
+            cell=self.flat_cell_key,
+            safety=self._row_safety_fields,
+        )
+        if payload is None:
             return None
-        rows = [r for r in self.campaign_rows
-                if r.get("converged") and self._is_feasible(r)]
-        report = select_delivery(rows)
-        payload = {
-            "rule": "flatness-first program 2.2 (decision D2)",
-            "note": ("search objective = flatness (no F_r); this ranking is a "
-                     "downstream LICENSING filter only, and the flattest "
-                     "candidate is excluded by the band floor on purpose"),
-            "cell": self.flat_cell_key,
-            "compliance_limit": LICENSING_FR_LIMIT,
-            "next_step": "SDM / MTC / axial confirmation on the top candidates "
-                         "(outside the search loop, program 2.2 step 3)",
-            "sdm_mtc_gate": ("decision D9 — the top-K entries below are the SDM/MTC "
-                             "pre-delivery gate's targets; see the sdm_mtc block "
-                             "and sdm_mtc.json when [constraints] enables it"),
-            **report.as_dict(),
-        }
         try:
             _atomic_json(self.run_dir / "delivery.json", payload)
         except OSError:                     # a report must never fail a run
@@ -2425,10 +3137,26 @@ class CampaignDriver:
             self._log(f"[optimize][WARNING] delivery ranking failed: {exc}")
         # D9 gate runs on the delivery ranking, then folds its accounting into the
         # result BEFORE the report renders, so the report can state both budgets.
-        self._maybe_post_verify(delivery)
+        #
+        # FULLY CONTAINED (incident 2026-08-30): the gate is the LAST thing that
+        # may fail, and everything below it -- status.json, report.md and the
+        # delivery.json re-stamp -- is the run's deliverable.  An unguarded gate
+        # call let a UnicodeEncodeError raised by one of its own log lines
+        # (cp949 stdout, em-dash) propagate out of _render_report and skip every
+        # artefact of a completed 100-call campaign, while status.json already
+        # said "complete".  The gate's internals already swallow their own
+        # errors; this catches what escapes them, logging included.
+        try:
+            self._maybe_post_verify(delivery)
+        except Exception as exc:  # noqa: BLE001 -- a gate failure never sinks the artefacts
+            self._log(f"[optimize][WARNING] SDM/MTC gate aborted: "
+                      f"{type(exc).__name__}: {exc}; report + delivery still written")
         result.post_verify_master_calls = self.post_verify_calls
         result.post_verify_violators = list(self.post_verify_violators)
-        self._write_status(result.status)
+        try:
+            self._write_status(result.status)
+        except OSError as exc:  # noqa: BLE001 -- one artefact never blocks the next
+            self._log(f"[optimize][WARNING] status.json write failed: {exc}")
         try:
             from ..report.report import write_campaign_report
 
@@ -2529,7 +3257,11 @@ class UserCriteriaDriver:
         self.evaluator_factory = evaluator_factory
         self.dry_run = bool(dry_run)
         self.progress = progress
-        self._log = log or (lambda m: print(m))
+        # Encoding-safe: a redirected Windows stdout is cp949, and a single
+        # em-dash in a log line used to raise UnicodeEncodeError and sink a
+        # finished 100-call run (incident 2026-08-30).  Wraps a supplied
+        # ``log`` too -- that stream belongs to the caller, not to lpopt.
+        self._log = safe_logger(log)
         self.criteria = cfg.criteria
         self.search = cfg.search
 
@@ -3517,8 +4249,12 @@ class UserCriteriaDriver:
                     if rid in seen:
                         continue
                     seen.add(rid)
+                    # Surrogate-only chain: anchor on the nearest ancestor that is
+                    # a real store row, never on the unverified ``current``.
                     neighbours.append(
-                        Candidate(pattern, child, "local", current.record_id, rid, ctx.e_core)
+                        Candidate(pattern, child, "local",
+                                  lineage_anchor(current, self.ledger_ids),
+                                  rid, ctx.e_core)
                     )
                 if not neighbours:
                     break
@@ -4100,6 +4836,6 @@ def run_campaign(
 
 
 __all__ = [
-    "CampaignDriver", "CampaignResult", "UserCriteriaDriver", "WaveReport",
-    "run_campaign",
+    "CampaignDriver", "CampaignResult", "FxySigmaBarLost", "UserCriteriaDriver",
+    "WaveReport", "checkpoint_fxy_serve_sigma", "run_campaign",
 ]

@@ -24,12 +24,21 @@ from lpopt.report.report import (
 # fixtures
 # --------------------------------------------------------------------------- #
 def _record(rid: str, *, f_r: float, node_peak: float | None = None,
-            cyclen: float = 625.0) -> dict:
+            cyclen: float = 625.0, max_pin_burnup: float | None = 68.0,
+            f_xy: float | None = 1.60) -> dict:
+    """A converged verified row.
+
+    ``max_pin_burnup`` / ``f_xy`` are MEASURED by default (2026-08-29): the
+    delivered top-k table is now the DELIVERABLE set, which refuses any row whose
+    gated licensing axes were never measured (review §6.4 three-state rule).  A
+    test that means "this axis was not measured" passes ``None`` explicitly.
+    """
     return {
         "record_id": rid, "converged": True, "valid": True,
         "f_r": f_r, "cbc_max": 1400.0, "f_q": 2.30, "ao_abs": 0.20,
         "cyclen": cyclen, "n_cycles": 11.0, "pattern": "F:K1:0|F:K2:0",
         "feed": 121, "node_peak": node_peak, "map_cov": 0.30,
+        "max_pin_burnup": max_pin_burnup, "f_xy": f_xy,
     }
 
 
@@ -287,9 +296,13 @@ def test_report_and_campaign_agree_row_by_row(tmp_path):
 def test_a_missing_pin_burnup_still_passes(tmp_path):
     """None-TOLERANT, exactly as the campaign is: MASTER adjudicates the field,
     and a strict None-reject would empty the table of every row lacking it."""
-    rec = _record("no_pin", f_r=1.62, node_peak=1.44)          # no max_pin_burnup
+    rec = _record("no_pin", f_r=1.62, node_peak=1.44, max_pin_burnup=None)
     text = _report_text(tmp_path / "nopin", [rec], "flat_power")
     assert "verified feasible LPs: **1** / 1" in text
+    # …and it is NOT deliverable: an unmeasured licensing axis is UNKNOWN, not
+    # satisfied (review §6.4).  The two verdicts are reported side by side.
+    assert "DELIVERABLE (every gated axis measured & within limit): **0**" in text
+    assert "`max_pin_burnup` 1" in text
 
 
 # --------------------------------------------------------------------------- #
@@ -520,3 +533,151 @@ def test_recorded_fr_gates_collects_every_distinct_recorded_gate():
     same = {"best": {"f_r_limit_applied": 1.62},
             "best_overall": {"f_r_limit_applied": 1.62}}
     assert _recorded_fr_gates(same, "flat_power") == [1.62]
+
+
+# --------------------------------------------------------------------------- #
+# search vs delivery: the THREE-STATE feasibility split (review 2026-08-29 6.4)
+# --------------------------------------------------------------------------- #
+def test_is_feasible_is_the_search_predicate_and_is_deliverable_is_not():
+    """Two predicates, one row: search TOLERATES an unmeasured axis, delivery
+    REFUSES it.  ``is_feasible`` stays an alias of the search one."""
+    from lpopt.config import AcquisitionConfig
+    from lpopt.search.campaign import (
+        feasibility_limits_for, is_deliverable, is_feasible, is_feasible_search,
+        unknown_axes,
+    )
+
+    assert is_feasible is is_feasible_search
+
+    limits = feasibility_limits_for(AcquisitionConfig(), "min_fxy")
+    assert limits["f_xy"] == pytest.approx(1.65)
+
+    measured = _record("m", f_r=1.50, max_pin_burnup=70.0, f_xy=1.60)
+    assert is_feasible_search(measured, limits) is True
+    assert is_deliverable(measured, limits) is True
+    assert unknown_axes(measured, limits) == ()
+
+    for axis in ("f_xy", "max_pin_burnup"):
+        row = dict(measured, **{axis: None})
+        assert is_feasible_search(row, limits) is True, axis      # search PASSES
+        assert is_deliverable(row, limits) is False, axis         # delivery REFUSES
+        assert unknown_axes(row, limits) == (axis,), axis
+        # NaN is the same fact as None (2026-07-31 contract).
+        nan_row = dict(measured, **{axis: float("nan")})
+        assert is_feasible_search(nan_row, limits) is True
+        assert is_deliverable(nan_row, limits) is False
+
+    # a MEASURED violation is not "unknown" — it is a plain FAIL on both.
+    over = dict(measured, f_xy=1.70)
+    assert is_feasible_search(over, limits) is False
+    assert is_deliverable(over, limits) is False
+    assert unknown_axes(over, limits) == ()
+
+
+def test_deliverable_pin_burnup_uses_the_licensing_80_not_the_search_78():
+    """The 2.0 GWd/tU haircut is MODEL margin on a PREDICTION; a MEASURED 79.4
+    is deliverable, so re-using the search gate as a licensing verdict would
+    reject deliverable cores."""
+    from lpopt.config import AcquisitionConfig
+    from lpopt.search.campaign import (
+        DELIVERABLE_PIN_BU_LIMIT, deliverable_limits, feasibility_limits_for,
+        is_deliverable, is_feasible_search,
+    )
+
+    assert DELIVERABLE_PIN_BU_LIMIT == pytest.approx(80.0)
+    limits = feasibility_limits_for(AcquisitionConfig(), "min_fxy")
+    assert limits["max_pin_burnup"] == pytest.approx(78.0)
+    assert deliverable_limits(limits)["max_pin_burnup"] == pytest.approx(80.0)
+
+    row = _record("p", f_r=1.50, max_pin_burnup=79.0, f_xy=1.60)
+    assert is_feasible_search(row, limits) is False      # over the 78 model gate
+    assert is_deliverable(row, limits) is True           # under the licensing 80
+
+
+def test_unknown_axes_names_the_cyclen_column_once_for_a_two_edge_band():
+    from lpopt.config import AcquisitionConfig
+    from lpopt.search.campaign import feasibility_limits_for, unknown_axes
+
+    limits = feasibility_limits_for(AcquisitionConfig(), "min_fuel_cost")
+    row = _record("c", f_r=1.50, max_pin_burnup=70.0)
+    row["cyclen"] = None
+    assert unknown_axes(row, limits) == ("cyclen",)     # not ("cyclen", "cyclen")
+
+
+def test_the_report_labels_the_search_set_and_the_deliverable_set_apart(tmp_path):
+    """A row can be SEARCH-feasible and UNDELIVERABLE; calling the search set
+    "feasible" in a delivery table is the claim the split exists to stop."""
+    rows = [_record("measured", f_r=1.50, f_xy=1.60, max_pin_burnup=70.0),
+            _record("no_pin", f_r=1.50, f_xy=1.58, max_pin_burnup=None)]
+    text = _report_text(tmp_path / "split", rows, "min_fxy")
+    assert "verified feasible LPs: **2** / 2" in text
+    assert "DELIVERABLE (every gated axis measured & within limit): **1**" in text
+    assert "UNKNOWN axes among the search-feasible rows: `max_pin_burnup` 1" in text
+    body = text.split("## Best verified loading patterns")[1]
+    # "no_pin" is the FLATTER row, so it would head a search-feasible table; the
+    # delivered table drops it because its pin burnup was never measured.
+    assert "measured" in body and "no_pin" not in body
+    assert "F_xy (margin)" in body
+
+
+def test_a_row_with_no_measured_fxy_is_unscorable_under_min_fxy(tmp_path):
+    """Under ``min_fxy`` an unmeasured F_xy is not "worst", it is UNSCORABLE —
+    the row cannot enter the ranking at all, so it never reaches either table."""
+    rows = [_record("measured", f_r=1.50, f_xy=1.60, max_pin_burnup=70.0),
+            _record("no_fxy", f_r=1.50, f_xy=None, max_pin_burnup=70.0)]
+    text = _report_text(tmp_path / "unscorable", rows, "min_fxy")
+    assert "verified feasible LPs: **1** / 2" in text
+    assert "DELIVERABLE (every gated axis measured & within limit): **1**" in text
+    assert "no_fxy" not in text.split("## Best verified loading patterns")[1]
+
+
+def test_a_deckless_min_fxy_report_applies_the_1_65_gate(tmp_path):
+    """Same class of hole as the pin-BU gate and the min_fuel_cost cyclen band:
+    a deck-less report that forgot the gate would call rows feasible at the ONE
+    axis this mode exists to optimise."""
+    from lpopt.report.report import _DEFAULT_FXY_LIMIT
+
+    assert _DEFAULT_FXY_LIMIT == pytest.approx(1.65)
+    rows = [_record("under", f_r=1.50, f_xy=1.60, max_pin_burnup=70.0),
+            _record("over", f_r=1.50, f_xy=1.70, max_pin_burnup=70.0)]
+    text = _report_text(tmp_path / "deckless", rows, "min_fxy")
+    assert "verified feasible LPs: **1** / 2" in text
+    assert "F_xy \u2264 1.65" in text
+    assert "under" in text
+
+
+def test_the_min_fxy_report_objective_is_fxy_not_cycle_distance(tmp_path):
+    """The lambda-objective check is mandatory on every frontier readout, and
+    under this mode its axis is F_xy (design 3.5.5)."""
+    from lpopt.report.report import _objective_axis_label, _report_objective
+
+    lo = _report_objective({"f_xy": 1.55, "cyclen": 560.0}, "min_fxy", 625.0)
+    hi = _report_objective({"f_xy": 1.60, "cyclen": 625.0}, "min_fxy", 625.0)
+    assert lo > hi                                  # F_xy dominates cyclen
+    # equal F_xy -> the longer cycle wins.
+    a = _report_objective({"f_xy": 1.55, "cyclen": 630.0}, "min_fxy", 625.0)
+    assert a > lo
+    # no MEASURED f_xy -> unscorable, never "worst".
+    assert _report_objective({"f_xy": None, "cyclen": 625.0}, "min_fxy", 625.0) is None
+    assert "F_xy" in _objective_axis_label("min_fxy", 625.0)
+
+
+def test_the_report_states_whether_fxy_came_from_a_head_or_the_proxy(tmp_path):
+    """A proxy run may NOT be described as having optimised F_xy (design 3.6),
+    so the distinction is in the report, not only in a log line."""
+    rows = [_record("m", f_r=1.50, f_xy=1.60, max_pin_burnup=70.0)]
+    run = _run_dir(tmp_path / "prov", rows, "min_fxy")
+    wave = run / "waves" / "wave_00"
+    wave.mkdir(parents=True, exist_ok=True)
+    (wave / "selection.json").write_text(
+        json.dumps({"wave": 0, "tau": 0.3, "selection": [], "fxy_source": "proxy"}),
+        encoding="utf-8")
+    text = build_report(run, pair="K1_K2").read_text(encoding="utf-8")
+    assert "interim PROXY" in text
+    assert "did NOT optimise a predicted F_xy" in text
+
+    (wave / "selection.json").write_text(
+        json.dumps({"wave": 0, "tau": 0.3, "selection": [], "fxy_source": "head"}),
+        encoding="utf-8")
+    text = build_report(run, pair="K1_K2").read_text(encoding="utf-8")
+    assert "dedicated **head**" in text

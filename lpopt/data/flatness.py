@@ -17,13 +17,25 @@ is not the core average::
 
     w_i       = SLOTS[i].multiplicity
     p_bar     = sum(w_i p_i) / sum(w_i)                    # == 1.0000 in practice
-    node_peak = max_i p_i                                   # == F_xy
+    node_peak = max_i p_i          # BOC assembly radial peak (assembly 2-D)
     map_cov   = sqrt(sum(w_i (p_i - p_bar)^2) / sum(w_i)) / p_bar
+
+NOT F_xy
+--------
+``node_peak`` is the **BOC assembly radial peak (assembly-level 2-D, the FRA
+family)**.  It is **NOT MASTER's FXYP (pin planar)**, which is the ``f_xy``
+record column parsed from ``MAS_OUT`` by :mod:`.fxy`.  Two different physical
+quantities: ``node_peak`` never resolves pins and is read at BOC only, while
+FXYP is a within-plane PIN maximum over every depletion step.  Measured
+corr(node_peak, f_xy) is 0.735-0.854 with residual sd 0.057-0.064 — the same
+order as the 1.65 gate itself — so ``node_peak`` may NOT be used as an F_xy
+surrogate in any gate (design 20260829 §1.1 / §3.4.4 / §3.10).  The earlier
+"== F_xy" claim in this docstring was a naming collision, corrected 2026-08-29.
 
 The weighting is not cosmetic.  Measured over ``maps.npz`` the weighted mean is
 1.0000 (0.9999-1.0001) — i.e. the harvested map is ALREADY normalized to the
-core average, so ``node_peak = nanmax`` is exactly the radial assembly peaking
-factor F_xy.  The UNweighted 69-slot mean has median 1.0233 and ranges
+core average, so ``node_peak = nanmax`` is exactly the assembly radial peaking
+factor.  The UNweighted 69-slot mean has median 1.0233 and ranges
 0.983-1.088, which means an unweighted CoV divides every record by a different,
 record-dependent denominator and cannot be reported as a physical quantity.
 
@@ -188,11 +200,14 @@ def weighted_mean(values: np.ndarray) -> np.ndarray:
 
 
 def node_peak(values: np.ndarray) -> np.ndarray:
-    """``node_peak[N] = max_i p_i`` — the radial assembly peaking factor F_xy.
+    """``node_peak[N] = max_i p_i`` — the BOC ASSEMBLY radial peaking factor.
+
+    Assembly-level 2-D (FRA family), NOT MASTER's FXYP (pin planar) — see the
+    module docstring; the pin-planar value is the ``f_xy`` column (:mod:`.fxy`).
 
     The maximum is a per-assembly extreme, so the multiplicity weights do not
-    enter it; they only fix the mean the map is normalized to (which is 1.0000,
-    hence the identity with F_xy).
+    enter it; they only fix the mean the map is normalized to (1.0000), which is
+    what makes the raw max a peaking FACTOR at all.
     """
     v, ok, _w = _masked(values)
     any_ok = ok.any(axis=1)

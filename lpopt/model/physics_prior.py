@@ -384,15 +384,131 @@ def prior_correlation(prior: CyclenPhysicsPrior, df: Any,
     }
 
 
+# --------------------------------------------------------------------------- #
+# F_xy prior: the measured F_xy ~ F_r affine (F_xy switch phase P4)
+# --------------------------------------------------------------------------- #
+#: Schema tag for the persisted ``f_xy = a*f_r + b`` fit (stamped into meta.json).
+FXY_PRIOR_SCHEMA = "fxy_fr_affine_v1"
+
+#: Minimum labelled (f_xy, f_r) train rows required to fit the prior AND to train
+#: the head at all.  Below this the affine is a fit to noise and the head has
+#: nothing to learn a residual from, so ``train`` REFUSES rather than shipping a
+#: head that looks trained.  Measured context: ~840 labels exist locally at P4
+#: with more arriving from HOST_199 / 2_LP retro-backfill.
+MIN_FXY_LABELS = 200
+
+
+@dataclass
+class FxyFrPrior:
+    """The fitted ``f_xy_prior = a * f_r + b`` affine, in PHYSICAL units.
+
+    The physics: ``F_r <= F_xy <= F_q`` holds identically (192/192 measured
+    cores), because F_r averages a pin's power axially while F_xy takes the
+    per-PLANE maximum of the same pins.  The ratio is therefore an axial
+    peak-to-average of the pin power shape, and it is stable enough
+    (``F_xy/F_r = 1.0694 +- 0.0181`` pooled) that one affine explains r = 0.95 of
+    the variance with residual sd 0.0293 — see
+    ``data/reports/fxy_switch_design_20260829.md`` §1.2 / §3.4.4.
+
+    The fit is GLOBAL (not per-cell) for the same reason the cyclen prior's
+    ``(alpha, beta)`` are: a per-cell affine fitted on labels would launder
+    per-cell label information into a model that serves unlabelled cells.  The
+    measured per-cell slope spread (1.045 .. 1.142) is exactly what the residual
+    head is left to learn.
+    """
+
+    a: float
+    b: float
+    n_fit: int = 0
+    pearson: float = float("nan")
+    resid_sd: float = float("nan")
+    split: str | None = None
+    schema: str = FXY_PRIOR_SCHEMA
+
+    def evaluate(self, f_r: np.ndarray | float) -> np.ndarray:
+        """Prior ``f_xy`` for a physical ``f_r`` array."""
+        return self.a * np.asarray(f_r, dtype=float) + self.b
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "FxyFrPrior":
+        known = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in dict(d).items() if k in known})
+
+
+def fit_fxy_prior(df: Any, *, split: str | None = None) -> FxyFrPrior:
+    """Fit ``f_xy ~ a*f_r + b`` on **train-split rows only** (leakage rule).
+
+    Same contract as :func:`fit_cyclen_prior`: the caller passes the train frame
+    and the leakage guard lives there.  Only converged rows carrying BOTH a
+    finite ``f_xy`` and a finite ``f_r`` enter the least squares — which is the
+    sparse subset (~2% of the store).  A frame with no ``f_xy`` column, or too
+    few / degenerate rows, returns ``a = 0`` with ``b`` the labelled mean, i.e.
+    the prior degenerates to a constant shift and the residual round-trip stays
+    exact; the CALLER decides whether ``n_fit`` clears :data:`MIN_FXY_LABELS`.
+    """
+    import pandas as pd
+
+    if "f_xy" not in getattr(df, "columns", ()):
+        return FxyFrPrior(a=0.0, b=0.0, n_fit=0, split=split)
+    y = pd.to_numeric(df["f_xy"], errors="coerce").to_numpy(dtype=float)
+    x = pd.to_numeric(df["f_r"], errors="coerce").to_numpy(dtype=float)
+    conv = (df["converged"].astype(bool).to_numpy()
+            if "converged" in df.columns else np.ones(len(y), dtype=bool))
+    ok = conv & np.isfinite(y) & np.isfinite(x)
+    n = int(ok.sum())
+    mean_y = float(y[ok].mean()) if n else 0.0
+    if n < 2 or float(np.ptp(x[ok])) < 1e-9:
+        return FxyFrPrior(a=0.0, b=mean_y, n_fit=n, split=split)
+    a, b = np.polyfit(x[ok], y[ok], 1)
+    resid = y[ok] - (a * x[ok] + b)
+    return FxyFrPrior(
+        a=float(a), b=float(b), n_fit=n,
+        pearson=float(np.corrcoef(x[ok], y[ok])[0, 1]),
+        resid_sd=float(resid.std()), split=split)
+
+
+def fxy_prior_z(prior: FxyFrPrior, tmean: Sequence[float], tstd: Sequence[float],
+                fxy_idx: int, ref_idx: int) -> tuple[float, float]:
+    """The z-space image ``(A, B)`` of the physical affine ``(a, b)``.
+
+    The net composes the prior in Z UNITS (that is the space its ``mu`` head
+    lives in), so substituting ``f = z*s + m`` on both sides of
+    ``f_xy = a*f_r + b`` gives
+
+        A = a * s_ref / s_fxy
+        B = (a * m_ref + b - m_fxy) / s_fxy
+
+    ``B`` is small by construction — the least-squares line passes through the
+    labelled means — but it is NOT zero, because ``m_ref``/``s_ref`` are computed
+    over all F_r-labelled rows while ``m_fxy``/``s_fxy`` see only the F_xy-labelled
+    subset.  Carrying it exactly is what keeps "residual == 0 means the prior" true.
+    """
+    s_fxy = float(tstd[fxy_idx])
+    if not math.isfinite(s_fxy) or s_fxy <= 0:
+        return 0.0, 0.0
+    a = float(prior.a)
+    A = a * float(tstd[ref_idx]) / s_fxy
+    B = (a * float(tmean[ref_idx]) + float(prior.b) - float(tmean[fxy_idx])) / s_fxy
+    return float(A), float(B)
+
+
 __all__ = [
     "PRIOR_NAME",
     "PRIOR_SCHEMA",
     "RHO_LEAK_PCM",
+    "FXY_PRIOR_SCHEMA",
+    "MIN_FXY_LABELS",
     "CyclenPhysicsPrior",
+    "FxyFrPrior",
     "assembly_rho",
     "cycle_burnup_batch",
     "cycle_burnup_estimate",
     "fit_cyclen_prior",
+    "fit_fxy_prior",
+    "fxy_prior_z",
     "prior_correlation",
     "rho_pcm",
 ]

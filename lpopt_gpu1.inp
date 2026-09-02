@@ -37,8 +37,18 @@ feed = 121
 # Position-value backend for the campaign (plan sec. 4.5). The trained ensemble
 # lives under data/models/<ts>/ (5 members + ensemble.json + calibration.json).
 backend = "posval_cnn"       # posval_cnn | sklearn_fallback (MODEL_HALT fallback)
-model_dir = "data/models/20260724_213535"   # freeze-finetune champion (honest-gate promoted 2026-07-24; cyclen frozen from 20260721_105824, F_r+node_peak heads finetuned)
-cond_schema = "v5"           # curriculum retrains train the 43ch lattice-feature schema (sum/HGC 결과값 피처)
+model_dir = "data/models/s1j"   # s1j (11th champion, cond v8, f_xy direct head; promoted 2026-08-30 per fxy_head_results_arm3_20260829.md; G4 FAIL -> f_xy sigma barred) — same champion as lpopt.inp; this deck exists to pin [remote] gpu = 1. NOTE: s1j itself was TRAINED through this deck (CUDA_VISIBLE_DEVICES=1, s1j/run.sh), which the results report §10.4 records as an unresolved deviation from lpopt.inp's standing "GPU 0 only until re-authorised" instruction.
+cond_schema = "v8"           # 62ch (= v6b 58 + v6c ADF 4) + 20 globals (= 13 + g_type_frac_1..5, g_e_type_std, g_n_fresh_types).
+                             # UNCHANGED at the s1j promotion (2026-08-30): s1j/member_*/meta.json says v8, same as s1i.
+                             # MUST track model_dir (see lpopt.inp).
+# --- hires map-path structure (arm A6) — cond_schema와 반드시 한 세트로 움직인다 ---
+map_head_mode = "multiscale"
+map_prior_residual = true
+map_spectral_weight = 0.3
+# F_xy head (F_xy 전환 P4, prereg data/reports/fxy_head_prereg_20260829.md):
+# appends `f_xy` as a 9th target on top of the 8 legacy rows; served outside the
+# frozen 7-column surrogate contract via `predict_fxy`.
+promote_fxy = true
 device = "cpu"               # local torch device for the CPU path + wave fine-tune (plan 4.7)
 # Campaign inference backend (plan 4.7).  Pick where the large-pool screen/deepen
 # bulk predictions run:

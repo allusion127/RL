@@ -38,8 +38,9 @@ feed = 121
 # Position-value backend for the campaign (plan sec. 4.5). The trained ensemble
 # lives under data/models/<ts>/ (5 members + ensemble.json + calibration.json).
 backend = "posval_cnn"       # posval_cnn | sklearn_fallback (MODEL_HALT fallback)
-model_dir = "data/models/s1i"   # 9th champion (round 12, arm S1h — honest-gate promoted 2026-08-17: no_regression worst_drop 0.021 vs eps 0.139, blind_targets [], legacy tail PASS; prereg data/reports/ab2_addendum_S1H_20260817.md, gate data/reports/gate_s1h.json). FIRST checkpoint that can encode a 3-fresh-type core: cond_schema v7 = v6c cells (62ch) + 5 appended composition globals (13->18). Trained on S1h (62,379/12,098) at the frozen 224/8/384 x5 recipe.
-cond_schema = "v7"           # 62ch (= v6b 58 + v6c ADF 4) + 18 globals (= 13 + g_type_frac_1..3, g_e_type_std, g_n_fresh_types).
+model_dir = "data/models/s1j"   # s1j (11th champion, cond v8, f_xy direct head; promoted 2026-08-30 per fxy_head_results_arm3_20260829.md; G4 FAIL -> f_xy sigma barred). Arm 3 (--fxy-direct) off s1i with --freeze-trunk-cyclen: G1 PASS (worst enforced drop 0.011364 vs eps 0.1388, blind_targets []), G2' MAE 0.066300 < 0.0767 PASS, G3' rho-bar 0.790392 > 0.7263 PASS, G4 68% coverage 0.831 NOT in [0.55,0.80] FAIL. The head's MEAN serves; its SIGMA does NOT -- data/models/s1j/ensemble.json stamps fxy_head.serve_sigma="barred" and acquisition.predict_fxy substitutes the proxy's inflated sigma (see data/models/s1j/PROMOTION.md). Per-cell calibrations are the 2026-08-29/30 FIXED-serve-path refits (servefix_calibration_refit_20260829.md) -- code and calibrations ship as ONE set. Predecessor: s1i (10th champion, promoted 2026-08-17, gate data/reports/gate_s1h.json).
+cond_schema = "v8"           # 62ch (= v6b 58 + v6c ADF 4) + 20 globals (= 13 + g_type_frac_1..5, g_e_type_std, g_n_fresh_types).
+                             # UNCHANGED at the s1j promotion (2026-08-30): s1j/member_*/meta.json says v8, same as s1i.
                              # MUST track model_dir: gate-promote rewrites model_dir only, so this key is
                              # updated by hand at every promotion that changes schema.  A stale value here is
                              # not silently served — PosValCnnBackend rebuilds the encoder from the CHECKPOINT's

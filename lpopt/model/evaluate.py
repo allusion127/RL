@@ -79,7 +79,8 @@ def evaluate_split(members, metas, split: str, *, calib: dict | None,
     promote = "max_assembly_burnup" in target_names
     val_ds = LPDataset(reader, manifest, fuel, augment=False, fold="val",
                        censor_dataset_a_pin_labels=False,
-                       promote_max_asm_bu=promote)
+                       promote_max_asm_bu=promote,
+                       promote_fxy="f_xy" in target_names)
     pred = predict_dataset(members, val_ds, device)
     mean_raw, epistemic, total = ensemble_stats(pred, tmean, tstd)
     calibrated = apply_calibration(total, calib) if calib else total

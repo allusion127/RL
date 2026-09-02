@@ -16,6 +16,21 @@ NO MASTER is executed and nothing under data/store is written.
     python scoping_mesh.py                  # full 6x5 mesh
     python scoping_mesh.py --pairs-only     # just print the pair->e_core table
     python scoping_mesh.py --figure-only    # re-render the PNG from mesh_nodes.csv
+
+THE OBJECTIVE AXIS (design ``data/reports/fxy_switch_design_20260829.md`` §3.5.5).
+This file is a PRODUCER, not a readout: every node it writes is a PREDICTION, and
+its whole frontier — the feasibility mask, the (cyclen, F_r) Pareto front, its
+knee, ``min_pred_f_r``, the tier columns — is F_r by construction, and
+``mesh_nodes.csv``'s column list is consumed verbatim by ``mesh_vs_db.py``,
+``scoping_mesh_fig.py`` and ``autoeng.py``'s marks.  Moving that axis is a
+schema change on four consumers AND needs a champion that carries an f_xy head
+(``PosValCnnBackend.predict_fxy`` returns ``None`` without one), which no shipped
+champion does yet.  So this file does NOT silently switch: ``--objective
+min_fxy`` is REFUSED with the two prerequisites named, because the failure mode
+worth preventing here is a mesh whose F_r numbers get read under an F_xy heading
+(design §3.6: "F_xy를 최적화했다" is exactly the claim that must not be made by
+accident).  The measured-side readouts that CAN switch already do —
+``anchor_readout.py``, ``autoeng.py``, ``batchswap*_analyze.py``.
 """
 
 from __future__ import annotations
@@ -33,6 +48,8 @@ import pandas as pd
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
+
+import readout_axis as RA                                     # noqa: E402
 
 OUT = BASE / "data" / "reports" / "scoping_mesh_20260815"
 
@@ -493,7 +510,25 @@ def main() -> int:
                     "sweep (default: the v2 dir).  v3 writes to "
                     "data/reports/mesh_v3_20260817 so the v2 study it is "
                     "compared against stays untouched.")
+    RA.add_axis_args(ap)
     args = ap.parse_args()
+
+    # See the module docstring: this producer is F_r by construction and refuses
+    # to be READ as anything else.  The refusal names both prerequisites so the
+    # next person does not have to rediscover them.
+    axis = RA.axis_from_args(args)
+    if axis.is_fxy:
+        raise SystemExit(
+            f"scoping_mesh is an F_r producer and cannot yet be swept on "
+            f"{axis.label}.  Two prerequisites, both open:\n"
+            f"  1. a champion carrying an f_xy head — PosValCnnBackend.predict_fxy "
+            f"returns None on every model currently under data/models, so there "
+            f"is no {axis.label} to gate or rank on (design 20260829 sec. 3.6 "
+            f"forbids inventing one);\n"
+            f"  2. mesh_nodes.csv's column list is F_r-named (min_pred_f_r, "
+            f"pareto_min_f_r, f_r_tier*) and is consumed verbatim by "
+            f"mesh_vs_db.py, scoping_mesh_fig.py and autoeng.py.\n"
+            f"Refusing rather than relabelling F_r columns as {axis.label}.")
 
     global OUT
     if args.out_dir:

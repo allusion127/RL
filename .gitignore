@@ -3,7 +3,10 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 runs/
-data/models/
+data/models/*
+!data/models/s1j/
+!data/models/s1j/ensemble.json
+!data/models/s1j/PROMOTION.md
 data/store/
 data/splits/
 data/campaigns/

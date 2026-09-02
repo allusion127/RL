@@ -9,9 +9,18 @@ them against the three hypotheses that were registered before the spend:
     H3  even if boron passes, F_r stays above Tier-1
 
     python anchor_readout.py
+    python anchor_readout.py --deck fpcamp_minfxy_...inp    # read H3 on F_xy
 
 Reads data/store only; writes anchors_measured.csv + anchor_readout.log under
 data/reports/mesh_v3_20260817/.  Runs no MASTER and touches no remote box.
+
+THE OBJECTIVE AXIS (design ``data/reports/fxy_switch_design_20260829.md`` §3.5.5).
+H1/H2 are boron hypotheses and are axis-free.  H3 — "does the peaking axis survive
+after boron passes?" — is the FRONTIER readout, and it is now read on whichever
+axis the deck named: F_r (default, unchanged) or, under ``objective = "min_fxy"``,
+the store's MEASURED ``f_xy`` against ``f_xy_limit``.  Rows with no measured F_xy
+are EXCLUDED and counted rather than passed through, because a "frontier" ranked
+over the 8 % of the population that happened to be harvested is not a frontier.
 """
 
 from __future__ import annotations
@@ -24,6 +33,9 @@ import pandas as pd
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
+
+import readout_axis as RA                                     # noqa: E402
+
 OUT = BASE / "data" / "reports" / "mesh_v3_20260817"
 
 #: ``produce`` stamps each row's ``campaign`` with its STRATUM name, not with the
@@ -50,11 +62,26 @@ REG_RMS = 101.0                 # ppm, the regression residual the predictions c
 H2_EFFECT, H2_TOL = 147.0, 101.0
 
 
-def joint_tier(fr: float, cbc: float) -> str:
+#: The joint (peaking, boron) tier ladder, as F_r caps.  Under the F_xy axis each
+#: cap is shifted by the axis's own limit — tier1's peaking cap IS the licensing
+#: limit of whichever axis is being read, and the ladder above it keeps the same
+#: relative headroom (+0.10 / +0.25) it has always had on F_r.  Inventing an
+#: independent F_xy ladder would be a licensing claim this readout has no basis
+#: for; scaling the one registered ladder is arithmetic and is labelled as such.
+_TIERS_FR = (("tier1", 1.55, 1600.0), ("tier2", 1.65, 1800.0),
+             ("tier3", 1.80, 2200.0))
+
+
+def tiers_for(axis: RA.Axis) -> tuple[tuple[str, float, float], ...]:
+    shift = axis.limit - 1.55
+    return tuple((name, round(a + shift, 4), b) for name, a, b in _TIERS_FR)
+
+
+def joint_tier(fr: float, cbc: float,
+               tiers: tuple[tuple[str, float, float], ...] = _TIERS_FR) -> str:
     if not (np.isfinite(fr) and np.isfinite(cbc)):
         return ""
-    for name, a, b in (("tier1", 1.55, 1600.0), ("tier2", 1.65, 1800.0),
-                       ("tier3", 1.80, 2200.0)):
+    for name, a, b in tiers:
         if fr <= a and cbc <= b:
             return name
     return "none"
@@ -67,8 +94,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--records", default=None,
                     help="read this records.parquet instead of the canonical "
                          "store (e.g. a read-only kit copy, before the merge)")
+    RA.add_axis_args(ap)
+    ap.add_argument("--lambda-check", dest="lambda_check", default=None,
+                    action=argparse.BooleanOptionalAction,
+                    help="print the mandatory 'cyclen - lambda*axis' frontier "
+                         "reading (default: on for the F_xy axis, off for F_r "
+                         "so existing min_fr logs stay line-for-line comparable)")
     args = ap.parse_args(argv)
     src = Path(args.records) if args.records else BASE / "data/store/records.parquet"
+    axis = RA.axis_from_args(args)
+    tiers = tiers_for(axis)
 
     lines: list[str] = []
 
@@ -77,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         lines.append(str(msg))
 
     log(f"source: {src}")
+    if axis.is_fxy:
+        log(f"axis:   {axis.provenance()}")
     s = pd.read_parquet(src)
     a = s[s.campaign.astype(str).str.startswith(CAMPAIGN_PREFIX)]
     log(f"strata {CAMPAIGN_PREFIX}*: {len(a)} rows, "
@@ -96,7 +133,14 @@ def main(argv: list[str] | None = None) -> int:
         # the core that MINIMISES boron is the one H1 is about; report its F_r
         j = q.cbc_max.idxmin()
         pred = PRED.get((pair, int(feed)), np.nan)
-        rows.append(dict(
+        # The peaking side of every joint count below is the OBJECTIVE axis.  On
+        # F_r these are the same numbers under the same names; on F_xy the cell's
+        # unlabelled rows drop out of the axis floor and the joint counts, and
+        # `axis_unlabelled` says how many did.
+        qa, n_unlab = RA.split_labelled(q, axis)
+        av_all = RA.axis_values(q, axis)
+        axis_min = float(RA.axis_values(qa, axis).min()) if len(qa) else np.nan
+        row = dict(
             pair=pair, feed=int(feed), role=("보정" if int(feed) in CALIBRATION_FEEDS
                                              else "지도"),
             n=int(len(q)), e_core=float(q.e_core.mean()),
@@ -107,8 +151,16 @@ def main(argv: list[str] | None = None) -> int:
             ao_max=float(q.ao_abs.abs().max()),
             cyclen_q95=float(q.cyclen.quantile(0.95)),
             n_pass_cbc=int((q.cbc_max <= CBC_LIMIT).sum()),
-            n_pass_both=int(((q.cbc_max <= CBC_LIMIT) & (q.f_r <= FR_LIMIT)).sum()),
-            joint_tier=joint_tier(fr_min, cbc_min)))
+            n_pass_both=int(((q.cbc_max <= CBC_LIMIT)
+                             & (av_all <= axis.limit)).sum()),
+            joint_tier=joint_tier(axis_min, cbc_min, tiers))
+        if axis.is_fxy:
+            # Added ONLY off the default axis, so anchors_measured.csv keeps its
+            # exact schema for every min_fr readout that already consumes it.
+            row.update(axis=axis.label, axis_min=axis_min,
+                       axis_at_cbc_min=float(av_all.loc[j]),
+                       axis_labelled=int(len(qa)), axis_unlabelled=int(n_unlab))
+        rows.append(row)
     M = pd.DataFrame(rows).sort_values(["pair", "feed"])
     M.round(4).to_csv(OUT / "anchors_measured.csv", index=False, encoding="utf-8")
 
@@ -158,22 +210,63 @@ def main(argv: list[str] | None = None) -> int:
         log("  no feed has both flagship and control rows — UNDECIDED.")
 
     # ------------------------------------------------------------------ H3 --- #
-    log("\n=== H3 — does F_r survive after boron passes? ===")
+    log(f"\n=== H3 — does {axis.label} survive after boron passes? ===")
     p = conv[conv.cbc_max <= CBC_LIMIT]
     log(f"  {len(p)}/{len(conv)} converged anchor cores are under CBC 1600 ppm")
+    p_lab, p_unlab = RA.split_labelled(p, axis)
+    note = RA.unlabelled_note(axis, p_unlab, len(p), what="cores")
     if len(p):
-        log(f"    their F_r: min {p.f_r.min():.4f}, median {p.f_r.median():.4f}")
+        pav = RA.axis_values(p_lab, axis)
+        if note:
+            log(note)
+        if len(p_lab):
+            log(f"    their {axis.label}: min {pav.min():.4f}, "
+                f"median {pav.median():.4f}")
         log(f"    their F_q: min {p.f_q.min():.4f} (limit {FQ_LIMIT})")
-        log(f"    of those, F_r <= 1.55 (Tier-1): {int((p.f_r <= FR_LIMIT).sum())} cores")
-    for nm, a_, b_ in (("Tier-1", 1.55, 1600.0), ("Tier-2", 1.65, 1800.0),
-                       ("Tier-3", 1.80, 2200.0)):
-        n = int(((conv.f_r <= a_) & (conv.cbc_max <= b_)
-                 & (conv.f_q <= FQ_LIMIT)
-                 & (conv.ao_abs.abs() <= AO_LIMIT)).sum())
-        log(f"    JOINT {nm} (F_r<={a_} ∧ CBC<={b_:.0f}): {n} cores")
-    log(f"  overall anchor floors: F_r {conv.f_r.min():.4f} · "
+        log(f"    of those, {axis.gate} (Tier-1): "
+            f"{int((pav <= axis.limit).sum())} cores")
+    conv_lab, conv_unlab = RA.split_labelled(conv, axis)
+    cav = RA.axis_values(conv_lab, axis)
+    for nm, a_, b_ in (("Tier-1", *tiers[0][1:]), ("Tier-2", *tiers[1][1:]),
+                       ("Tier-3", *tiers[2][1:])):
+        n = int(((cav <= a_) & (conv_lab.cbc_max <= b_)
+                 & (conv_lab.f_q <= FQ_LIMIT)
+                 & (conv_lab.ao_abs.abs() <= AO_LIMIT)).sum())
+        log(f"    JOINT {nm} ({axis.label}<={a_} ∧ CBC<={b_:.0f}): {n} cores")
+    log(f"  overall anchor floors: {axis.label} "
+        f"{cav.min() if len(conv_lab) else float('nan'):.4f} · "
         f"CBC {conv.cbc_max.min():.1f} ppm · F_q {conv.f_q.min():.4f} · "
         f"|AO| max {conv.ao_abs.abs().max():.4f}")
+
+    # ------------------------------------------- the mandatory λ reading ----- #
+    # Registered rule: a frontier is read on ``cyclen − λ·axis``, never on
+    # ``min(axis)`` alone — the axis-only headline was overturned twice.  Design
+    # §3.5.5 moves the AXIS of that rule to F_xy and leaves the rule itself in
+    # force.  Off by default on F_r so this file's existing logs stay comparable
+    # line for line; ``--lambda-check`` turns it on for either axis.
+    want_lambda = axis.is_fxy if args.lambda_check is None else args.lambda_check
+    if want_lambda:
+        log(f"\n=== λ-OBJECTIVE reading (mandatory on every frontier readout) ===")
+        log(f"  scalar = cyclen − λ·{axis.label},  λ = {axis.lam:g} EFPD per unit "
+            f"{axis.label}")
+        best, n_unlab = RA.best_by_lambda(conv, axis)
+        if best is None:
+            log(f"  NO core carries a measured {axis.label} "
+                f"({n_unlab}/{len(conv)} unlabelled) — the λ objective is "
+                f"UNDEFINED here and no frontier claim is made.")
+        else:
+            floor_row = conv_lab.loc[cav.idxmin()] if len(conv_lab) else None
+            log(RA.unlabelled_note(axis, n_unlab, len(conv), what="cores")
+                or f"    unlabelled: 0/{len(conv)} cores")
+            log(f"  λ-BEST      {str(best.record_id)[:12]}  {axis.label} "
+                f"{float(RA.axis_values(conv_lab, axis).loc[best.name]):.4f}  "
+                f"cyclen {float(best.cyclen):.1f} EFPD  CBC {float(best.cbc_max):.1f}")
+            if floor_row is not None:
+                same = "SAME core" if floor_row.name == best.name else "DIFFERENT core"
+                log(f"  {axis.label}-FLOOR  {str(floor_row.record_id)[:12]}  "
+                    f"{axis.label} {float(cav.min()):.4f}  "
+                    f"cyclen {float(floor_row.cyclen):.1f} EFPD  "
+                    f"CBC {float(floor_row.cbc_max):.1f}   -> {same}")
 
     # ------------------------------------------- refit the boron regression -- #
     log("\n--- boron regression refit WITH the new anchors ---")
