@@ -42,18 +42,27 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import warnings
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 
-from .data import COND_SCHEMA, HEADS, POWER_PRIOR, _grid_scatter, scalar_features
+from .data import (
+    COND_SCHEMA, HEADS, POWER_PRIOR, _grid_scatter, corpus_provenance,
+    scalar_features,
+)
 from .v2 import CURRENT_ERA_LIBRARIES, POLICY_SCHEMA_V2, scalar_features_v2
+from .v3 import (
+    HEADS_V3, POLICY_SCHEMA_V3, provenance_v3, scalar_features_v3,
+)
 
 #: Where ``train_policy_v1.py`` pulled the checkpoints to.
 DEFAULT_MODEL_DIR = "data/models/policy_v1"
 #: Where ``train_policy_v2.py`` pulled the Run B (shipped) checkpoints to.
 DEFAULT_MODEL_DIR_V2 = "data/models/policy_v2"
+#: Where ``train_policy_v3.py`` pulls the v3 checkpoints to.
+DEFAULT_MODEL_DIR_V3 = "data/models/policy_v3"
 #: The CNN arm is the one that passed the gate; the ``mlp`` control failed it
 #: outright (report section 3) and is never served.
 MEMBER_PATTERN = "cnn_seed*"
@@ -61,6 +70,10 @@ FUEL_TYPES_PARQUET = "data/store/fuel_types.parquet"
 
 #: Head index in the network's 2-logit output, from :data:`lpopt.policy.data.HEADS`.
 HEAD_INDEX: dict[str, int] = {name: i for i, name in enumerate(HEADS)}
+#: Head index in v3's 3-logit output.  ``fr`` / ``flat`` keep index 0 / 1, so a
+#: caller that asks for ``fr`` gets the same head from either ensemble and only
+#: ``fxy`` is new.
+HEAD_INDEX_V3: dict[str, int] = {name: i for i, name in enumerate(HEADS_V3)}
 
 
 # --------------------------------------------------------------------------- #
@@ -104,20 +117,30 @@ class MoveScorer:
     DEFAULT_DIR = DEFAULT_MODEL_DIR
     MEMBERS = MEMBER_PATTERN
     #: The training feature builder.  Never re-implemented here: v1 serves v1's
-    #: 36 scalars, v2 serves ``scalar_features_v2``'s 39, and the subclass swaps
-    #: this one binding rather than the scoring path.
+    #: 36 scalars, v2 serves ``scalar_features_v2``'s 39, v3 serves
+    #: ``scalar_features_v3``'s 51, and the subclass swaps this one binding
+    #: rather than the scoring path.
     _scalar_features = staticmethod(scalar_features)
+    #: The output heads, in logit order.  v1/v2 have two; v3 has three.
+    HEADS: tuple[str, ...] = HEADS
+    #: ``(dataset, sym_class)`` conditioning, the SAME map the checkpoint's own
+    #: corpus was featurized with.  v1/v2 use ``data.corpus_provenance`` (their
+    #: corpus took ``sym_class`` from ``library_provenance``); v3 re-mined with
+    #: the store truth and therefore uses ``featurize.serve_provenance``.
+    _provenance = staticmethod(corpus_provenance)
 
     def __init__(self, members: list[Any], encoder: Any, fuel: Any,
                  enrichment: dict[str, dict[str, float]],
                  delta_channels: list[int], scalar_names: list[str],
-                 *, device: str = "cpu", cache_size: int = 512) -> None:
+                 *, device: str = "cpu", cache_size: int = 512,
+                 fuel_types: str | Path = FUEL_TYPES_PARQUET) -> None:
         self.members = members
         self.encoder = encoder
         self.fuel = fuel
         self.enrichment = enrichment
         self.delta = np.asarray(delta_channels, np.int32)
         self.scalar_names = list(scalar_names)
+        self.fuel_types = Path(fuel_types)
         self.device = device
         self._cache_size = int(cache_size)
         self._slots: dict[str, np.ndarray] = {}
@@ -150,7 +173,16 @@ class MoveScorer:
         ``n_threads > 0`` pins torch's intra-op thread count: this runs inside a
         campaign process that is already sharing a workstation with a MASTER
         queue, so it must not quietly grab every core.
+
+        The provenance advisory fires HERE, not only in :func:`get_scorer`,
+        because ``get_scorer`` is not the only serving construction site:
+        ``data/reports/.../ablation_wave.py`` builds the v1 scorer with a bare
+        ``MoveScorer.load`` and scores with it, and that file is sha-pinned — a
+        campaign log that cannot be edited is exactly the one that must be told.
+        :func:`_warn_if_inverted` is idempotent per version and cannot raise, so
+        adding it to the load path costs at most one line per process.
         """
+        _warn_if_inverted(cls)
         import torch                       # deferred: construct.py stays torch-free
 
         from ..data.fuel_types import FuelLibrary
@@ -202,7 +234,8 @@ class MoveScorer:
 
         scorer = cls(members, encoder, fuel,
                      _corpus().load_enrichment(Path(fuel_types)),
-                     delta, meta0["scalar_names"], device=device)
+                     delta, meta0["scalar_names"], device=device,
+                     fuel_types=fuel_types)
         cfg = meta0["net_config"]
         if scorer._grid_shape[0] != int(cfg["in_channels"]):
             raise ValueError(
@@ -221,10 +254,13 @@ class MoveScorer:
         It used to be :func:`~..model.featurize.library_provenance`, the
         historical-extractor map, which predates ``dataset="P"`` and answers
         paramA -> ``("A", "rot61")``.  But ``mine_policy_corpus`` writes each
-        step row's REAL store ``dataset``, and all 2,401 paramA corpus rows carry
-        ``"P"`` -> ``g_dataset_flag`` 1.0, so every paramA proposal was scored at
-        0.0 against a net trained at 1.0 — 1 of the 13 cond globals inverted, on
-        one of the two live libraries.  Measured on ``gate_cur`` rows of the
+        step row's REAL store ``dataset``, and EVERY paramA corpus row carries
+        ``"P"`` -> ``g_dataset_flag`` 1.0 (2,388 rows in the v2 checkpoints' own
+        ``corpus_sha256`` snapshot; the live steps parquet grows every wave, so
+        the invariant is the fact and the count is only ever a snapshot's), so
+        every paramA proposal was scored at 0.0 against a net trained at 1.0 —
+        1 of the 13 cond globals inverted, on one of the two live libraries.
+        Measured on ``gate_cur`` rows of the
         checkpoints' own corpus snapshot against ``policy_v2/probs.npz``: ga80
         rows agree to 3e-5 (float16 cache rounding) both before and after, paramA
         rows were off by up to **0.087 absolute** P(improve) and now agree to
@@ -235,10 +271,15 @@ class MoveScorer:
         so trained ga80 at ``g_sym_class`` 0.0.  Serving must keep feeding the
         shipped ``policy_v2`` checkpoint what it was trained on; correcting that
         half requires RE-MINING the corpus (see :func:`~.data.corpus_provenance`).
+        **So this method, on v1/v2, IS a live serving path that still feeds the
+        inverted ga80 ``sym_class``** — deliberately, and consistently with the
+        checkpoint it serves, but the 2026-08-29 provenance fix is NOT closed
+        here.  It closes for v3 only (:class:`MoveScorerV3` binds
+        :func:`~.v3.provenance_v3` = ``serve_provenance``);
+        constructing a v1/v2 scorer -- :func:`get_scorer` or a bare
+        :meth:`load` -- warns once per process that it serves this map.
         """
         from ..model.featurize import RecordInputs
-
-        from .data import corpus_provenance
 
         key = pattern.canonical()
         hit = self._slots.get(key)
@@ -246,7 +287,7 @@ class MoveScorer:
             return hit, self._globals[key]
 
         library_id = str(getattr(ctx, "library_id", "ga80"))
-        dataset, sym_class = corpus_provenance(library_id)
+        dataset, sym_class = self._provenance(library_id)
         # e_core is deliberately NOT passed: ``build_pattern_cache`` did not pass
         # it either, so the training globals carry the encoder's own estimate and
         # a supplied e_core here would shift g_e_core off the trained scale.
@@ -330,7 +371,7 @@ class MoveScorer:
 
         children = list(children)
         if not children:
-            return np.zeros((0, len(HEADS)), dtype=np.float64)
+            return np.zeros((0, len(self.HEADS)), dtype=np.float64)
 
         scalars, names = self._scalar_features(
             self.move_frame(parent, children, ctx))
@@ -354,7 +395,7 @@ class MoveScorer:
 
         cells = torch.from_numpy(grids).to(self.device)
         cond = torch.from_numpy(conds).to(self.device)
-        total = np.zeros((len(children), len(HEADS)), np.float64)
+        total = np.zeros((len(children), len(self.HEADS)), np.float64)
         with torch.no_grad():
             for net in self.members:
                 total += torch.sigmoid(net(cells, cond)).cpu().numpy()
@@ -421,14 +462,164 @@ class MoveScorerV2(MoveScorer):
         return frame
 
 
+# --------------------------------------------------------------------------- #
+# v3
+# --------------------------------------------------------------------------- #
+class MoveScorerV3(MoveScorerV2):
+    """The v3 ensemble: THREE logits ``(fr, flat, fxy)`` over 51 scalars.
+
+    It EXTENDS :class:`MoveScorerV2` rather than :class:`MoveScorer` because
+    v3's feature vector strictly contains v2's: ``era_current`` is added by v2's
+    ``move_frame`` and ``scalar_features_v3`` calls ``scalar_features_v2``, so
+    subclassing is what keeps the containment true on the serve path as well as
+    on the train path.  Only the stamp check is taken from the base.
+
+    Three differences from :class:`MoveScorerV2`, and they are the three the
+    pre-registration names (``policy_v3_prereg_20260831.md`` §8-F):
+
+    * :func:`~.v3.scalar_features_v3` — v2's 39 scalars plus the twelve Gd /
+      lattice descriptors, which is why :meth:`move_frame` has to emit the new
+      columns.  A move that exchanges one Gd type for another is invisible in
+      v2's frame; the intervention wave measured that invisibility as a +0.0712
+      F_xy effect the model could not see.
+    * :attr:`_provenance` is :func:`~.v3.provenance_v3`
+      (= ``featurize.serve_provenance``).  The v3 corpus was re-mined with the
+      store's own provenance, so the serve path must reconstruct THAT, not the
+      inverted ``sym_class`` the shipped v2 checkpoint has to keep being fed.
+    * the score is ``[n, 3]``.  ``fr`` and ``flat`` stay at logit 0 and 1, so a
+      caller asking for ``fr`` gets the same head from either ensemble.
+
+    The schema stamp is refused if it is not exactly this contract, for the
+    reason the v2 class documents: ``construct._policy_pick`` swallows every
+    exception by design, so a mis-fed checkpoint degrades to a uniform random
+    draw and an A/B whose treatment arm is its own control.
+    """
+
+    version = "v3"
+    DEFAULT_DIR = DEFAULT_MODEL_DIR_V3
+    HEADS = HEADS_V3
+    _scalar_features = staticmethod(scalar_features_v3)
+    _provenance = staticmethod(provenance_v3)
+
+    @classmethod
+    def _check_meta(cls, meta: dict[str, Any], member_dir: Path) -> None:
+        # MoveScorer's, not MoveScorerV2's: the v2 stamp is exactly what must be
+        # REFUSED here.
+        MoveScorer._check_meta(meta, member_dir)
+        stamped = (meta.get("policy_schema"), str(meta.get("policy_version", "")),
+                   tuple(meta.get("era_libraries") or ()))
+        wanted = (POLICY_SCHEMA_V3, cls.version, CURRENT_ERA_LIBRARIES)
+        if stamped != wanted:
+            raise ValueError(
+                f"{member_dir.name} is stamped (policy_schema, policy_version, "
+                f"era_libraries) = {stamped!r} but this serving path is "
+                f"{wanted!r}; refusing to serve a checkpoint from another "
+                f"feature contract")
+        n_heads = int((meta.get("net_config") or {}).get("n_heads", 0))
+        if n_heads != len(cls.HEADS):
+            raise ValueError(
+                f"{member_dir.name} has {n_heads} logits but the v3 serving "
+                f"contract is {len(cls.HEADS)} {list(cls.HEADS)}")
+        if not meta.get("scalar_names"):
+            raise ValueError(f"{member_dir.name}/meta.json carries no "
+                             f"'scalar_names' feature list")
+
+    @property
+    def fuel_table(self) -> dict[str, dict[str, dict[str, float]]]:
+        """``library_id -> {type_id: {n_gd, gd_wt, kinf0}}``, loaded once.
+
+        The corpus miner's own loader, for the same reason the enrichment table
+        is: the descriptors must be built by the code that built the training
+        columns, not by a second implementation whose first divergence would be
+        a silently mis-scored move.
+        """
+        table = getattr(self, "_fuel_table", None)
+        if table is None:
+            table = self._fuel_table = _corpus().load_fuel_table(self.fuel_types)
+        return table
+
+    def move_frame(self, parent: tuple[Any, Any],
+                   children: Sequence[tuple[Any, Any]], ctx: Any) -> Any:
+        frame = super().move_frame(parent, children, ctx)
+        m = _corpus()
+        types = self.fuel_table.get(str(getattr(ctx, "library_id", "ga80")))
+        p_pat = parent[1].canonical()
+        p_gd = m.gd_profile(p_pat, types)
+
+        rows: list[dict[str, Any]] = []
+        for _c_genome, c_pattern in children:
+            c_pat = c_pattern.canonical()
+            c_gd = m.gd_profile(c_pat, types)
+            row: dict[str, Any] = {}
+            for name in m.GD_PHYSICS:
+                row[f"parent_{name}"] = p_gd[name]
+                row[f"child_{name}"] = c_gd[name]
+                row[f"d_{name}"] = c_gd[name] - p_gd[name]
+            row.update(m.fresh_type_move(p_pat, c_pat, types))
+            rows.append(row)
+        for col in m.V3_SCHEMA_COLUMNS:
+            frame[col] = [r[col] for r in rows]
+        return frame
+
+
 #: Serving class per ``version`` tag.
-SCORERS: dict[str, type[MoveScorer]] = {"v1": MoveScorer, "v2": MoveScorerV2}
+SCORERS: dict[str, type[MoveScorer]] = {
+    "v1": MoveScorer, "v2": MoveScorerV2, "v3": MoveScorerV3}
 
 
 # --------------------------------------------------------------------------- #
 # load-once handle
 # --------------------------------------------------------------------------- #
 _CACHE: dict[tuple[str, str, str, str, int], MoveScorer | None] = {}
+
+#: Versions this process has already warned about (see :func:`_warn_if_inverted`).
+_PROVENANCE_WARNED: set[str] = set()
+
+
+def _warn_if_inverted(cls: type[MoveScorer]) -> None:
+    """Say it out loud, once per process, when the served map is the inverted one.
+
+    The 2026-08-29 provenance fix is closed on the SURROGATE serve path
+    (``model_api._record_inputs`` -> ``featurize.serve_provenance``) and is
+    deliberately OPEN here: v1/v2 bind :func:`~.data.corpus_provenance`, whose
+    ``sym_class`` half is still ``library_provenance``'s, so every ga80 board is
+    conditioned on ``g_sym_class`` 0.0 against store rows that say ``rot61``.
+    That is the only self-consistent thing to feed the shipped ``policy_v2``
+    checkpoint — but a reader of the C.3 addendum can easily carry "fixed" over
+    to this path, and a campaign that ships an A/B on it should have the residual
+    named in its own log rather than only in a docstring.  Warn, do not raise:
+    serving the checkpoint what it trained on is correct, not a fault.
+
+    Called from BOTH construction sites -- :func:`get_scorer` and
+    :meth:`MoveScorer.load` -- because ``ablation_wave.py``'s blind A/B builds
+    its v1 scorer with a bare ``load`` and is sha-pinned, so a ``get_scorer``-only
+    advisory would miss the single campaign that most needs it.  Idempotent per
+    version, so being reached twice costs nothing.
+
+    The ``warn`` itself is guarded, for the reason ``construct._policy_pick``
+    guards the import: under ``-W error`` a warning IS an exception, it would be
+    raised inside that function's ``try``, and an ADVISORY would silently demote
+    the elite arm to unscored random mutation (or abort a strict campaign).  A
+    note about the model may never decide whether the model runs.
+    """
+    if cls._provenance is not corpus_provenance or cls.version in _PROVENANCE_WARNED:
+        return
+    _PROVENANCE_WARNED.add(cls.version)
+    msg = (
+        f"policy scorer {cls.version} serves data.corpus_provenance: ga80 boards "
+        f"are conditioned on g_sym_class=0.0 ('free69', from "
+        f"featurize.library_provenance) while the store's campaign ga80 rows "
+        f"carry 'rot61'.  This is DELIBERATE — the v2 pattern cache was built "
+        f"that way, so the shipped checkpoint must keep being fed it — and it is "
+        f"NOT covered by the 2026-08-29 serve_provenance fix, which closed the "
+        f"surrogate path only.  It closes when data/policy/steps.parquet is "
+        f"re-mined with the store's own sym_class and a v3 checkpoint is "
+        f"promoted into data/models/policy_v3 (version='v3' serves "
+        f"featurize.serve_provenance today).")
+    try:
+        warnings.warn(msg, RuntimeWarning, stacklevel=3)
+    except Exception:                     # noqa: BLE001 — see docstring
+        print(f"[policy] WARNING {msg}", file=sys.stderr, flush=True)
 
 
 def get_scorer(model_dir: str | Path | None = None, *,
@@ -450,6 +641,7 @@ def get_scorer(model_dir: str | Path | None = None, *,
     original exception, with its schema-refusal message intact.
     """
     cls = SCORERS[str(version)]
+    _warn_if_inverted(cls)
     root = Path(cls.DEFAULT_DIR if model_dir is None else model_dir)
     key = (str(version), str(root), str(Path(fuel_types)), str(device),
            int(n_threads))
@@ -466,5 +658,6 @@ def get_scorer(model_dir: str | Path | None = None, *,
     return scorer
 
 
-__all__ = ["DEFAULT_MODEL_DIR", "DEFAULT_MODEL_DIR_V2", "HEAD_INDEX",
-           "MoveScorer", "MoveScorerV2", "SCORERS", "get_scorer"]
+__all__ = ["DEFAULT_MODEL_DIR", "DEFAULT_MODEL_DIR_V2", "DEFAULT_MODEL_DIR_V3",
+           "HEAD_INDEX", "HEAD_INDEX_V3", "MoveScorer", "MoveScorerV2",
+           "MoveScorerV3", "SCORERS", "get_scorer"]

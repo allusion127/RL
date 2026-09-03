@@ -1237,8 +1237,17 @@ def select_topk_feasible(run_dir: str | Path, top_k: int) -> list[CandidateRef]:
 
     Reads ``runs/<ts>/candidates/<pair>/<digest>/meta.json`` entries (as written
     by the WaveVerifier archive), keeps those with ``feasible == True`` and a
-    resolvable restart, and orders them by proximity to the campaign objective
-    (``|cyclen - target|`` when available, else CBC).
+    resolvable restart, and orders them by proximity to the campaign objective:
+    ``|cyclen - 625|`` when the candidate recorded a cycle length, else CBC.
+
+    **The order is cyclen proximity, NOT F_xy** — that is a registered property,
+    not an accident (slice-Z prereg "registered selection-order trap", tasks
+    #21b).  On a ``min_fxy`` arm the PRIMARY candidate (minimum measured F_xy)
+    can therefore fall outside the top-K; the registered response is to RAISE
+    ``--top-k`` until it is inside and re-run (one extra MASTER call per extra
+    candidate), NOT to re-rank here.  Re-ranking would silently change which
+    cores get licence-verified and would invalidate the registered MASTER-call
+    budget, so it must be a prereg amendment, never a code change.
 
     LEGACY selector, kept for ``lpopt sdm-mtc`` on runs that predate the
     provenance index.  The D9 gate uses :func:`candidates_from_delivery` instead,

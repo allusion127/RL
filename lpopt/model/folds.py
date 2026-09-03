@@ -194,9 +194,12 @@ def fold_frame(df: pd.DataFrame, manifest: SplitManifest, fold: str, *,
     if fold not in FOLD_NAMES:
         raise ValueError(f"unknown fold {fold!r}; have {sorted(FOLD_NAMES)}")
     lab = assign_folds(df, manifest) if labels is None else labels
-    keep = (lab == fold).to_numpy()
+    # ``.to_numpy()`` on a pandas result may hand back a read-only view
+    # (Copy-on-Write, pandas >= 3.0), so build a fresh array instead of
+    # mutating this one in place.
+    keep = (lab == fold).to_numpy(dtype=bool, copy=True)
     if converged_only and "converged" in df.columns:
-        keep &= df["converged"].fillna(False).astype(bool).to_numpy()
+        keep = keep & df["converged"].fillna(False).astype(bool).to_numpy()
     sub = df.loc[keep].reset_index(drop=True)
     return FoldFrame(fold=fold, name=FOLD_NAMES[fold], df=sub,
                      cells=cell_key(sub).to_numpy(),

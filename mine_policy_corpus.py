@@ -25,6 +25,12 @@ Usage::
 
     python mine_policy_corpus.py                 # write everything
     python mine_policy_corpus.py --no-report     # parquets only
+
+    # policy v3.1 (`policy_v31_prereg_20260831_DRAFT.md` §4d): the v3 corpus
+    # plus the r2 campaign's edges plus the four burnt sub-lattice columns,
+    # 107 -> 111, into a NEW file.  Dry run without ``--apply``; the store is
+    # touched only for ``--merge-campaign`` and only for that campaign's rows.
+    python mine_policy_corpus.py --v31 --apply
 """
 
 from __future__ import annotations
@@ -42,9 +48,10 @@ import pandas as pd
 from lpopt.data.extract_a import _unpad_fresh_batch
 from lpopt.data.geometry import transpose
 from lpopt.data.schema import pack_pattern, unpack_pattern
+from lpopt.data.store import valid_flags
 from lpopt.search.genome import GeneralOrbitGenome, GenomeError
 from lpopt.vendor.masterrl.ga import ORBIT_UNITS
-from lpopt.vendor.masterrl.domain import SLOTS
+from lpopt.vendor.masterrl.domain import ROW_LENGTHS, SLOTS, X_INDEX
 
 # --------------------------------------------------------------------------- #
 # program constraints (task brief; lpopt.config ships cbc_limit=1550, see report)
@@ -118,6 +125,64 @@ PHYSICS: tuple[str, ...] = (
     "fresh_r_center", "fresh_enr_r_center", "fresh_enr_mass",
     "once_burnt_periph_share", "twice_burnt_periph_share",
 )
+
+#: The Gd / lattice board descriptors policy v3 adds
+#: (``policy_v3_prereg_20260831.md`` §4a).  They are the SAME construction as
+#: :func:`ring_profile` — multiplicity-weighted moments over the fresh slots —
+#: read off ``fuel_types.parquet`` instead of off the enrichment table, and they
+#: exist because the intervention wave measured a feature deficit the ring
+#: descriptors cannot express: an intervention with ``d_fresh_enr_r_center ≡ 0``
+#: moves F_xy by +0.0712 (20/20, p=1.9e-6), i.e. the corpus had no coordinate for
+#: "this move exchanged a 20-rod-Gd type for a 24-rod one" (§0 item 3).
+GD_PHYSICS: tuple[str, ...] = (
+    "fresh_gd_mass", "fresh_gd_r_center", "fresh_gd_share_periph",
+    "fresh_gdwt_mass", "fresh_kinf0_mass", "fresh_kinf0_r_center",
+)
+#: Board descriptors of the v3 corpus: v2's eight plus :data:`GD_PHYSICS`.
+#: ``PHYSICS`` itself is FROZEN — ``lpopt.policy.scorer.MoveScorer.move_frame``
+#: (v1/v2 serving) iterates it, and those two contracts must not gain columns.
+PHYSICS_V3: tuple[str, ...] = (*PHYSICS, *GD_PHYSICS)
+
+#: Fuel-type properties the v3 descriptors read.  ``zone_pin_count`` was
+#: measured 0% covered on BOTH live libraries and is therefore not a feature
+#: (prereg §4c).
+GD_FIELDS: tuple[str, ...] = ("n_gd", "gd_wt", "kinf0")
+
+#: The four MOVE-level (not parent/child pair) columns of §4b, and the two
+#: derived board triples' worth of columns, are what take ``steps.parquet``
+#: from 85 to 107 columns.  Named here so the appenders' schema-drift guard can
+#: tell "this corpus predates the v3 columns" from a genuine mismatch, exactly
+#: as :data:`FXY_SCHEMA_COLUMNS` does for the 2026-08-30 migration.
+GD_MOVE_COLUMNS: tuple[str, ...] = (
+    "n_fresh_type_changed", "fresh_type_multiset_changed", "fresh_gd_contrast",
+    "gd_table_complete",
+)
+V3_SCHEMA_COLUMNS: tuple[str, ...] = (
+    *(f"{side}_{name}" for name in GD_PHYSICS
+      for side in ("parent", "child", "d")),
+    *GD_MOVE_COLUMNS,
+)
+
+#: The four columns of policy v3.1 (``policy_v31_prereg_20260831_DRAFT.md``
+#: §4d), which take the corpus from 107 to 111.  Two are FEATURES
+#: (``lpopt.policy.v3.NEW_SCALARS_V31``, 51 -> 53 scalars) and two are
+#: DIAGNOSTICS that never enter the learned vector, the same split
+#: :data:`GD_MOVE_COLUMNS` makes between its three features and
+#: ``gd_table_complete``.
+#:
+#: They exist because §4b measured a hole the v3 columns cannot see: the packed
+#: board writes fresh as ``F:<batch>:<rot>`` and shuffled as
+#: ``S:<restart>:<x>:<y>:<rot>``, v3's 51 scalars read composition off the F
+#: tokens only, and so a ``rewire`` that relocates two EQUALLY burnt assemblies
+#: changes the board and F_xy while leaving every lattice move-channel
+#: identically zero — 197 such rows over 7 (cell, move_class) blocks, 213/1,307
+#: (16.3%) of the current-era corpus, 24 sibling pairs still tied on all 51
+#: scalars.
+BURNT_MOVE_COLUMNS: tuple[str, ...] = (
+    "burnt_absmov", "burnt_absmov_r", "burnt_slots_moved",
+    "burnt_token_complete",
+)
+V31_SCHEMA_COLUMNS: tuple[str, ...] = BURNT_MOVE_COLUMNS
 
 
 def fresh_slots(packed: str) -> tuple[np.ndarray, list[str]]:
@@ -208,14 +273,324 @@ def residence_profile(genome: GeneralOrbitGenome) -> dict[str, float]:
     }
 
 
+def _property_of(table: dict[str, dict[str, float]], batch: str,
+                 field: str) -> float:
+    """One fuel-type property, tolerant of the zero-padded legacy labels.
+
+    Same normalization as :func:`_enrichment_of` (``extract_a._unpad_fresh_batch``)
+    and for the same reason: the MOCHA cache writes ``C04`` where the fuel table
+    lists ``C4``, and without the unpad the whole 260624 corpus silently loses
+    the descriptor.
+    """
+    row = table.get(batch)
+    if row is None:
+        row = table.get(_unpad_fresh_batch(batch))
+    if row is None:
+        return np.nan
+    return float(row.get(field, np.nan))
+
+
+def gd_profile(packed: str,
+               types: dict[str, dict[str, float]] | None) -> dict[str, float]:
+    """Gd / lattice signature of one board — :data:`GD_PHYSICS` (prereg §4a).
+
+    Multiplicity-weighted, exactly as :func:`ring_profile`: a peripheral interior
+    slot is 4 physical assemblies and an axis slot 2, so a raw slot count would
+    mis-weight the periphery by up to 2x.
+
+    ``NaN`` propagates: if ANY fresh label of the board fails to resolve in that
+    cell's fuel table the descriptor is NaN rather than a partial sum, because a
+    partial sum is a silently WRONG mass and the whole point of these columns is
+    that a move exchanging one Gd type for another has to be visible.  The
+    corresponding ``*_present`` flag (``lpopt.policy.v3.scalar_features_v3``) is
+    what the model sees instead — v1's ``swap_span`` treatment, prereg §4c.
+    """
+    mask, batches = fresh_slots(packed)
+    weight = SLOT_MULT * mask
+    out: dict[str, float] = {}
+    if types is None:
+        return {name: np.nan for name in GD_PHYSICS}
+
+    def column(field: str) -> np.ndarray:
+        return np.array([
+            _property_of(types, b, field) if m else 0.0
+            for b, m in zip(batches, mask, strict=True)
+        ])
+
+    n_gd = column("n_gd")
+    gd_rho = weight * n_gd
+    gd_total = gd_rho.sum()                       # NaN if any label unresolved
+    out["fresh_gd_mass"] = float(gd_total)
+    out["fresh_gd_r_center"] = (
+        float((gd_rho * SLOT_RADIUS).sum() / gd_total) if gd_total > 0 else np.nan)
+    periph = RING_OF_SLOT == 2
+    out["fresh_gd_share_periph"] = float(gd_rho[periph].sum() / RING_MULT[2])
+
+    gd_wt = column("gd_wt")
+    out["fresh_gdwt_mass"] = float((gd_rho * gd_wt).sum())
+
+    kinf0 = column("kinf0")
+    k_rho = weight * kinf0
+    k_total = k_rho.sum()
+    out["fresh_kinf0_mass"] = float(k_total)
+    out["fresh_kinf0_r_center"] = (
+        float((k_rho * SLOT_RADIUS).sum() / k_total) if k_total > 0 else np.nan)
+    return out
+
+
+def _fresh_labels(packed: str) -> list[str]:
+    """The fresh batch label of every slot (``""`` where the slot is not fresh)."""
+    mask, batches = fresh_slots(packed)
+    return [b if m else "" for b, m in zip(batches, mask, strict=True)]
+
+
+def fresh_type_move(parent_packed: str, child_packed: str,
+                    types: dict[str, dict[str, float]] | None
+                    ) -> dict[str, float | bool]:
+    """The four MOVE-level Gd descriptors of prereg §4b.
+
+    Unlike :data:`GD_PHYSICS` these are not a parent/child pair reduced by a
+    difference: "which two fresh types did this move exchange" is a property of
+    the EDGE and has no per-board value.  It is the coordinate that separates the
+    two live interventional families — ``HGD569_f125``'s swapped pair is 24/24 in
+    ``n_gd`` and differs only in ``gd_wt`` (6.0 vs 10.0), while ``E1E2``'s is
+    20 vs 24 in ``n_gd`` — see prereg §4c.
+
+    * ``n_fresh_type_changed`` — slots whose fresh identity differs (a slot that
+      stopped or started being fresh counts).
+    * ``fresh_type_multiset_changed`` — the fresh label multiset differs, i.e.
+      the move is not a pure relocation.
+    * ``fresh_gd_contrast`` — ``|n_gd(A) − n_gd(B)|`` over the types the move
+      touched.  Registered for the two-type case; a move touching more than two
+      distinct fresh types (a ``multi``) takes the largest pairwise gap, which
+      reduces to the registered value whenever exactly two are involved.
+    * ``gd_table_complete`` — diagnostic, NOT a feature (prereg §9): do both
+      patterns resolve ``n_gd`` AND ``gd_wt`` for every fresh label.
+    """
+    p_labels, c_labels = _fresh_labels(parent_packed), _fresh_labels(child_packed)
+    changed = [i for i, (a, b) in enumerate(zip(p_labels, c_labels, strict=True))
+               if a != b]
+    out: dict[str, float | bool] = {
+        "n_fresh_type_changed": float(len(changed)),
+        "fresh_type_multiset_changed": bool(
+            sorted(p_labels) != sorted(c_labels)),
+    }
+
+    involved = {p_labels[i] for i in changed} | {c_labels[i] for i in changed}
+    touched = sorted(l for l in involved if l)
+    contrast = 0.0
+    if types is not None and len(touched) >= 2:
+        vals = [_property_of(types, t, "n_gd") for t in touched]
+        gaps = [abs(a - b) for i, a in enumerate(vals) for b in vals[i + 1:]]
+        finite = [g for g in gaps if np.isfinite(g)]
+        contrast = max(finite) if finite else np.nan
+    elif types is None:
+        contrast = np.nan
+    out["fresh_gd_contrast"] = float(contrast)
+
+    if types is None:
+        out["gd_table_complete"] = False
+    else:
+        labels = {l for l in (*p_labels, *c_labels) if l}
+        out["gd_table_complete"] = bool(labels) and all(
+            np.isfinite(_property_of(types, l, f))
+            for l in labels for f in ("n_gd", "gd_wt"))
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# burnt (shuffled) sub-lattice — policy v3.1 §4c
+# --------------------------------------------------------------------------- #
+#: Normalizer for both radii.  ``SLOT_RADIUS.max() = hypot(5, 7) = 8.602`` is
+#: the outermost canonical slot, so ``r_now`` and ``r_prev`` are both in [0, 1]
+#: and the descriptors are O(1) before any feature scale is applied.
+BURNT_R_MAX = float(SLOT_RADIUS.max())
+
+#: ``(row, col) -> slot index``.  A shuffle card names the assembly's PREVIOUS
+#: cycle position in full-core MASTER coordinates and ``lpopt.data.geometry``
+#: reads it as ``row = y - 9``, ``col = X_INDEX[x] - 8`` (centre ``("J", 9)``);
+#: the same inverse is taken here off the packed string, so no ``Pattern``
+#: object is built for tens of thousands of boards -- the discipline
+#: :func:`fresh_slots` already follows.
+_SLOT_BY_RC: dict[tuple[int, int], int] = {
+    (s.row, s.col): s.index for s in SLOTS}
+
+
+def _prev_slot(x: str, y: str) -> int | None:
+    """Quarter-slot index of a shuffle card's source ``(x, y)``, or ``None``.
+
+    ``None`` means the card does not land in the canonical quarter — a token
+    this corpus cannot resolve — and is what makes ``burnt_token_complete``
+    False rather than silently contributing zero.
+    """
+    col = X_INDEX.get(str(x).upper())
+    if col is None:
+        return None
+    col -= 8
+    try:
+        row = int(y) - 9
+    except (TypeError, ValueError):
+        return None
+    if row < 0 or row >= len(ROW_LENGTHS) or col < 0 or col >= ROW_LENGTHS[row]:
+        return None
+    return _SLOT_BY_RC[(row, col)]
+
+
+def burnt_sublattice(packed: str) -> tuple[np.ndarray, np.ndarray, list[str], bool]:
+    """``(burnt mask, r_prev per slot, source key per slot, every token parsed)``.
+
+    ``r_prev`` is NaN on a fresh slot and on an unresolvable ``S`` token; the
+    source key is ``"<restart>:<x>:<y>"`` (rotation is positionally canonical
+    per destination slot, so including it would only re-encode the slot).
+    """
+    tokens = packed.split("|")
+    if len(tokens) != len(SLOTS):
+        raise ValueError(f"packed board has {len(tokens)} cells, "
+                         f"expected {len(SLOTS)}")
+    mask = np.zeros(len(tokens), dtype=bool)
+    prev = np.full(len(tokens), np.nan)
+    keys = [""] * len(tokens)
+    complete = True
+    for i, token in enumerate(tokens):
+        if not token.startswith("S:"):
+            continue
+        mask[i] = True
+        parts = token.split(":")
+        if len(parts) != 5:
+            complete = False
+            continue
+        slot = _prev_slot(parts[2], parts[3])
+        if slot is None:
+            complete = False
+            continue
+        prev[i] = SLOT_RADIUS[slot]
+        keys[i] = f"{parts[1]}:{parts[2]}:{parts[3]}"
+    return mask, prev, keys, complete
+
+
+def _burnt_board_moments(mask: np.ndarray, prev: np.ndarray) -> tuple[float, float]:
+    """``(A, A_r)`` of one board — the two registered §4c sums.
+
+    ``A   = sum_{burnt slots} mult * |r_now - r_prev|``
+    ``A_r = sum_{burnt slots} mult * r_now * |r_now - r_prev|``
+
+    Multiplicity-weighted, like every other radial descriptor in this module: a
+    peripheral interior slot is four physical assemblies and an axis slot two.
+    An unresolvable token drops out of the sum and is flagged instead
+    (``burnt_token_complete``), never imputed as "did not move".
+    """
+    r_now = SLOT_RADIUS / BURNT_R_MAX
+    with np.errstate(invalid="ignore"):
+        step = np.abs(r_now - prev / BURNT_R_MAX)
+    live = mask & np.isfinite(step)
+    w = SLOT_MULT[live] * step[live]
+    return float(w.sum()), float((w * r_now[live]).sum())
+
+
+def burnt_slot_move(parent_packed: str, child_packed: str
+                    ) -> dict[str, float | bool]:
+    """The four MOVE-level burnt descriptors of prereg v3.1 §4c/§4d.
+
+    Like :func:`fresh_type_move` and unlike :data:`GD_PHYSICS` these are
+    properties of the EDGE.  The two features are the parent->child DIFFERENCE
+    of the board moments above::
+
+        burnt_absmov   = A(child)   - A(parent)
+        burnt_absmov_r = A_r(child) - A_r(parent)
+
+    which is what makes the registered liveness statement true and testable: a
+    move that relocates no burnt assembly leaves every ``S`` token where it was,
+    so both differences are EXACTLY zero and no separate liveness flag is needed
+    (§4c).  ``burnt_slots_moved`` is that liveness as a count and is a
+    diagnostic, not a feature.
+
+    **Why this form and not a conserving moment (§4c selection rule).**  The
+    registered rule admits a burnt column iff (i) it is not expressible as
+    ``sum mult*g(r)*X`` -- i.e. it is NOT conserved by a pure permutation of
+    equally-burnt assemblies -- and (ii) it is live on 100% of current-era
+    rewire rows.  ``|r_now - r_prev|`` couples the destination radius to the
+    assembly's own previous radius under an absolute value, so a swap of two
+    equal-grade burnt assemblies changes it; ``rew_cor_*`` / ``rew_flux_*`` are
+    conserving moments and are excluded by rule (i) REGARDLESS of their p-value,
+    which is the whole point of selecting structurally rather than on a readout.
+
+    **Measured coverage, and one place the registered §4c wording does not hold.**
+    On ``steps_v3.parquet`` (28,889 rows) the current-era same-cell rewire rows
+    carrying a ``d_f_xy`` reading number 214 — §4b's 213, up one — and of those
+    ``burnt_absmov_r`` is live on 96.7% and ``burnt_absmov`` on 73.8%; the PAIR is
+    live on 96.7%, **not the 100% condition (ii) states**.  The seven misses are
+    exchanges of two burnt assemblies between slots of equal radius and equal
+    multiplicity, for which every purely radial moment cancels by symmetry — no
+    choice of ``g(r)`` fixes it.  ``burnt_slots_moved`` IS live on 100% of them,
+    which is a fact for the results document, not a licence to promote a
+    diagnostic into the feature vector: §4c registered exactly two columns.
+
+    ``burnt_slots_moved`` counts destination slots whose burnt occupancy
+    changed: the slot is burnt on one side and not the other, or it is burnt on
+    both and its ``<restart>:<x>:<y>`` source differs.  (§4d words this as
+    "burnt slots with ``r_now != r_prev``"; that phrasing is a BOARD count and
+    is nonzero on fresh-only moves, so it cannot be the move-level diagnostic
+    the same table calls it.  The move-level reading is taken, is zero exactly
+    when the two features are structurally zero, and is recorded here as the
+    registered clarification.)
+    """
+    p_mask, p_prev, p_keys, p_ok = burnt_sublattice(parent_packed)
+    c_mask, c_prev, c_keys, c_ok = burnt_sublattice(child_packed)
+    p_a, p_ar = _burnt_board_moments(p_mask, p_prev)
+    c_a, c_ar = _burnt_board_moments(c_mask, c_prev)
+    moved = int(sum(1 for i in range(len(p_keys))
+                    if bool(p_mask[i]) != bool(c_mask[i])
+                    or (p_mask[i] and p_keys[i] != c_keys[i])))
+    return {
+        "burnt_absmov": c_a - p_a,
+        "burnt_absmov_r": c_ar - p_ar,
+        "burnt_slots_moved": float(moved),
+        "burnt_token_complete": bool(p_ok and c_ok),
+    }
+
+
+def burnt_move_columns(steps: pd.DataFrame) -> pd.DataFrame:
+    """:data:`BURNT_MOVE_COLUMNS` for an existing corpus, from its patterns.
+
+    Recomputed from the ``parent_pattern`` / ``child_pattern`` strings the
+    corpus already stores — no second implementation and no read of
+    ``data/store/records.parquet`` — the discipline
+    ``policy_v2_corpus.v3_columns`` used for the 22 v3 columns.
+    """
+    cache: dict[tuple[str, str], dict[str, float | bool]] = {}
+    rows = []
+    for ppat, cpat in zip(steps["parent_pattern"], steps["child_pattern"],
+                          strict=True):
+        hit = cache.get((ppat, cpat))
+        if hit is None:
+            hit = cache[(ppat, cpat)] = burnt_slot_move(ppat, cpat)
+        rows.append(hit)
+    out = pd.DataFrame(rows, index=steps.index)
+    out["burnt_absmov"] = out["burnt_absmov"].astype(float)
+    out["burnt_absmov_r"] = out["burnt_absmov_r"].astype(float)
+    out["burnt_slots_moved"] = out["burnt_slots_moved"].astype(float)
+    out["burnt_token_complete"] = out["burnt_token_complete"].astype(bool)
+    return out[list(BURNT_MOVE_COLUMNS)]
+
+
 def board_physics(
-    packed: str, genome: GeneralOrbitGenome | None, enrichment: dict[str, float] | None
+    packed: str, genome: GeneralOrbitGenome | None,
+    enrichment: dict[str, float] | None,
+    types: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, float]:
+    """Board descriptors.  ``types`` (the cell's fuel table) adds :data:`GD_PHYSICS`.
+
+    ``types=None`` is v1/v2's call and returns v1/v2's eight keys and nothing
+    else, so the frozen serving contract of ``MoveScorer`` / ``MoveScorerV2``
+    cannot move.
+    """
     out = ring_profile(packed, enrichment)
     out.update(
         residence_profile(genome) if genome is not None
         else {"once_burnt_periph_share": np.nan, "twice_burnt_periph_share": np.nan}
     )
+    if types is not None:
+        out.update(gd_profile(packed, types))
     return out
 
 
@@ -235,6 +610,32 @@ def load_enrichment(path: Path) -> dict[str, dict[str, float]]:
         fuel["library_id"], fuel["type_id"], fuel["u_avg_enrichment"], strict=True
     ):
         table.setdefault(str(lib), {})[str(tid)] = float(enr)
+    return table
+
+
+def load_fuel_table(path: Path) -> dict[str, dict[str, dict[str, float]]]:
+    """library_id -> {type_id: {field: value}} over :data:`GD_FIELDS`.
+
+    The Gd/lattice analogue of :func:`load_enrichment`, and deliberately a
+    SECOND loader rather than a widening of it: ``load_enrichment``'s return
+    type is the v1/v2 serving contract (``MoveScorer.enrichment``) and changing
+    its shape would move a frozen path.
+
+    Unlike enrichment, these fields have real holes — measured 2026-08-31 on the
+    194-row table: ``n_gd`` and ``kinf0`` are present for 36 of ga80's 70 types
+    (but for ALL of the types the five interventional cells actually load) and
+    ``gd_wt`` is missing for every ga80 type.  The holes are kept as NaN here and
+    handled once, in :func:`gd_profile`.
+    """
+    if not path.is_file():
+        return {}
+    fuel = pd.read_parquet(path, columns=["library_id", "type_id", *GD_FIELDS])
+    table: dict[str, dict[str, dict[str, float]]] = {}
+    for row in fuel.itertuples(index=False):
+        table.setdefault(str(row.library_id), {})[str(row.type_id)] = {
+            field: float(pd.to_numeric(getattr(row, field), errors="coerce"))
+            for field in GD_FIELDS
+        }
     return table
 
 
@@ -510,8 +911,28 @@ def build_steps(
     bands: dict[str, tuple[float, float]],
     enrichment: dict[str, dict[str, float]],
     sa: pd.DataFrame | None = None,
+    fuel_table: dict[str, dict[str, dict[str, float]]] | None = None,
 ) -> pd.DataFrame:
-    """Emit one row per lineage edge, from every source."""
+    """Emit one row per lineage edge, from every source.
+
+    ``fuel_table`` (:func:`load_fuel_table`) supplies the v3 Gd/lattice
+    descriptors.  Their 22 columns are emitted UNCONDITIONALLY — all-NaN /
+    ``False`` without a table — for the same reason the F_xy columns are
+    (:data:`FXY_FOM`): the column SET must not depend on what the caller had in
+    hand, or the appenders' schema-drift guard stops meaning anything.
+
+    **Quarantined rows never enter the edge universe.**  ``valid=False`` marks a
+    harness fault (the 2026-08-30 HGD569 alias quarantine) whose board and FOMs
+    describe a core that was never loaded, so such a row is dropped BEFORE
+    :func:`lineage_edges` — which is what actually removes it, since the edge set
+    is built from ``record_id`` membership.  Filtering afterwards would be too
+    late for the ``parent_record_id.isin(known)`` test, and masking downstream on
+    ``both_converged`` would not help at all: the column is about CONVERGENCE, and
+    a ``converged=True, valid=False`` row passes it.  Non-converged rows are
+    deliberately KEPT — a failed child is the negative half of the move-proposal
+    signal, and ``both_converged`` is the flag that marks it.
+    """
+    store = store[valid_flags(store)]
     indexed = store.set_index("record_id", drop=False)
     edges = lineage_edges(store, sa).reset_index(drop=True)
 
@@ -534,6 +955,7 @@ def build_steps(
     parent_phys: list[dict[str, float]] = []
     child_phys: list[dict[str, float]] = []
     burn_state: list[str] = []
+    gd_move: list[dict[str, float | bool]] = []
     for prid, ppat, crid, cpat, lib in zip(
         parents["record_id"], parents["pattern"],
         children["record_id"], children["pattern"],
@@ -553,9 +975,11 @@ def build_steps(
             swap_span.append(abs(r1 - r2))
             swap_radius.append(0.5 * (r1 + r2))
         enr = enrichment.get(str(lib))
-        parent_phys.append(board_physics(ppat, pg, enr))
-        child_phys.append(board_physics(cpat, cg, enr))
+        types = (fuel_table or {}).get(str(lib))
+        parent_phys.append(board_physics(ppat, pg, enr, types))
+        child_phys.append(board_physics(cpat, cg, enr, types))
         burn_state.append(move_burn_state(pg, ppat, cpat))
+        gd_move.append(fresh_type_move(ppat, cpat, types))
 
     steps = pd.DataFrame({
         "lineage_source": edges["lineage_source"].to_numpy(),
@@ -603,12 +1027,23 @@ def build_steps(
     steps[f"d_{FXY_FOM}"] = steps[f"child_{FXY_FOM}"] - steps[f"parent_{FXY_FOM}"]
 
     # ---- physics annotations (radial strategy) ---------------------------- #
-    p_phys = pd.DataFrame(parent_phys)
-    c_phys = pd.DataFrame(child_phys)
-    for name in PHYSICS:
-        steps[f"parent_{name}"] = p_phys[name].to_numpy()
-        steps[f"child_{name}"] = c_phys[name].to_numpy()
+    # ``reindex`` rather than ``[name]``: without a fuel table the Gd keys are
+    # absent from the per-board dicts and the columns must still exist, all-NaN.
+    p_phys = pd.DataFrame(parent_phys).reindex(columns=list(PHYSICS_V3))
+    c_phys = pd.DataFrame(child_phys).reindex(columns=list(PHYSICS_V3))
+    for name in PHYSICS_V3:
+        steps[f"parent_{name}"] = p_phys[name].to_numpy(dtype=float)
+        steps[f"child_{name}"] = c_phys[name].to_numpy(dtype=float)
         steps[f"d_{name}"] = steps[f"child_{name}"] - steps[f"parent_{name}"]
+
+    # ---- move-level Gd descriptors (prereg §4b) --------------------------- #
+    gd = pd.DataFrame(gd_move).reindex(columns=list(GD_MOVE_COLUMNS))
+    steps["n_fresh_type_changed"] = gd["n_fresh_type_changed"].to_numpy(dtype=float)
+    steps["fresh_type_multiset_changed"] = (
+        gd["fresh_type_multiset_changed"].fillna(False).astype(bool).to_numpy())
+    steps["fresh_gd_contrast"] = gd["fresh_gd_contrast"].to_numpy(dtype=float)
+    steps["gd_table_complete"] = (
+        gd["gd_table_complete"].fillna(False).astype(bool).to_numpy())
 
     steps["fresh_radial_dir"] = _direction(steps["d_fresh_enr_r_center"])
     steps["burnt_periph_dir"] = _direction(steps["d_twice_burnt_periph_share"])
@@ -671,8 +1106,19 @@ def build_elites(
     enrichment: dict[str, dict[str, float]],
     k: int = ELITE_K,
 ) -> pd.DataFrame:
-    """Top-``k`` feasible boards per cell by F_r and by node_peak (campaign-blind)."""
-    pool = store.copy()
+    """Top-``k`` feasible boards per cell by F_r and by node_peak (campaign-blind).
+
+    **Quarantined rows never become "good states".**  Dropped first, for the same
+    reason :func:`build_steps` drops them, and it matters MORE here:
+    :func:`feasibility` gates on ``converged`` ALONE, so a ``converged=True,
+    valid=False`` row passes it — and that is the DEFAULT end state of
+    ``lpopt/tools/quarantine_campaign.py`` (``converged=False`` is only written
+    under ``--unconverge``).  The rank is F_r-ASCENDING, so such a row does not
+    merely leak in, it lands at rank 1 of the cell.  ``elites.parquet`` is not a
+    report: it is the imitation target of the constructor policy and a read-only
+    input of the sha-pinned ablation wave.
+    """
+    pool = store[valid_flags(store)].copy()
     pool["feasible"] = feasibility(pool)
     pool = pool[pool["feasible"].fillna(False).astype(bool).to_numpy()].copy()
     pool["cell"] = [
@@ -1715,6 +2161,180 @@ def write_report(
 
 
 # --------------------------------------------------------------------------- #
+# v3.1 corpus mode (policy_v31_prereg_20260831_DRAFT.md §4d / §9a-A)
+# --------------------------------------------------------------------------- #
+#: The v3.1 corpus.  A THIRD file: ``steps_v3.parquet`` is byte-frozen because
+#: the shipped ``data/models/policy_v3`` members stamp its sha256 and the v3
+#: results document is judged on those bytes, exactly as ``steps.parquet`` is
+#: frozen for v2 (``policy_v2_corpus.STEPS_V3``).
+STEPS_V31 = POLICY_DIR / "steps_v31.parquet"
+#: The exploration campaign §4d merges into the corpus.  Registered expectation:
+#: 100 rows (99 converged) -> 45 parents, 81 resolvable pairs, 64 feasible,
+#: 33 with ``y_fxy > 0``, and **zero** new >=8-candidate parents, i.e. it buys
+#: training rows and level supervision and not one gate clause.
+R2_CAMPAIGN = "fpcamp_minfxy_e1e2_f121_r2"
+
+
+def merge_campaign_steps(base: pd.DataFrame, store: pd.DataFrame,
+                         campaign: str, bands: dict[str, tuple[float, float]],
+                         enrichment: dict[str, dict[str, float]],
+                         sa: pd.DataFrame | None,
+                         fuel_table: dict[str, dict[str, dict[str, float]]] | None,
+                         ) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Edges of ``campaign`` that ``base`` does not already carry.
+
+    The store is subset to the campaign's own records PLUS their parents before
+    :func:`build_steps` runs, so the whole 76k-row store is never re-mined: the
+    edge set is built from ``record_id`` membership, so a parent that is missing
+    from the subset would silently drop its child's edge.  Only edges whose
+    CHILD is a campaign record are returned — a parent's other children belong
+    to whatever campaign produced them and are either already in ``base`` or out
+    of scope for this merge.
+    """
+    rows = store[store["campaign"].astype(str) == campaign]
+    parents = store[store["record_id"].isin(
+        rows["parent_record_id"].dropna().astype(str))]
+    subset = pd.concat([rows, parents]).drop_duplicates(subset="record_id")
+    fresh = build_steps(subset, bands, enrichment, sa, fuel_table=fuel_table)
+    fresh = fresh[fresh["child_record_id"].isin(rows["record_id"])]
+
+    have = set(zip(base["parent_record_id"].astype(str),
+                   base["child_record_id"].astype(str)))
+    keep = [k not in have for k in zip(fresh["parent_record_id"].astype(str),
+                                       fresh["child_record_id"].astype(str))]
+    new = fresh[np.asarray(keep, dtype=bool)].reset_index(drop=True)
+
+    missing = [c for c in base.columns if c not in new.columns]
+    extra = [c for c in new.columns if c not in base.columns]
+    if missing or extra:
+        raise ValueError(
+            f"the re-mined {campaign!r} rows do not carry the corpus schema: "
+            f"missing={missing} extra={extra}")
+    census = {"store_rows": int(len(rows)), "edges": int(len(fresh)),
+              "new_edges": int(len(new)),
+              "new_parents": int(new["parent_record_id"].nunique())}
+    return new[list(base.columns)], census
+
+
+def cmd_v31(args) -> int:
+    """Write ``data/policy/steps_v31.parquet`` = v3 corpus + r2 rows + 4 columns.
+
+    Dry run unless ``--apply``.  ``steps_v3.parquet`` is opened read-only and is
+    never written, whatever the flags say.
+    """
+    base_path, out_path = Path(args.steps_v3), Path(args.out_v31)
+    if out_path.resolve() == base_path.resolve():
+        raise SystemExit("refusing to overwrite the v3 corpus; --out-v31 must "
+                         "be a different file (prereg §4d, byte preservation)")
+    base = pd.read_parquet(base_path)
+    print(f"[v31] source {base_path.name}: {len(base)} rows, "
+          f"{len(base.columns)} columns")
+
+    census: dict[str, int] = {}
+    merged = base
+    if args.merge_campaign:
+        store = pd.read_parquet(args.store)
+        sa = (pd.read_parquet(args.sa_lineage)
+              if Path(args.sa_lineage).is_file() else None)
+        new, census = merge_campaign_steps(
+            base, store, args.merge_campaign, cyclen_bands(REPO),
+            load_enrichment(FUEL_TYPES), sa, load_fuel_table(FUEL_TYPES))
+        print(f"[v31] {args.merge_campaign}: {census['store_rows']} store rows "
+              f"-> {census['edges']} edges, {census['new_edges']} new "
+              f"({census['new_parents']} parents)")
+        merged = pd.concat([base, new], ignore_index=True)
+
+    already = [c for c in BURNT_MOVE_COLUMNS if c in merged.columns]
+    if already and not args.force:
+        print(f"[v31] already present: {already} - nothing to do")
+        return 0
+    merged = merged.drop(columns=already)
+    burnt = burnt_move_columns(merged)
+    out = pd.concat([merged, burnt], axis=1)
+
+    # ---- the §4b/§4c coverage readouts, printed rather than transcribed ---- #
+    # The era mask is imported, not spelled out: a literal ("ga80", "paramA")
+    # here and CURRENT_ERA_LIBRARIES in lpopt.policy.v2 agree today and are a
+    # silent divergence the first time the era gains a library.
+    from lpopt.policy.v2 import CURRENT_ERA_LIBRARIES
+
+    rewire = merged["move_class"].isin(("rewire_swap", "rewire_multi")).to_numpy()
+    era = merged["library_id"].isin(CURRENT_ERA_LIBRARIES).to_numpy()
+    same = ~merged["cross_cell"].astype(bool).to_numpy()
+    labelled = merged["d_f_xy"].notna().to_numpy()
+    # TWO denominators, both printed, because they differ and the results
+    # document must not silently pick one: §4c's liveness rule is about the rows
+    # the gate can READ (a d_f_xy label), while the wider row set is what the
+    # corpus contains.  The tolerance is |.| > 1e-12 rather than != 0.0 because
+    # both columns are a difference of two float sums.
+    for label, rows in (("labelled", rewire & era & same & labelled),
+                        ("all      ", rewire & era & same)):
+        live = {}
+        for col in ("burnt_absmov", "burnt_absmov_r"):
+            v = burnt[col].to_numpy(float)
+            live[col] = np.isfinite(v) & (np.abs(v) > 1e-12)
+            share = live[col][rows].mean() if rows.any() else float("nan")
+            print(f"[v31] {col:16s} live on {share:6.1%} of {label} current-era "
+                  f"same-cell rewire rows "
+                  f"({int(live[col][rows].sum())}/{int(rows.sum())})")
+        pair = live["burnt_absmov"] | live["burnt_absmov_r"]
+        share = pair[rows].mean() if rows.any() else float("nan")
+        print(f"[v31] {'the PAIR':16s} live on {share:6.1%} of {label} rows "
+              f"({int(pair[rows].sum())}/{int(rows.sum())}); §4c-(ii) as WORDED "
+              f"asks for 100% per column, and neither column reaches it -- the "
+              f"misses are burnt exchanges between slots of equal radius and "
+              f"equal multiplicity, where every purely radial moment cancels by "
+              f"symmetry and no choice of g(r) can help.  The pair reading is a "
+              f"registered relaxation, and burnt_slots_moved is live on "
+              f"{(burnt['burnt_slots_moved'].to_numpy()[rows] > 0).mean():.1%} "
+              f"of them.")
+    # TWO lines, because the two row sets answer two different questions and
+    # swapping one for the other prints a FALSE violation.  The invariant of
+    # §9a-H(f) is structural -- a row whose burnt occupancy did not change
+    # carries exactly 0 -- and the row set it is stated on is
+    # ``burnt_slots_moved == 0``, not ``~rewire``: on ``steps_v3.parquet``
+    # 12,836 of the 18,047 non-rewire rows DO relocate burnt fuel
+    # (fresh_relocate, feed_change_multi, sa_unknown, multi, remove_fresh_unit,
+    # add_fresh_unit), so a max|.| over ``~rewire`` is legitimately 2.5e+01 and
+    # printing it beside the words "must be EXACTLY 0" would put a violation
+    # that does not exist into the results document.  The invariant is printed
+    # on the structural row set; the census of the classes that make the two
+    # denominators differ is printed beside it, unlabelled by any "must be".
+    static = burnt["burnt_slots_moved"].to_numpy(float) == 0.0
+    for col in ("burnt_absmov", "burnt_absmov_r"):
+        v = burnt[col].to_numpy(float)[static]
+        worst = float(np.abs(v).max()) if v.size else 0.0
+        print(f"[v31] {col:16s} max|.| on burnt_slots_moved == 0 rows: "
+              f"{worst:.3e} ({int(static.sum())} rows; a move that relocates "
+              f"no burnt assembly must be EXACTLY 0)")
+    movers = (~rewire) & ~static
+    print(f"[v31] non-rewire move classes that DO relocate burnt fuel: "
+          f"{int(movers.sum())}/{int((~rewire).sum())} non-rewire rows "
+          f"(these are why ~rewire is NOT the invariant's row set)")
+    if movers.any():
+        counts = merged.loc[movers, "move_class"].value_counts()
+        print("[v31]   " + ", ".join(f"{k} {int(v)}" for k, v in counts.items()))
+    print(f"[v31] burnt_token_complete: "
+          f"{burnt['burnt_token_complete'].mean():.1%} corpus")
+    for col in ("burnt_absmov", "burnt_absmov_r"):
+        v = burnt[col].to_numpy(float)[era & same]
+        if v.size:
+            print(f"[v31] {col:16s} current-era same-cell p05/p95 = "
+                  f"{np.nanpercentile(v, 5):+.4f} / {np.nanpercentile(v, 95):+.4f} "
+                  f"(the §4d scale constants are REGISTERED from these)")
+
+    if not args.apply:
+        print(f"[v31] DRY RUN (default) - {out_path} not written "
+              f"({len(out)} rows, {len(out.columns)} columns)")
+        return 0
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(out_path, index=False)
+    print(f"[v31] wrote {out_path}  ({len(out)} rows, {len(out.columns)} columns)")
+    print(f"[v31] {base_path.name} untouched")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1727,7 +2347,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--no-report", action="store_true")
     parser.add_argument("--verify-transpose", type=int, nargs="?", const=1500, default=1500,
                         help="sample size for the transpose invariance check (0 to skip)")
+    # ---- policy v3.1 corpus mode (§4d).  Off unless --v31 is given. -------- #
+    parser.add_argument("--v31", action="store_true",
+                        help="build the v3.1 corpus (v3 + the r2 campaign + the "
+                             "four burnt sub-lattice columns) and exit; the "
+                             "default mine is NOT run and steps_v3.parquet is "
+                             "opened read-only")
+    parser.add_argument("--steps-v3", type=Path, default=POLICY_DIR / "steps_v3.parquet")
+    parser.add_argument("--out-v31", type=Path, default=STEPS_V31)
+    parser.add_argument("--merge-campaign", default=R2_CAMPAIGN,
+                        help="campaign whose edges are merged in; '' to skip")
+    parser.add_argument("--apply", action="store_true",
+                        help="--v31 writes nothing without this")
+    parser.add_argument("--force", action="store_true",
+                        help="--v31 recomputes columns that are already present")
     args = parser.parse_args(argv)
+
+    if args.v31:
+        return cmd_v31(args)
 
     store = pd.read_parquet(args.store)
     bands = cyclen_bands(REPO)
@@ -1737,7 +2374,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[warn] no SA lineage at {args.sa_lineage}; "
               "run mine_sa_lineage.py to recover the Dataset A corpus")
 
-    steps = build_steps(store, bands, enrichment, sa)
+    steps = build_steps(store, bands, enrichment, sa,
+                        fuel_table=load_fuel_table(FUEL_TYPES))
     elites = build_elites(store, enrichment, args.elite_k)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

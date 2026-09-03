@@ -238,3 +238,18 @@
 
 > 이 8+2 캠페인의 **feasible 0건**이 [parity_round1c_20260722.md](../data/reports/parity_round1c_20260722.md)의
 > 분석 대상이며, "F_r 경계 순위스킬 결여"라는 프로그램 초기의 핵심 진단을 낳았다.
+
+---
+
+## 2026-09-03 업데이트
+
+이 창에 추가된 최상위 리포트: `pinbu_wave_minfxy_r2_results_20260903.md`,
+`fxy_era_adversarial_verification_20260831.md`(+ Amendment E in `fxy_head_prereg_20260829.md`),
+`policy_v31_prereg_20260831_DRAFT.md`, `policy_v31_results_from_oof_20260903.md`,
+`fr135_feasibility_scoping_20260903.md`, `sample_efficiency_kpi_20260903.md`(+png),
+`sample_efficiency_control_prereg_20260903_DRAFT.md`, `active_frontier_loop_spec_20260903.md`,
+`assembly_on_demand_design_v2_20260903.md`, `assembly_on_demand_tasks_20260903.md`,
+`assembly_slice_Z_prereg_20260903_DRAFT.md`, `slice_Z_pipeline_runbook_20260903.md`,
+`assembly_on_demand_r1_implementation_20260903.md`, `assembly_sigma_chain_retrodiction_20260903.md`,
+`sliceZ_s6_diagnosis_20260903.md`, `bd_backfill_plan_20260903.md`, 그리고
+`mesh_v4_20260903/`(README·README_figures·대표 figure 4장·`fr_vs_db/` 비교 세트).

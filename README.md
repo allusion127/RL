@@ -458,3 +458,44 @@ face-ADF DEAD, 규칙 단독 구성기 FAILURE, 정책 v1 낙제, `F_xy` 헤드 
 반전된 provenance로 서빙됐다**(순위는 대체로 보존, 레벨은 보정이 흡수), ③ `WaveVerifier`
 resolver 미배선으로 **개입 웨이브 160행이 아무도 설계하지 않은 노심을 계산했고** 재실행으로
 교정됐다. 셋 다 §04의 연대기와 §03의 결함 목록에 수치와 함께 남아 있다.
+
+---
+
+## 2026-09-03 업데이트
+
+**F_xy 시대 r1/r2 + phase-2 핀 고정(첫 deliverable 코어).** `min_fxy` 라운드 2가 라운드 1의
+프런티어를 재검증하고 `pinbu_wave` r2가 뒤이어 핀 연소도 축을 재고정했다 —
+`pinbu_wave_minfxy_r2_results_20260903.md`, `fxy_backfill_199_pinbu_wave_minfxy_r2_20260903.csv`.
+
+**적대적 검증과 후속 수정.** `fxy_era_adversarial_verification_20260831.md`가 08-29~31 캠페인
+계보를 재감사해 서빙 경로 재구성 오류를 확인했고, `fxy_head_prereg_20260829.md`에 Amendment E로
+반영됐다.
+
+**그물망 v4 + LRM + DB 비교.** `data/reports/mesh_v4_20260903/`(README·README_figures·대표 4장
+figure)가 `(e_core × feed)` 설계공간을 재소인했고, `fr_vs_db/`가 AI 예측 F_r을 DeCART 실측
+격자와 나란히 비교했다(원본 셀/파레토 대용량 덤프·로그는 `.gitignore` 규칙에 따라 제외).
+
+**F_r 1.35 타당성 스코핑.** `fr135_feasibility_scoping_20260903.md` — 핀 첨두 대 집합체 첨두의
+어느 쪽이 병목인지 스코핑.
+
+**샘플 효율 KPI.** `sample_efficiency_kpi_20260903.md`(+png) 와 통제군 사전등록
+`sample_efficiency_control_prereg_20260903_DRAFT.md`.
+
+**능동 프런티어 루프 사양.** `active_frontier_loop_spec_20260903.md`.
+
+**Assembly-on-demand (DeCART2D 서로게이트 → 실 DeCART2D → HGC → 라이브러리 재빌드 →
+부트스트랩).** 설계 v2·태스크 분해·slice Z 사전등록(부록 포함)·러너북·r1 구현 기록·
+σ-체인 역추정·S6 진단까지 한 세트 — `assembly_on_demand_design_v2_20260903.md`,
+`assembly_on_demand_tasks_20260903.md`, `assembly_slice_Z_prereg_20260903_DRAFT.md`,
+`slice_Z_pipeline_runbook_20260903.md`, `assembly_on_demand_r1_implementation_20260903.md`,
+`assembly_sigma_chain_retrodiction_20260903.md`, `sliceZ_s6_diagnosis_20260903.md`.
+Slice Z는 **설계·러너북 완료, 실집행은 접근성 이슈(호스트 계정 분리)로 보류** 상태다.
+
+**정책 v3.1 / arm 5.** `policy_v31_prereg_20260831_DRAFT.md` → `policy_v31_results_from_oof_20260903.md`,
+`lpopt/policy/{v3,train_v3,metrics_v31}.py`, `lpopt/model/{train,al_retrain}.py`의 arm-5 학습 플래그.
+
+**기타.** `bd_backfill_plan_20260903.md`(연소도 백필 계획), `lpopt/data/store.py`의
+trustworthy 술어, `lpopt/model/dataset_torch.py`, `lpopt/search/{campaign,verify}.py`의
+provenance/parity 강화, `lpopt/design/{lattice,screen,opscreen_chain,need,hgc_gates,package,
+library,bootstrap,compliance,spec}.py`, `lpopt/search/{sdm_mtc,coverage}.py`,
+`lpopt/tools/kpi_calls_to_frontier.py`.

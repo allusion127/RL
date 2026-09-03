@@ -65,6 +65,7 @@ from .assets import (
     CaseAssetResolver,
     ResolvedAssets,
     _read_deck_flex,
+    registry_aliases_from_package,
     validate_reload_deck,
 )
 from .genome import depth2_edges_for_fresh_units
@@ -796,6 +797,25 @@ def classify_outcome(outcome: WaveOutcome) -> str:
 EvaluatorFactory = Callable[[int, int | None], Any]
 
 
+def _is_multi_char_type_package(package_root: Path | None) -> bool:
+    """Does this package's library key fuel by a type_id LONGER than its alias?
+
+    ``True`` for a paramA parametric package — whose ``designs.json`` is the
+    marker (a ga80 ``FEASIBLE_PACKAGE`` carries none) and whose ``type_id``\\ s
+    are 13 characters against 2-character ``%LPD_B&C`` batch ids — and for any
+    package whose ``registry.json`` maps a multi-character type.  ``False`` for
+    ga80 and for anything unreadable, so this can only ever ADD a diagnostic.
+    """
+    if package_root is None:
+        return False
+    try:
+        if (package_root / "designs.json").is_file():
+            return True
+        return any(len(t) > 2 for t in registry_aliases_from_package(package_root))
+    except OSError:                                   # unreadable root
+        return False
+
+
 class WaveVerifier:
     """Fixed-size MASTER wave verifier (ported ``_ga_case_evaluator`` wiring)."""
 
@@ -823,6 +843,7 @@ class WaveVerifier:
         assign_cores: bool | None = None,
         purge_intermediate: bool = True,
         harvest_maps: bool = False,
+        allow_missing_alias_bridge: bool = False,
     ) -> None:
         self.run_dir = Path(run_dir)
         self.package_root = Path(package_root) if package_root is not None else None
@@ -862,6 +883,32 @@ class WaveVerifier:
             self.package_root if self.package_root is not None else ".",
             library_dims=self.library_dims,
         )
+        # HYGIENE (not accident prevention — the derivation above already fixed
+        # the accident).  The residual risk is narrow and both halves of it are
+        # SILENT: a multi-char-type (paramA) package whose ``registry.json`` is
+        # absent, and an explicit ``registry_aliases={}``.  Either leaves the
+        # bridge empty on a library whose type_ids are NOT batch ids, so every
+        # translation is a no-op and the wave dies one deck at a time in
+        # ``validate_reload_deck`` instead of at construction.  A ga80 (2-char
+        # type_id == alias) library needs no bridge and is untouched.
+        # ``package_root=None`` is exactly where HGD569 lived (an alias-less
+        # resolver rooted at the CWD), so the detector is pointed at the
+        # RESOLVER's root in that case rather than skipped.
+        detect_root = self.package_root
+        if detect_root is None:
+            resolver_root = getattr(self.resolver, "package_root", None)
+            detect_root = Path(resolver_root) if resolver_root is not None else None
+        if (not self.resolver.type_to_alias
+                and not allow_missing_alias_bridge
+                and _is_multi_char_type_package(detect_root)):
+            raise ValueError(
+                f"WaveVerifier for multi-char-type package {detect_root} "
+                f"has an EMPTY type_id -> alias bridge: no registry.json to "
+                f"derive it from, or an explicit empty registry_aliases.  Pass "
+                f"resolver=CaseAssetResolver(<package with registry.json>) or, "
+                f"for a package that genuinely has no aliases, "
+                f"allow_missing_alias_bridge=True."
+            )
         self.cases_dir = self.run_dir / "produce_cases"
         self.work_root = self.run_dir / "master_work"
         self.cache_dir = Path(cache_dir) if cache_dir is not None else self.run_dir / "master_cache"
@@ -1079,6 +1126,12 @@ class WaveVerifier:
     def _eval_entry(
         self, evaluator: Any, entry: WaveEntry, core_class: str = ""
     ) -> WaveOutcome:
+        # E.7-(a): the board about to be staged is the last point at which the
+        # VERIFIED board is still choosable.  Refuse OUTSIDE the try below — a
+        # scored/verified pattern divergence is a harness defect, not a property
+        # of the (pattern, restart) pair, and must not be absorbed into an
+        # ``error`` label that reads as "this board did not run".
+        assert_scored_pattern_parity(entry.pattern, entry.meta, stage="verify")
         start = time.perf_counter()
         try:
             case_data = self._build_case_data(entry)
@@ -1197,6 +1250,48 @@ def _tolerance_margin_from_meta(meta: Mapping[str, Any]) -> float | None:
 
 
 # --------------------------------------------------------------------------- #
+# scored-vs-verified pattern parity
+# --------------------------------------------------------------------------- #
+#: ``WaveEntry.meta`` key carrying ``Pattern.digest`` of the board the SURROGATE
+#: scored.  Stamped by the caller at selection time (``campaign``), checked here
+#: at the two points where the *verified* / *stored* pattern is chosen.
+SCORED_DIGEST_KEY = "scored_pattern_digest"
+
+
+class ScoredPatternMismatch(RuntimeError):
+    """The verified/stored board is not the board the surrogate scored.
+
+    Defect E.7-(a): ``selection.json`` records a prediction for the candidate the
+    acquisition ranked, while the store records the board MASTER actually ran.
+    Nothing used to tie the two together, so any legalisation / canonicalisation
+    / repair inserted between scoring and verification would silently detach every
+    served prediction from its label — and could not be told apart from a
+    checkpoint difference in an offline rescore.  This makes that class of defect
+    fail loudly at the wave that causes it.
+    """
+
+
+def assert_scored_pattern_parity(pattern: Pattern, meta: Mapping[str, Any] | None,
+                                 *, stage: str) -> None:
+    """Raise unless ``pattern`` is byte-identical to the board that was scored.
+
+    A no-op when the caller stamped no digest (test doubles, resumed legacy
+    entries): absence of provenance is not evidence of a mismatch.
+    """
+
+    want = (meta or {}).get(SCORED_DIGEST_KEY)
+    if not want:
+        return
+    got = pattern.digest
+    if got != want:
+        raise ScoredPatternMismatch(
+            f"{stage}: pattern digest {got} != scored digest {want} "
+            f"(record_id={(meta or {}).get('record_id')!r}); the board that was "
+            "surrogate-scored is not the board being verified/stored"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # outcome -> CanonicalRecord
 # --------------------------------------------------------------------------- #
 def outcome_to_record(
@@ -1224,6 +1319,10 @@ def outcome_to_record(
     """
 
     pattern = outcome.pattern
+    # E.7-(a): the store row is the last point at which the RECORDED board is
+    # still choosable — pin it to the scored one so a served prediction and its
+    # label can never describe two different cores.
+    assert_scored_pattern_parity(pattern, outcome.meta, stage="store")
     case_pair = outcome.case_key.pair
     feed = int(outcome.case_key.feed)
     record_id = compute_record_id(pattern.canonical(), library_id, case_pair, deck_knobs)
@@ -1307,10 +1406,13 @@ __all__ = [
     "PHYSICS_KILL_FAILURES",
     "PRODUCE_DECK_KNOBS",
     "PurgingEquilibriumRunner",
+    "SCORED_DIGEST_KEY",
+    "ScoredPatternMismatch",
     "WatchdogMasterRunner",
     "WaveEntry",
     "WaveOutcome",
     "WaveVerifier",
+    "assert_scored_pattern_parity",
     "classify_outcome",
     "lineage_anchor",
     "outcome_to_record",

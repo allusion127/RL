@@ -1502,3 +1502,13 @@ MASTER 생산·검증 = `HOST_199` / `HOST_198` / `HOST_104` / 로컬 PC. `HOST_
 `model_api.py` (서빙) · `physics_prior.py` · `power_prior.py` · `calibrate.py` · `cell_calibrate.py` ·
 `conformal.py` · `splits.py` · `folds.py` · `ab_*.py` · `al_retrain.py` · `distill.py` ·
 `lpopt/data/fuel_types.py` · `flatness.py` · `map_calibration.py` · `pinppi.py` · `lpopt/curriculum.py`
+
+---
+
+## 2026-09-03 업데이트
+
+`lpopt/model/model_api.py`에 보정(calibration) 왕복 일관성 검증이, `lpopt/model/dataset_torch.py`·
+`lpopt/model/folds.py`에 폴드 배정 정합성 개선이 들어갔다. `lpopt/model/train.py`·
+`lpopt/model/al_retrain.py`에 정책 v3.1(arm 5) 학습 플래그가 추가됐다 —
+`policy_v31_prereg_20260831_DRAFT.md`로 사전등록되고 `policy_v31_results_from_oof_20260903.md`로
+out-of-fold 판정됐다. `lpopt/data/edit5.py`가 배치-스왑류 편집 연산을 담당한다.

@@ -38,7 +38,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -330,19 +330,44 @@ def corpus_provenance(library_id: str) -> tuple[str, str]:
       extract_a libraries, ``"P"`` for the campaign ones.  Serving used
       :func:`~..model.featurize.library_provenance` here, which predates
       ``dataset="P"`` and answers ``"A"`` for paramA — so every paramA proposal
-      was scored with ``g_dataset_flag`` 0.0 against the 2,401 paramA corpus rows
-      that trained at 1.0 (2026-08-29 forensic; measured up to **0.087 absolute**
+      was scored with ``g_dataset_flag`` 0.0 against paramA corpus rows that
+      trained at 1.0 (2026-08-29 forensic; measured up to **0.087 absolute**
       P(improve) drift on ``gate_cur`` paramA rows, see below).  THIS is the half
-      that was broken and is fixed here.
+      that was broken and is fixed here.  Count, stated against the ONE corpus it
+      can be stated against — the v2 checkpoints' own snapshot, selected by
+      ``corpus_sha256`` ``fe53ac81…`` (28,084 rows,
+      ``steps.parquet.bak_pre_fpcamp_minfr_triple_f125``): **2,388** paramA rows,
+      all ``dataset="P"``.  (An earlier revision of this docstring said 2,401,
+      which was the count in the live ``data/policy/steps.parquet`` on
+      2026-08-30, not in the trained corpus; that file grows every wave — 2,713
+      paramA rows on 2026-09-02 — so only the INVARIANT "every paramA row carries
+      ``P``" is stable, and it, not any count, is what
+      ``test_corpus_provenance_reproduces_every_corpus_rows_dataset`` asserts.)
 
     * ``sym_class`` — the corpus did NOT take this from the row.  Every ga80
       pattern in the cache was built with ``library_provenance(lib)[1]``, i.e.
       ``"free69"`` -> ``g_sym_class`` 0.0, even though 3,865 of the 3,930 ga80
-      corpus rows carry ``sym_class="rot61"`` in the store.  Train and serve were
-      CONSISTENTLY wrong there, so the shipped ``data/models/policy_v2``
-      checkpoint learned against 0.0 and serving must keep feeding it 0.0.
-      Switching this half to the store truth would silently mis-feed the shipped
-      ensemble; it is a **corpus** defect, not a serving one.
+      rows in that same v2 snapshot carry ``sym_class="rot61"`` in the store.
+      Train and serve were CONSISTENTLY wrong there, so the shipped
+      ``data/models/policy_v2`` checkpoint learned against 0.0 and serving must
+      keep feeding it 0.0.  Switching this half to the store truth would silently
+      mis-feed the shipped ensemble.
+
+      .. warning:: **This half is STILL LIVE on the default policy serve path.**
+
+         Its ORIGIN is the corpus, but its EFFECT is at serve time: every ga80
+         board scored through ``MoveScorer`` (v1, the ``get_scorer`` default) or
+         ``MoveScorerV2`` today is conditioned on ``g_sym_class`` 0.0, i.e. on
+         :func:`~..model.featurize.library_provenance`'s inverted answer.  Only
+         :class:`~.scorer.MoveScorerV3` serves
+         :func:`~..model.featurize.serve_provenance`, and no v3 checkpoint is
+         promoted (``data/models/policy_v3`` does not exist; only
+         ``runs/policy_v3/``).  So the 2026-08-29 provenance fix is closed on the
+         SURROGATE serve path and **open, by design, on the shipped policy one**
+         — do not describe it as "a corpus defect, not a serving one".
+         Constructing a v1/v2 scorer -- through :func:`~.scorer.get_scorer` or a
+         bare :meth:`~.scorer.MoveScorer.load` -- warns once per process that it
+         serves this map.
 
     .. admonition:: v3 prerequisite
 
@@ -367,8 +392,18 @@ def _sym_class(library_id: str) -> str:
 def build_pattern_cache(steps: pd.DataFrame, *,
                         fuel_types: str | Path = FUEL_TYPES_PARQUET,
                         n_workers: int = 0,
-                        progress: bool = True) -> PatternCache:
+                        progress: bool = True,
+                        provenance: Callable[[str], tuple[str, str]]
+                        = corpus_provenance) -> PatternCache:
     """Featurize every distinct pattern in ``steps`` AND its diagonal mirror.
+
+    ``provenance`` is the ``(dataset, sym_class)`` map the boards are conditioned
+    with, and it DEFAULTS to :func:`corpus_provenance` so this function's
+    behaviour is unchanged for v1/v2.  v3 passes
+    :func:`lpopt.policy.v3.provenance_v3` (= ``featurize.serve_provenance``),
+    which is the whole of its corpus re-mine: the same argument that made
+    ``corpus_provenance`` a single definition for train and serve makes it a
+    PARAMETER once two corpora with different provenance exist at once.
 
     ~21k distinct boards x 2 at ~19 ms each — minutes, once, then cached to
     disk.  The cache stores the ``(C, 69)`` slot matrix rather than the
@@ -398,11 +433,11 @@ def build_pattern_cache(steps: pd.DataFrame, *,
     # per-row and per-library answers differ; fail loudly rather than train on a
     # featurization the serve path cannot reconstruct.
     for _feed, _pair, lib, ds in ctx.values():
-        if (ds == "A") != (corpus_provenance(lib)[0] == "A"):
+        if (ds == "A") != (provenance(lib)[0] == "A"):
             raise ValueError(
-                f"library {lib!r} carries dataset={ds!r} but corpus_provenance "
-                f"derives {corpus_provenance(lib)[0]!r}; serving could not "
-                f"reconstruct this row's g_dataset_flag")
+                f"library {lib!r} carries dataset={ds!r} but "
+                f"{provenance.__name__} derives {provenance(lib)[0]!r}; serving "
+                f"could not reconstruct this row's g_dataset_flag")
 
     # add the mirror of every pattern under the same context
     mirror_of: dict[str, str] = {}
@@ -423,7 +458,7 @@ def build_pattern_cache(steps: pd.DataFrame, *,
     gvecs = np.zeros((len(patterns), len(enc.globals_names)), np.float32)
     for i, pat in enumerate(patterns):
         feed, pair, lib, _ds = ctx[pat]
-        dataset, sym_class = corpus_provenance(lib)
+        dataset, sym_class = provenance(lib)
         inp = RecordInputs(pattern=pat, feed=feed, case_pair=pair,
                            library_id=lib, sym_class=sym_class, dataset=dataset)
         slot_vals = enc.encode_slot_matrix(inp, fuel)

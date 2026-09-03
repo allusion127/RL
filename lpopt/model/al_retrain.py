@@ -120,6 +120,28 @@ def champion_recipe(model_dir: str | Path) -> dict:
 # --------------------------------------------------------------------------- #
 # invocation composition
 # --------------------------------------------------------------------------- #
+#: Prereg Amendment D.4 arm 4 (2026-08-31), REGISTERED constants — the trunk LR
+#: multiple explicitly "is not adjusted after the fact", and the f_xy switches
+#: are arm 3's, unchanged.  Changing any of them requires a new pre-registration.
+ARM4_TRUNK_LR_MULT = 0.05
+ARM4_FXY_SELECT_WEIGHT = 0.5
+ARM4_WARMUP_EPOCHS = 2
+
+#: Prereg Amendment E.3 (2026-09-03) arm 5 — arm 4 VERBATIM plus a within-cell
+#: pairwise margin-rank hinge on the composed f_xy row.  E.3 freezes these six
+#: constants *and the selection band* before the run ("값을 바꾸는 재시도는 새
+#: 사전등록을 요구한다"), so changing any of them requires a new
+#: pre-registration, not an edit here.  Nothing else about arm 4 moves — that is
+#: what makes the comparison paired.
+ARM5_FXY_RANK_WEIGHT = 3.0
+ARM5_FXY_RANK_CELL = "gate"
+ARM5_FXY_RANK_MARGIN_Z = 0.1
+ARM5_FXY_RANK_MIN_GAP = 0.005
+ARM5_FXY_RANK_LOW_THRESH = 1.60
+ARM5_FXY_RANK_LOW_WEIGHT = 3.0
+ARM5_FXY_SELECT_BAND = 0.50
+
+
 def recipe_to_train_args(
     recipe: dict,
     *,
@@ -128,6 +150,12 @@ def recipe_to_train_args(
     map_fr_consistency_weight: float = 0.0,
     init_from: str | Path | None = None,
     freeze_trunk_cyclen: bool = False,
+    trunk_finetune_lr_mult: float = 0.0,
+    fxy_prior_on_predicted: bool = False,
+    fxy_select_weight: float | None = None,
+    warmup_epochs: int | None = None,
+    fxy_rank: bool = False,
+    fxy_select_band: float | None = None,
 ) -> list[str]:
     """Compose the ``lpopt.model.train`` CLI args that reproduce ``recipe``.
 
@@ -179,11 +207,16 @@ def recipe_to_train_args(
     if recipe.get("promote_fxy"):
         args.append("--promote-fxy")
     # Freeze-finetune: champion weights in, trunk frozen, new head row trained.
-    # ``--freeze-trunk-cyclen`` REQUIRES ``--init-from`` (train.py raises
-    # otherwise), so they are emitted together and never independently.
+    # ``--freeze-trunk-cyclen`` / ``--trunk-finetune-lr-mult`` REQUIRE
+    # ``--init-from`` (train.py errors otherwise), so they are emitted together
+    # and never independently — and they are mutually exclusive, so arm 4's
+    # multiplier REPLACES the freeze flag rather than joining it.
     if init_from is not None:
         args += ["--init-from", str(init_from)]
-        if freeze_trunk_cyclen:
+        if float(trunk_finetune_lr_mult) > 0.0:
+            args += ["--trunk-finetune-lr-mult",
+                     str(float(trunk_finetune_lr_mult))]
+        elif freeze_trunk_cyclen:
             args.append("--freeze-trunk-cyclen")
     if distill_cache is not None and float(recipe.get("distill_weight", 0.0)) > 0.0:
         args += ["--distill-targets", str(distill_cache),
@@ -195,6 +228,27 @@ def recipe_to_train_args(
     args += ["--f-r-rank-weight", str(float(fr_rank_weight))]
     if float(map_fr_consistency_weight) > 0.0:
         args += ["--map-fr-consistency-weight", str(float(map_fr_consistency_weight))]
+    # f_xy head switches (arm 3's, carried unchanged into arm 4).  Emitted LAST so
+    # the composed line is the prereg's D.4.2 command token-for-token.
+    if fxy_prior_on_predicted:
+        args.append("--fxy-prior-on-predicted")
+    if fxy_select_weight is not None:
+        args += ["--fxy-select-weight", str(float(fxy_select_weight))]
+    if warmup_epochs is not None:
+        args += ["--warmup-epochs", str(int(warmup_epochs))]
+    # arm 5's six rank knobs + the selection band, emitted after arm 4's block so
+    # the composed line is prereg E.3.2's [3] token-for-token.  The trainer
+    # refuses ``--fxy-rank-weight > 0`` without ``--promote-fxy``, and arm 5
+    # implies the same ``--init-from``/``--promote-fxy`` spine as arm 4.
+    if fxy_rank:
+        args += ["--fxy-rank-weight", str(float(ARM5_FXY_RANK_WEIGHT)),
+                 "--fxy-rank-cell", str(ARM5_FXY_RANK_CELL),
+                 "--fxy-rank-margin-z", str(float(ARM5_FXY_RANK_MARGIN_Z)),
+                 "--fxy-rank-min-gap", str(float(ARM5_FXY_RANK_MIN_GAP)),
+                 "--fxy-rank-low-thresh", str(float(ARM5_FXY_RANK_LOW_THRESH)),
+                 "--fxy-rank-low-weight", str(float(ARM5_FXY_RANK_LOW_WEIGHT))]
+    if fxy_select_band is not None:
+        args += ["--fxy-select-band", str(float(fxy_select_band))]
     return args
 
 
@@ -293,6 +347,8 @@ def plan_al_retrain(
     map_fr_consistency_weight: float = 0.0,
     refresh_teacher: bool = True,
     add_fxy_head: bool = False,
+    arm4: bool = False,
+    arm5: bool = False,
 ) -> dict:
     """Compose the champion-faithful AL retrain plan (no side effects).
 
@@ -308,17 +364,46 @@ def plan_al_retrain(
     regress by construction, which is what makes the honest gate cheap to pass
     with ~840 labels.  It is deliberately a plan-level switch, not a recipe field:
     the champion did not have the head, and pretending its recipe did would be the
-    same drift the ``cond_schema`` fix closed."""
+    same drift the ``cond_schema`` fix closed.
+
+    ``arm4`` (prereg Amendment D.4.2) composes that same fine-tune from the
+    PROMOTED champion with three changes and nothing else: the trunk is
+    fine-tuned at ``lr * 0.05`` instead of frozen (``--trunk-finetune-lr-mult``,
+    which keeps the cyclen row mask), the f_xy row synthesizes against the
+    model's OWN predicted F_r (``--fxy-prior-on-predicted``), and selection /
+    warmup are pinned to arm 3's ``--fxy-select-weight 0.5 --warmup-epochs 2``.
+    It implies ``add_fxy_head`` (the same ``--init-from <champion>
+    --promote-fxy`` spine), so the distillation teacher is the champion passed
+    in — for arm 4 that MUST be ``data/models/s1j``, since a stale ``s1i`` cache
+    would pull the honest gate toward the OLD champion exactly when the trunk is
+    unfrozen (D.4.2 [1]).
+
+    ``arm5`` (prereg Amendment E.3.2) is arm 4's command **verbatim** plus the
+    within-cell pairwise rank hinge on the composed f_xy row and the elite
+    selection band: ``--fxy-rank-weight 3.0 --fxy-rank-cell gate
+    --fxy-rank-margin-z 0.1 --fxy-rank-min-gap 0.005 --fxy-rank-low-thresh 1.60
+    --fxy-rank-low-weight 3.0 --fxy-select-band 0.50``.  It IMPLIES ``arm4``,
+    and it deliberately changes nothing else — including the distillation
+    teacher, which stays the champion passed in — because the whole point of the
+    arm is a PAIRED comparison against arm 4: if any other knob moved, a ranking
+    difference could not be attributed to the objective (E.3)."""
+    arm4 = bool(arm4 or arm5)
     recipe = champion_recipe(champion_dir)
-    if add_fxy_head:
+    if add_fxy_head or arm4:
         recipe = {**recipe, "promote_fxy": True}
     uses_distill = float(recipe.get("distill_weight", 0.0)) > 0.0
     cache = str(distill_cache) if uses_distill else None
     train_args = recipe_to_train_args(
         recipe, distill_cache=cache, fr_rank_weight=fr_rank_weight,
         map_fr_consistency_weight=map_fr_consistency_weight,
-        init_from=(str(champion_dir) if add_fxy_head else None),
-        freeze_trunk_cyclen=bool(add_fxy_head))
+        init_from=(str(champion_dir) if (add_fxy_head or arm4) else None),
+        freeze_trunk_cyclen=bool(add_fxy_head and not arm4),
+        trunk_finetune_lr_mult=(ARM4_TRUNK_LR_MULT if arm4 else 0.0),
+        fxy_prior_on_predicted=bool(arm4),
+        fxy_select_weight=(ARM4_FXY_SELECT_WEIGHT if arm4 else None),
+        warmup_epochs=(ARM4_WARMUP_EPOCHS if arm4 else None),
+        fxy_rank=bool(arm5),
+        fxy_select_band=(ARM5_FXY_SELECT_BAND if arm5 else None))
     refresh_cmd = (
         f"python -c \"from lpopt.model.al_retrain import refresh_distill_cache; "
         f"refresh_distill_cache({str(champion_dir)!r}, out_path={str(distill_cache)!r})\""
@@ -376,6 +461,26 @@ def main(argv: list[str] | None = None) -> int:
                     help="compose the F_xy phase-P4 freeze-finetune recipe: "
                          "--init-from <champion> --freeze-trunk-cyclen "
                          "--promote-fxy (frozen trunk, one new head row)")
+    ap.add_argument("--arm4", action="store_true",
+                    help="compose prereg Amendment D.4.2's arm-4 command "
+                         "(implies --add-fxy-head): the champion trunk is "
+                         f"fine-tuned at lr x {ARM4_TRUNK_LR_MULT} instead of "
+                         "frozen, --fxy-prior-on-predicted replaces the direct "
+                         f"f_xy row, --fxy-select-weight "
+                         f"{ARM4_FXY_SELECT_WEIGHT} --warmup-epochs "
+                         f"{ARM4_WARMUP_EPOCHS}; pass --champion data/models/s1j "
+                         "(also the distill teacher)")
+    ap.add_argument("--arm5", action="store_true",
+                    help="compose prereg Amendment E.3.2's arm-5 command "
+                         "(implies --arm4, whose flags are carried verbatim): "
+                         f"adds --fxy-rank-weight {ARM5_FXY_RANK_WEIGHT} "
+                         f"--fxy-rank-cell {ARM5_FXY_RANK_CELL} "
+                         f"--fxy-rank-margin-z {ARM5_FXY_RANK_MARGIN_Z} "
+                         f"--fxy-rank-min-gap {ARM5_FXY_RANK_MIN_GAP} "
+                         f"--fxy-rank-low-thresh {ARM5_FXY_RANK_LOW_THRESH} "
+                         f"--fxy-rank-low-weight {ARM5_FXY_RANK_LOW_WEIGHT} "
+                         f"--fxy-select-band {ARM5_FXY_SELECT_BAND}; the "
+                         "teacher cache is UNCHANGED (paired comparison)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the composed invocation only (no refresh, no train)")
     ap.add_argument("--execute-refresh", action="store_true",
@@ -387,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
         fr_rank_weight=args.f_r_rank_weight,
         map_fr_consistency_weight=args.map_fr_consistency_weight,
         refresh_teacher=args.refresh_teacher,
-        add_fxy_head=args.add_fxy_head)
+        add_fxy_head=args.add_fxy_head, arm4=args.arm4, arm5=args.arm5)
     _print_plan(plan)
 
     if args.execute_refresh and plan["distill_teacher_refresh"]["enabled"]:
@@ -402,6 +507,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
+    "ARM4_TRUNK_LR_MULT", "ARM4_FXY_SELECT_WEIGHT", "ARM4_WARMUP_EPOCHS",
+    "ARM5_FXY_RANK_WEIGHT", "ARM5_FXY_RANK_CELL", "ARM5_FXY_RANK_MARGIN_Z",
+    "ARM5_FXY_RANK_MIN_GAP", "ARM5_FXY_RANK_LOW_THRESH",
+    "ARM5_FXY_RANK_LOW_WEIGHT", "ARM5_FXY_SELECT_BAND",
     "champion_recipe", "recipe_to_train_args", "remote_invocation",
     "build_champion_teacher_map", "refresh_distill_cache", "plan_al_retrain",
 ]

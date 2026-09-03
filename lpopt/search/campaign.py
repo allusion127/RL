@@ -45,11 +45,14 @@ from ..data.flat_scale import FlatScale
 from ..data.map_calibration import (
     MapCalibration, ModelMismatchError, model_fingerprint)
 from ..data.schema import CanonicalRecord, unpack_pattern
-from ..data.store import StoreReader, StoreWriter
+from ..data.store import StoreReader, StoreWriter, trustworthy
 from ..vendor.masterrl.domain import CaseKey, Pattern
 from ..vendor.masterrl.ga import GAEvaluation, archive_candidate
 from ..vendor.masterrl.reward import is_fom_feasible
-from ..model.cell_calibrate import CampaignBiasCorrector, cyclen_cell_key
+from ..model.cell_calibrate import (
+    AO_CALIB_NAME, CBC_CALIB_NAME, CELL_CALIB_NAME, CampaignBiasCorrector,
+    FLAT_CALIB_NAME, FQ_CALIB_NAME, FR_CALIB_NAME, cyclen_cell_key,
+)
 from .delivery import (
     LICENSING_FR_LIMIT, LICENSING_FXY_LIMIT, compliance_margin,
     compliance_margin_fxy, select_delivery)
@@ -61,7 +64,8 @@ from .construct import (
 from .construct import _parent_to_genome as _pattern_to_case_genome
 from .genome import GenomeError, mutate
 from .verify import (
-    PRODUCE_DECK_KNOBS, WaveEntry, WaveVerifier, lineage_anchor, outcome_to_record)
+    PRODUCE_DECK_KNOBS, SCORED_DIGEST_KEY, WaveEntry, WaveVerifier, lineage_anchor,
+    outcome_to_record)
 from . import acquisition as acq
 from . import rule_metrics as acq_rules
 from .update import WaveUpdater
@@ -92,6 +96,53 @@ class FxySigmaBarLost(RuntimeError):
     ``data/reports/minfxy_T6T4_f121_r1_results_20260830.md`` §9).  So it is
     raised, loudly, rather than warned.
     """
+
+
+class CalibrationSetLost(RuntimeError):
+    """A checkpoint's per-cell LEVEL calibration did not survive a save/reload.
+
+    The twin of :class:`FxySigmaBarLost`, one layer down: where that one guards the
+    f_xy serve-sigma WIDTH, this guards the per-cell affine LEVEL corrections
+    (``cell_``/``f_r_``/``cbc_``/``f_q_``/``ao_abs_``/``flatness_calibration.json``).
+    Losing them does not crash anything and does not look wrong in any artifact —
+    the F_r <= 1.55 / F_q / CBC / |AO| level gates and the cyclen LCB simply move,
+    silently, in whichever direction the removed bias correction pointed.  Defect
+    C2-4, ``data/reports/fxy_era_adversarial_verification_20260831.md`` §4.4 D /
+    §9 rank 3: ``PosValCnnBackend.save()`` wrote none of them, so every ``--resume``
+    of a wave champion served an UNCALIBRATED model (r1 was resumed three times).
+    """
+
+
+#: The calibration artifacts a serving checkpoint dir carries.  Pinned equal to
+#: :data:`..model.model_api.CALIBRATION_ARTEFACT_NAMES` by
+#: ``tests/test_calibration_roundtrip.py`` rather than imported, so this module
+#: keeps loading without torch.
+_CALIBRATION_ARTEFACTS: tuple[str, ...] = (
+    "calibration.json",                     # == ..model.calibrate.CALIB_NAME
+    CELL_CALIB_NAME, FR_CALIB_NAME, CBC_CALIB_NAME,
+    FQ_CALIB_NAME, AO_CALIB_NAME, FLAT_CALIB_NAME,
+    "pinbu_physics.json",                   # == ..model.pinbu_physics.PINBU_PHYSICS_NAME
+    "conformal.json",                       # == ..model.conformal.CONFORMAL_NAME
+)
+
+
+def _env_truthy(name: str) -> bool:
+    """``True`` for ``1/true/yes/on`` (case-insensitive) in environment ``name``."""
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def checkpoint_calibration_set(ckpt: str | Path) -> frozenset[str]:
+    """The calibration artifact filenames a checkpoint DIRECTORY carries on disk.
+
+    Deliberately reads the files rather than a loaded backend — same reason as
+    :func:`checkpoint_fxy_serve_sigma`: the question is what a future ``--resume``
+    will find, and only the bytes answer that.  A directory that does not exist
+    (or is not a directory) yields the empty set.
+    """
+    d = Path(str(ckpt))
+    if not d.is_dir():
+        return frozenset()
+    return frozenset(n for n in _CALIBRATION_ARTEFACTS if (d / n).is_file())
 
 
 def checkpoint_fxy_serve_sigma(ckpt: str | Path) -> str:
@@ -213,6 +264,41 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, default=str) + "\n")
         handle.flush()
+
+
+def _wall_s(outcome: Any) -> float | None:
+    """This MASTER call's own wall-clock seconds (``WaveOutcome.wall_s``).
+
+    ``None`` — not ``0.0`` — when the outcome carries no measurement, so a
+    label that never was timed can never be averaged in as a free call
+    (spec §4e rule 5: absent is "unevaluated", not a value).
+    """
+
+    value = getattr(outcome, "wall_s", None)
+    try:
+        out = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    # microsecond resolution: a real MASTER chain is O(10^3) s, but the stub
+    # evaluator the tests drive is sub-millisecond and must not round to a free
+    # call.
+    return round(out, 6) if math.isfinite(out) else None
+
+
+def _kpi_status_extra(run_dir: Path) -> dict[str, Any]:
+    """``{"kpi": {...}}`` when the run has a ``kpi.json``, else ``{}``.
+
+    Keeping it a splat means a run without the instrument writes a
+    byte-identical ``status.json`` to the pre-P0 one.
+    """
+
+    try:
+        from ..tools.kpi_calls_to_frontier import kpi_status_block
+
+        block = kpi_status_block(run_dir)
+    except Exception:  # noqa: BLE001 — status.json must always be written
+        return {}
+    return {"kpi": block} if block else {}
 
 
 def _opt_float(value: Any) -> float | None:
@@ -604,6 +690,7 @@ class CampaignDriver:
         log: Callable[[str], None] | None = None,
         seed: int | None = None,
         early_stop: bool = True,
+        allow_uncalibrated: bool = False,
     ) -> None:
         self.cfg = cfg
         self.model = model
@@ -611,6 +698,17 @@ class CampaignDriver:
         self.dry_run = bool(dry_run)
         self.max_waves = max_waves
         self.resume = bool(resume)
+        #: Operator escape hatch for the C2-4 resume refusal (``--allow-uncalibrated``).
+        #: Off by default: a resumed checkpoint that has LOST its per-cell level
+        #: calibration is refused, because serving it moves every level gate
+        #: silently.  ``lpopt optimize --allow-uncalibrated`` is the CLI form
+        #: (``lpopt/cli.py``, forwarded through :func:`run_campaign`);
+        #: ``LPOPT_ALLOW_UNCALIBRATED=1`` is the env form, for an operator who
+        #: cannot change the invocation.  Both reach BOTH guarded sites
+        #: (``_load_state`` resume and ``_save_champion``), so a hatched run
+        #: neither refuses to resume nor crashes one wave later.
+        self.allow_uncalibrated = bool(allow_uncalibrated) or _env_truthy(
+            "LPOPT_ALLOW_UNCALIBRATED")
         self.early_stop_enabled = bool(early_stop)
         self.backend_factory = backend_factory
         self.progress = progress
@@ -981,6 +1079,14 @@ class CampaignDriver:
         # runtime state (restored on resume).
         self.wave_index = 0
         self.budget_spent = 0
+        #: KPI accounting (active_frontier_loop_spec_20260903.md §5 P0-1).  The
+        #: surrogate counter is the DENOMINATOR of ``screen_ratio`` (~312 : 1),
+        #: which §4d requires reported alongside every MASTER-call KPI so the
+        #: "engineering intuition" number is never quoted without the 312
+        #: surrogate screens per MASTER call that produce it.  Not persisted in
+        #: state.json: a resumed run continues counting from 0 and the labels
+        #: already written carry their own cumulative values.
+        self.surrogate_evals = 0
         self.consecutive_halts = 0
         self.no_improve = 0
         self.best: dict[str, Any] | None = None
@@ -990,6 +1096,22 @@ class CampaignDriver:
         #: and ``best_overall`` separately — never promoting a violator into ``best``).
         self.best_overall: dict[str, Any] | None = None
         self.champion_ckpt = str(self._resolve(cfg.model.model_dir))
+        #: The calibration artifacts the LAUNCH champion carries on disk, frozen
+        #: here — before any wave checkpoint can replace the served weights — so
+        #: :meth:`_save_champion` and :meth:`_load_state` have a launch-time
+        #: reference set to assert a derived checkpoint against (defect C2-4,
+        #: ``fxy_era_adversarial_verification_20260831.md`` §4.4 D / §9 rank 3).
+        #: EMPTY for a launch champion that ships no calibration at all, which
+        #: makes both guards inert for such a deck — exactly the backward-compat
+        #: contract the ``serve_sigma`` guard has.
+        self._calibration_set_launch = checkpoint_calibration_set(self.champion_ckpt)
+        #: The launch champion PATH, frozen alongside the set above.
+        #: ``_load_state`` reassigns ``self.champion_ckpt`` to the persisted
+        #: checkpoint BEFORE the guards run, so quoting it as "the launch
+        #: champion" in a refusal produced "<X> is missing … that the launch
+        #: champion <X> carries" — the one line an operator reads to find the
+        #: reference checkpoint, naming the wrong one.
+        self._champion_ckpt_launch = self.champion_ckpt
         self.ledger_ids: set[str] = set()
         self.verified_patterns: list[Pattern] = []
         self.campaign_rows: list[dict[str, Any]] = []
@@ -1370,7 +1492,12 @@ class CampaignDriver:
             return []
         sub = df[df["case_pair"] == self.ctx.pair]
         if converged:
-            sub = sub[sub["converged"] == True]  # noqa: E712
+            # ``trustworthy``, not ``converged`` alone: this is the pool every
+            # elite parent (``_store_elites``) and the frozen fine-tune holdout
+            # (``_holdout_rows``) are drawn from, so a quarantined row here both
+            # seeds mutation from a core that was never loaded AND scores the
+            # gate against a label that was never measured.
+            sub = sub[trustworthy(sub)]
         return [row.to_dict() for _, row in sub.iterrows()]
 
     def _elite_seed_rows(self) -> list[dict[str, Any]]:
@@ -1398,7 +1525,7 @@ class CampaignDriver:
         if df is None or not len(df):
             return []
         sub = df[df["case_pair"].isin(cases)]
-        sub = sub[sub["converged"] == True]  # noqa: E712
+        sub = sub[trustworthy(sub)]
         return [row.to_dict() for _, row in sub.iterrows()]
 
     def _store_elites(self) -> list[tuple[str | None, Pattern]]:
@@ -1523,7 +1650,7 @@ class CampaignDriver:
         df = self._store_df()
         if df is None or not len(df):
             return []
-        sub = df[(df["converged"] == True) & (df["valid"] == True)]  # noqa: E712
+        sub = df[trustworthy(df)]
         sub = sub[sub["f_r"].notna() & sub["cyclen"].notna()]
         if not len(sub):
             return []
@@ -1608,7 +1735,39 @@ class CampaignDriver:
                 "launch champion did not; the narrower (proxy) width is served."
             )
 
-    # -- resume ------------------------------------------------------------ #
+    # -- resume + wave champion write --------------------------------------- #
+    def _require_calibration_set(self, ckpt: str | Path, *, context: str) -> None:
+        """:meth:`_assert_calibration_set` with the ``--allow-uncalibrated`` hatch.
+
+        Resume is the moment C2-4 actually bit (r1 was resumed three times onto
+        wave checkpoints written before the round-trip fix), so the refusal must
+        cover it — a checkpoint produced by an OLD binary is exactly the case a
+        write-time guard cannot see.
+
+        BOTH call sites route through here (``_load_state`` and
+        ``_save_champion``).  The hatch has to be symmetric: a run resumed with
+        ``--allow-uncalibrated`` is serving an uncalibrated backend BY
+        CONSTRUCTION, so every champion it later writes is artefact-less too, and
+        a hatchless write-side guard would abort that run one wave later with the
+        wave's MASTER budget already spent.
+        """
+        missing = self._calibration_set_launch - checkpoint_calibration_set(ckpt)
+        if not missing:
+            if self._calibration_set_launch:
+                self._log(f"[optimize][CALIBRATION] {context}: {ckpt} carries "
+                          f"{len(self._calibration_set_launch)} calibration "
+                          f"artifact(s) {sorted(self._calibration_set_launch)}")
+            return
+        if self.allow_uncalibrated:
+            self._log(
+                f"[optimize][CALIBRATION][WARNING] {context}: {ckpt} is missing "
+                f"{sorted(missing)} and --allow-uncalibrated was given; the run "
+                "continues on a model whose per-cell LEVEL correction is GONE "
+                "(defect C2-4).  Every level gate below is uncorrected."
+            )
+            return
+        self._assert_calibration_set(ckpt, context=context)
+
     def _load_state(self) -> bool:
         if not (self.resume and self.state_path.exists()):
             return False
@@ -1655,6 +1814,12 @@ class CampaignDriver:
         # is one-way (it is only ever cleared by a refit), so restore-then-detect
         # is the correct order.
         self.map_calibration_stale = bool(state.get("map_calibration_stale", False))
+        # C2-4: refuse to resume onto a checkpoint whose per-cell LEVEL calibration
+        # is GONE, BEFORE the reload — a resumed campaign that serves an
+        # uncalibrated descendant looks healthy in every artifact while every level
+        # gate has moved.  ``--allow-uncalibrated`` (or LPOPT_ALLOW_UNCALIBRATED=1)
+        # downgrades it to a loud log line for the deliberate case.
+        self._require_calibration_set(self.champion_ckpt, context="resume")
         self._require_calibration_model(self.champion_ckpt, context="resume")
         # reload the champion checkpoint if one was persisted mid-run.
         if self.backend_factory is not None and Path(self.champion_ckpt).exists():
@@ -1763,6 +1928,71 @@ class CampaignDriver:
             },
         )
 
+    def _kpi_harvest(self) -> None:
+        """A2 "after" snapshot + ``kpi.json`` (P0 §5 P0-2/P0-3).  Never fails a run."""
+
+        from ..tools import kpi_calls_to_frontier as kpi
+
+        try:
+            kpi.write_snapshot_post(self.run_dir)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[optimize][WARNING] A2 post-snapshot failed: {exc}")
+        try:
+            kpi.write_kpi(self.run_dir, self.main_store_dir)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"[optimize][WARNING] kpi.json failed: {exc}")
+
+    def _kpi_launch_snapshot(self) -> None:
+        """Freeze the cell record + write the A2 "before" snapshot (P0 §5).
+
+        Two artefacts, both written ONCE per run directory and never overwritten
+        (a ``--resume`` must not re-freeze a record the campaign has since
+        beaten — ``sample_efficiency_kpi_20260903.md`` §5 K1 makes a post-hoc
+        ``R_cell`` INVALID, and a silently re-frozen one is worse than a missing
+        one):
+
+        * ``kpi_baseline.json`` — ``R_cell`` / incumbent / ``prior_rows`` read
+          from the store with this campaign's own rows excluded.
+        * ``ood_snapshot_pre.json`` — the launch champion's error on the cell's
+          EXISTING labelled rows plus the A3 coverage flags of the cell.
+
+        MASTER 0 calls.  Fully contained: a failure here logs and returns, so
+        the instrument can never cost a campaign its budget.
+        """
+
+        from ..tools import kpi_calls_to_frontier as kpi
+
+        try:
+            base_path = self.run_dir / kpi.BASELINE_NAME
+            if not base_path.exists():
+                _atomic_json(base_path, kpi.freeze_baseline(
+                    self.main_store_dir,
+                    pair=self.ctx.pair, feed=self.ctx.feed,
+                    library_id=self.library_id, campaign=self.run_dir.name,
+                ))
+        except Exception as exc:  # noqa: BLE001 — never fails the run
+            self._log(f"[optimize][WARNING] kpi baseline freeze failed: {exc}")
+        try:
+            pre_path = self.run_dir / kpi.PRE_NAME
+            if pre_path.exists():
+                return
+            tr = getattr(self.cfg, "trust_region", None)
+            payload = kpi.snapshot_pre(
+                self.run_dir, self.main_store_dir,
+                pair=self.ctx.pair, feed=self.ctx.feed, e_core=self.ctx.e_core,
+                library_id=self.library_id,
+                predict=lambda pats: self.model.predict(
+                    list(pats), self.ctx.case_key, self.ctx.e_core or 0.0),
+                patterns_of=lambda row: unpack_pattern(str(row["pattern"])),
+                model_dir=str(getattr(self.cfg.model, "model_dir", "") or ""),
+                e_core_band=float(getattr(tr, "e_core_band", 0.05)),
+                promote_after=int(getattr(tr, "promote_after", 16)),
+            )
+            payload["store_dir"] = str(self.main_store_dir)
+            kpi.write_snapshot_pre(self.run_dir, payload)
+        except Exception as exc:  # noqa: BLE001 — never fails the run
+            self._log(f"[optimize][WARNING] A2 pre-snapshot failed: {exc}")
+
     def _write_status(self, status: str) -> None:
         _atomic_json(
             self.run_dir / "status.json",
@@ -1792,6 +2022,10 @@ class CampaignDriver:
                 "best_overall": self.best_overall,
                 "dry_run": self.dry_run,
                 "case": self.ctx.case_key.label,
+                # A1-A4 summary, present only once ``kpi.json`` exists (written
+                # at harvest, or by ``lpopt kpi --run <dir>``).  Absent on every
+                # in-flight status write, so a mid-run status.json is unchanged.
+                **_kpi_status_extra(self.run_dir),
                 "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
             },
         )
@@ -1999,6 +2233,7 @@ class CampaignDriver:
             f"budget={self.budget} spent={self.budget_spent} dry_run={self.dry_run}"
         )
         self._write_status("running")
+        self._kpi_launch_snapshot()
 
         early_stop = False
         while self.budget_spent < self.budget:
@@ -2098,6 +2333,12 @@ class CampaignDriver:
         return seeds
 
     def _run_wave(self, size: int, *, reserve: bool) -> WaveReport:
+        # E.7-(a): the checkpoint that SERVES this wave's predictions, snapshotted
+        # BEFORE step 7's online update can swap ``self.champion_ckpt`` to the
+        # accepted challenger.  Without it ``selection.json`` named the checkpoint
+        # the wave PRODUCED, not the one that ranked it, and an offline rescore of
+        # a finished campaign against one checkpoint reproduced wave 0 only.
+        self._serving_ckpt = str(self.champion_ckpt)
         # 1. pool
         store_elites = self._store_elites()
         near_miss = self._near_miss_parents()
@@ -2251,6 +2492,11 @@ class CampaignDriver:
                     f"{r.get('conformal_rejected_by_axis') or ''}; "
                     f"pool {r['n_candidates']} -> {r['n_remaining']}")
 
+        # KPI P0-1: the surrogate evaluations this wave charged (the pool as it
+        # stands after local search).  Counted here, once, for every objective
+        # branch above.
+        self.surrogate_evals += len(scored.candidates)
+
         # keep the top exploit-ranked patterns for the next wave's elite parents
         # (ranking on acq would seed next wave from high-σ OOD candidates).
         # The CANDIDATES are kept, not their record_ids: most of them are never
@@ -2285,6 +2531,10 @@ class CampaignDriver:
             meta = {
                 "e_core": self.ctx.e_core, "generator": cand.origin, "slot": wslot.slot,
                 "parent_record_id": cand.parent_record_id, "record_id": cand.record_id,
+                # E.7-(a): the digest of the board the surrogate ACTUALLY scored,
+                # carried through verification into the store row so the two can
+                # be pinned to each other (verify.assert_scored_pattern_parity).
+                SCORED_DIGEST_KEY: cand.pattern.digest,
             }
             entries.append((WaveEntry(cand.pattern, self.ctx.case_key, resolved, meta), wslot))
         # DELIVERY dossier uncertainty fields (review §8.5), evaluated for the
@@ -2310,6 +2560,9 @@ class CampaignDriver:
         # staging otherwise surface only as conv=0, which reads as "the search is
         # hard" instead of "nothing ran" (ECC audit 2026-08-12).
         wave_failures: list[str] = []
+        #: Sum of this wave's per-call MASTER walls (KPI P0-1).  ``None`` stays
+        #: ``None`` if no call in the wave reported one.
+        wave_wall_s: float | None = None
         for _i, ((entry, wslot), outcome) in enumerate(
                 zip(entries, outcomes, strict=True)):
             cand = scored.candidates[wslot.index]
@@ -2356,12 +2609,25 @@ class CampaignDriver:
                 self._archive(cand, outcome)
             if self._is_on_target(row):
                 on_target += 1
+            _call_wall = _wall_s(outcome)
+            if _call_wall is not None:
+                wave_wall_s = (_call_wall if wave_wall_s is None
+                               else wave_wall_s + _call_wall)
             _append_jsonl(
                 self.labels_path,
                 {
                     "wave": self.wave_index, "slot": wslot.slot, "origin": cand.origin,
                     "record_id": record.record_id, "status": outcome.status,
                     "feasible": self._is_feasible(row), "on_target": self._is_on_target(row),
+                    # KPI P0-1 (spec §4d, "lpopt 캠페인은 콜별 wall 을 기록하지
+                    # 않는다" -> the first P0 task).  ``wall_s`` is the MASTER
+                    # chain's own wall for THIS call as ``WaveVerifier._eval_entry``
+                    # measured it; the two cumulative counters make every label a
+                    # self-contained point on the calls-to-frontier trajectory
+                    # without re-deriving it from file order.
+                    "wall_s": _call_wall,
+                    "cumulative_master_calls": self.budget_spent,
+                    "cumulative_surrogate_evals": self.surrogate_evals,
                     "record": row,
                 },
             )
@@ -2415,7 +2681,9 @@ class CampaignDriver:
 
         # 8. wave artefacts
         self._write_wave_artifacts(self.wave_index, entries, outcomes, scored, gate, tau)
-        self._log_event(self.wave_index, wave_rows, gate, converged, feasible, on_target)
+        self._log_event(self.wave_index, wave_rows, gate, converged, feasible,
+                        on_target, wall_s=(None if wave_wall_s is None
+                                           else round(wave_wall_s, 6)))
 
         # 9. stopping bookkeeping
         best_obj = self.best["objective"] if self.best else None
@@ -2763,7 +3031,45 @@ class CampaignDriver:
                 )
             self._log(f"[optimize][F_xy SIGMA] wave {self.wave_index} checkpoint "
                       f"{out.name} carries serve_sigma='barred'")
+        # Defect C2-4, same shape as D3 one level down: the per-cell LEVEL
+        # calibration has to survive the WRITE too.  A wave checkpoint is exactly
+        # what a later ``--resume`` reloads, and a missing per-cell artifact here
+        # IS the silent un-calibration — caught at the moment it is created,
+        # naming the wave, instead of in a post-hoc level-gate audit.
+        #
+        # Through ``_require_calibration_set``, so the ``--allow-uncalibrated``
+        # hatch covers BOTH sides.  With the hatch on the read side only, resuming
+        # a pre-fix checkpoint loaded a backend whose calibration attrs are all
+        # None, and the first accepted gate then wrote an artefact-less checkpoint
+        # and raised out of ``_run_wave`` — AFTER that wave's MASTER budget was
+        # spent, and against a hatch whose own message promises "the run
+        # continues".  Default behaviour is unchanged: the hatch is off.
+        self._require_calibration_set(out, context=f"wave {self.wave_index} champion")
         return out
+
+    def _assert_calibration_set(self, ckpt: str | Path, *, context: str) -> None:
+        """Refuse a checkpoint that has LOST calibration artifacts the launch one had.
+
+        Closes C2-4 (``fxy_era_adversarial_verification_20260831.md`` §4.4 D, §9
+        rank 3).  The reference is the LAUNCH champion's set (frozen in
+        ``__init__``), so a deck that never had per-cell calibration is unaffected
+        and a deck that had it can never quietly stop having it.  Gaining an
+        artifact is fine (a re-fit adds one); only LOSS is fatal.
+        """
+        missing = self._calibration_set_launch - checkpoint_calibration_set(ckpt)
+        if not missing:
+            return
+        raise CalibrationSetLost(
+            f"[{context}] {ckpt} is missing calibration artifact(s) "
+            f"{sorted(missing)} that the launch champion "
+            f"{self._champion_ckpt_launch} "
+            "carries.  Serving it applies NO per-cell level correction, which "
+            "moves the F_r <= 1.55 / F_q / CBC / |AO| level gates and the cyclen "
+            "LCB silently (defect C2-4, "
+            "data/reports/fxy_era_adversarial_verification_20260831.md §4.4 D). "
+            "Re-save the checkpoint from the source champion (PosValCnnBackend."
+            "save round-trips every calibration artifact) rather than serving it."
+        )
 
     def _write_wave_artifacts(self, wave, entries, outcomes, scored, gate, tau) -> None:
         wdir = self.run_dir / "waves" / f"wave_{wave:02d}"
@@ -2783,6 +3089,11 @@ class CampaignDriver:
             {
                 "slot": w.slot, "origin": scored.candidates[w.index].origin,
                 "record_id": scored.candidates[w.index].record_id,
+                # E.7-(a): the digest of the board these numbers were computed
+                # from.  The store row carries the SAME digest (pinned by
+                # verify.assert_scored_pattern_parity), so a rescore can prove it
+                # is re-scoring the scored board instead of assuming it.
+                "pattern_digest": scored.candidates[w.index].pattern.digest,
                 "parent_record_id": scored.candidates[w.index].parent_record_id,
                 "p_feas": round(float(scored.p_feas[w.index]), 4),
                 "acq": round(float(scored.acq[w.index]), 4),
@@ -2810,7 +3121,15 @@ class CampaignDriver:
             }
             for i, (_, w) in enumerate(entries)
         ]
-        payload: dict[str, Any] = {"wave": wave, "tau": tau, "selection": selection}
+        payload: dict[str, Any] = {
+            "wave": wave, "tau": tau,
+            # E.7-(a): the checkpoint that SERVED these predictions (snapshotted at
+            # the top of the wave, before the online update's champion swap).  A
+            # campaign fine-tunes and re-serves every wave, so "the campaign's
+            # model" is not one checkpoint and a rescore must be told which.
+            "served_checkpoint": str(getattr(self, "_serving_ckpt", "") or ""),
+            "selection": selection,
+        }
         # Per-wave gate accounting (review §6.5 item 5).  Absent when the shield is
         # inert, so a default-deck selection.json is unchanged apart from the
         # per-candidate ``ood_flag``.
@@ -2833,11 +3152,20 @@ class CampaignDriver:
         ]
         _atomic_json(wdir / "results.json", {"wave": wave, "gate": gate.as_dict(), "results": results})
 
-    def _log_event(self, wave, wave_rows, gate, converged, feasible, on_target) -> None:
+    def _log_event(self, wave, wave_rows, gate, converged, feasible, on_target,
+                   wall_s=None) -> None:
         _append_jsonl(
             self.events_path,
             {
                 "type": "wave", "wave": wave, "budget_spent": self.budget_spent,
+                # KPI P0-1: the same three accounting fields the labels carry, so
+                # a wave-level readout needs no join back into labels.jsonl.
+                # ``wall_s`` here is the SUM of the wave's per-call walls (the
+                # wave runs its calls concurrently, so it is a cost, not an
+                # elapsed time); ``None`` when no call in the wave was timed.
+                "wall_s": wall_s,
+                "cumulative_master_calls": self.budget_spent,
+                "cumulative_surrogate_evals": self.surrogate_evals,
                 "converged": converged, "feasible": feasible, "on_target": on_target,
                 "gate_mode": gate.mode, "gate_accepted": gate.accepted,
                 "control_spearman": gate.control_spearman,
@@ -3157,6 +3485,16 @@ class CampaignDriver:
             self._write_status(result.status)
         except OSError as exc:  # noqa: BLE001 -- one artefact never blocks the next
             self._log(f"[optimize][WARNING] status.json write failed: {exc}")
+        # KPI harvest (P0 §5): the A2 "after" snapshot and kpi.json.  Runs AFTER
+        # the final status.json (so kpi.json records the run's terminal status,
+        # not "running") and BEFORE report.md (so the report can print A1-A4);
+        # status.json is then re-stamped to carry the kpi block.  Read-only over
+        # this run's own artefacts + the store; MASTER 0 calls.
+        self._kpi_harvest()
+        try:
+            self._write_status(result.status)
+        except OSError as exc:  # noqa: BLE001 -- one artefact never blocks the next
+            self._log(f"[optimize][WARNING] status.json re-stamp failed: {exc}")
         try:
             from ..report.report import write_campaign_report
 
@@ -3346,6 +3684,8 @@ class UserCriteriaDriver:
         self.universe: list[PairCell] = []
         # lean (predict-then-verify) accounting.
         self.lean_rows: list[dict[str, Any]] = []       # predicted-vs-actual top-K
+        #: KPI P0-1 screen_ratio numerator: surrogate-scored candidates so far.
+        self.surrogate_evals = 0
         self.screen_seconds: float = 0.0
         self.verify_seconds: float = 0.0
         # dry-run lightens the deepen pool + local-search compute (StubEvaluator path).
@@ -3523,7 +3863,8 @@ class UserCriteriaDriver:
             entry = WaveEntry(
                 cand.pattern, ctx.case_key, resolved,
                 {"pair": cell.pair, "slot": w.slot, "phase": phase,
-                 "record_id": cand.record_id},
+                 "record_id": cand.record_id,
+                 SCORED_DIGEST_KEY: cand.pattern.digest},
             )
             pending.append(_Pending(
                 entry=entry, cand=cand, total=float(scored.exploit[w.index]),
@@ -3569,6 +3910,11 @@ class UserCriteriaDriver:
                 "wave": pend.wave, "phase": pend.phase, "pair": pend.cell.pair,
                 "record_id": record.record_id, "status": outcome.status,
                 "criteria_feasible": feasible, "criteria_total": pend.total,
+                # KPI P0-1 — identical accounting fields to the guided driver's
+                # labels so one instrument reads both run shapes.
+                "wall_s": _wall_s(outcome),
+                "cumulative_master_calls": self.budget_spent,
+                "cumulative_surrogate_evals": self.surrogate_evals,
                 "e_core": pend.e_core, "record": row,
             })
         self.store.write_records(records)
@@ -3604,7 +3950,13 @@ class UserCriteriaDriver:
         except (FileNotFoundError, OSError):
             df = None
         if df is not None and len(df):
-            sub = df[df["converged"] == True]  # noqa: E712
+            # ``trustworthy``, not ``converged`` alone: this index is the lean
+            # driver's ELITE source (``_lean_store_elites`` seeds mutation
+            # parents from it) and its "known verified LPs" report, so a
+            # quarantined row here both fathers every exploit child and is shown
+            # to the user as a verified solution.  Same predicate as the
+            # CampaignDriver elite/replay/holdout pools.
+            sub = df[trustworthy(df)]
             if "feed" in df.columns:
                 sub = sub[sub["feed"] == int(self.feed)]
             tgt = float(self.criteria.e_core_target)
@@ -4122,6 +4474,9 @@ class UserCriteriaDriver:
             ctx, self.model, list(elites), self.ledger_ids, self.rng, self.cfg,
             wave_index=wave_index, size=int(size),
         )
+        # KPI P0-1: every pool built here is scored by the surrogate, so this is
+        # the honest screen_ratio numerator for the lean/active criteria driver.
+        self.surrogate_evals += len(pool)
         return ctx, pool
 
     def _score_pool(self, ctx: CaseContext, pool: Sequence[Candidate]
@@ -4366,7 +4721,8 @@ class UserCriteriaDriver:
             entry = WaveEntry(
                 lc.candidate.pattern, ck, resolved_cache[lc.pair],
                 {"pair": lc.pair, "slot": "lean", "phase": f"lean_{round_tag}",
-                 "record_id": lc.candidate.record_id},
+                 "record_id": lc.candidate.record_id,
+                 SCORED_DIGEST_KEY: lc.candidate.pattern.digest},
             )
             pending.append(_Pending(
                 entry=entry, cand=lc.candidate, total=lc.score,
@@ -4479,6 +4835,7 @@ class UserCriteriaDriver:
             "best": self.best, "dry_run": self.dry_run,
             "screen_seconds": round(self.screen_seconds, 2),
             "verify_seconds": round(self.verify_seconds, 2),
+            **_kpi_status_extra(self.run_dir),
             "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
         })
 
@@ -4836,6 +5193,7 @@ def run_campaign(
 
 
 __all__ = [
-    "CampaignDriver", "CampaignResult", "FxySigmaBarLost", "UserCriteriaDriver",
-    "WaveReport", "checkpoint_fxy_serve_sigma", "run_campaign",
+    "CalibrationSetLost", "CampaignDriver", "CampaignResult", "FxySigmaBarLost",
+    "UserCriteriaDriver", "WaveReport", "checkpoint_calibration_set",
+    "checkpoint_fxy_serve_sigma", "run_campaign",
 ]

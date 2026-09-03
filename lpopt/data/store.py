@@ -12,7 +12,10 @@ file and leaves any pre-existing final file untouched (no partial store).
 
 from __future__ import annotations
 
+import json
+import math
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -179,7 +182,293 @@ def _quality_rank(df: pd.DataFrame) -> np.ndarray:
     return conv * 8 + valid * 4 + flat * 2 + fxy
 
 
-def dedup_upsert(df: pd.DataFrame) -> pd.DataFrame:
+# --------------------------------------------------------------------------- #
+# trust predicate — the ONE definition of "this row's labels may be believed"
+# --------------------------------------------------------------------------- #
+#: Two independent flags decide whether a store row is evidence:
+#:
+#: * ``converged`` — the MASTER chain reached an equilibrium cycle, so the row
+#:   carries physics labels at all;
+#: * ``valid`` — the evaluation itself was HONEST.  ``valid=False`` marks a
+#:   harness fault (a ``non_finite_flux``, an errored chain, a deck built from a
+#:   wrong alias — the 2026-08-30 HGD569 quarantine) whose ``converged`` flag and
+#:   labels describe a core that was never actually loaded.
+#:
+#: Every training / elite / replay / holdout / corpus filter in the tree used to
+#: key on ``converged`` ALONE, which makes a quarantine UNENFORCEABLE: a
+#: ``converged=True, valid=False`` row is indistinguishable from a good one at
+#: every one of those sites, so writing ``valid=False`` bought nothing.
+#: :func:`trustworthy` is the single predicate they now route through, so
+#: quarantining a row is one column write and nothing else.
+def valid_flags(df: pd.DataFrame) -> pd.Series:
+    """Per-row ``valid`` as a null-safe bool Series; ABSENT/NULL reads ``True``.
+
+    Nulls default to *trusted* — the opposite of :func:`_quality_rank`, which
+    defaults them to False because it RANKS evidence rather than gating it.
+    ``valid`` is a schema column that a pre-column store, a hand-built synthetic
+    frame or a partial multi-PC kit can genuinely lack, and "no evidence of a
+    harness fault" must not quarantine a row: defaulting to False would silently
+    empty every filter below on any such frame.  Only an EXPLICIT ``valid=False``
+    quarantines.
+    """
+    if "valid" not in df.columns:
+        return pd.Series(True, index=df.index, dtype=bool)
+    col = df["valid"]
+    # notna() first so object-dtype nulls (None / pd.NA / NaN) never reach
+    # astype(bool) — pd.NA raises there, and NaN would cast to True.
+    return (~col.notna()) | col.where(col.notna(), True).astype(bool)
+
+
+def trustworthy(df: pd.DataFrame) -> pd.Series:
+    """``converged & valid`` — may this row's labels be believed?  (bool Series)
+
+    ``converged`` nulls read False (no equilibrium claim = no label); ``valid``
+    nulls read True (see :func:`valid_flags`).  On a frame where no row carries
+    ``valid=False`` this is EXACTLY ``df["converged"] == True``, which is why
+    routing the open-coded filters through it changes nothing on the historical
+    store (``test_store.py::test_trustworthy_matches_converged_when_no_row_is_quarantined``).
+    """
+    if "converged" not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+    col = df["converged"]
+    conv = col.notna() & col.where(col.notna(), False).astype(bool)
+    return conv & valid_flags(df)
+
+
+def _is_null(value: Any) -> bool:
+    return (value is None or value is pd.NA
+            or (isinstance(value, float) and math.isnan(value)))
+
+
+def row_valid(row: Mapping[str, Any]) -> bool:
+    """Row-at-a-time twin of :func:`valid_flags` (missing / null -> ``True``)."""
+    value = row.get("valid", None)
+    return True if _is_null(value) else bool(value)
+
+
+def row_trustworthy(row: Mapping[str, Any]) -> bool:
+    """Row-at-a-time twin of :func:`trustworthy`; the two must keep matching."""
+    value = row.get("converged", None)
+    return False if _is_null(value) else (bool(value) and row_valid(row))
+
+
+#: A store-scoped, operator-written list of ``record_id``s that no merge may ever
+#: re-upgrade.  Optional and ABSENT on every existing store, which keeps
+#: :meth:`StoreWriter.write_records` byte-identical there.  It is the SECOND
+#: source of quarantine truth, for an ad-hoc quarantine that carries no
+#: recognised ``failure`` tag; the primary source is the tag itself
+#: (:data:`QUARANTINE_FAILURE_PREFIXES`).
+#: Format: ``{"record_ids": [...]}`` or a bare JSON list.
+DENYLIST_NAME = "quarantine_denylist.json"
+
+#: ``failure`` tag prefixes that MARK A ROW AS QUARANTINED — the C4-1 key
+#: (``fxy_era_adversarial_verification_20260831.md`` §6.6: "기존 행이 ``failure``
+#: 라벨 ``alias_noop_*`` 를 달고 있으면 StoreWriter/merge-store 가 갱신을 거부").
+#:
+#: WHY THE TAG AND NOT THE FLAGS.  ``lpopt/tools/quarantine_campaign.py`` writes
+#: ``valid=False`` plus ``failure=<tag>``, and its ``--unconverge`` escalation
+#: additionally writes ``converged=False``.  That pass ran 2026-08-30 on
+#: ``intervention_HGD569_f125``, so on the live store EVERY quarantined row is
+#: ``converged=False`` and the converged-and-invalid signature below matches
+#: ZERO rows store-wide (measured 2026-09-03: 0 of 76,793).  The ``failure`` tag
+#: is what actually separates a quarantine from an ordinary harness error, whose
+#: text comes from MASTER (``non_finite_flux`` ×8,039, ``MasterRunError: …``,
+#: ``DeckValidationError: …``) and shares no row with the 8 ``alias_noop_*`` ones.
+#: Keying here therefore blocks the re-kit WITHOUT touching the error→retry
+#: upgrade that ``test_upsert_nonconverged_over_error`` pins.
+QUARANTINE_FAILURE_PREFIXES: tuple[str, ...] = ("alias_noop_",)
+
+#: Trailing ``_v2`` / ``_v3`` on a campaign tag — the memo's ONE exception to
+#: stickiness: a CORRECTED re-run is published under a higher-suffixed campaign
+#: and must be allowed to upgrade the row it repairs.  An unsuffixed tag is v1.
+_CAMPAIGN_VERSION_RE = re.compile(r"_v(\d+)$")
+
+
+def _campaign_version(tag: object) -> tuple[str, int]:
+    """``"x_f125_v2"`` -> ``("x_f125", 2)``; an unsuffixed tag is version 1."""
+    text = str(tag or "")
+    match = _CAMPAIGN_VERSION_RE.search(text)
+    if match is None:
+        return text, 1
+    return text[: match.start()], int(match.group(1))
+
+
+def load_denylist(store_dir: str | Path | None) -> frozenset[str]:
+    """Read ``<store_dir>/quarantine_denylist.json``; empty when absent/unreadable."""
+    if store_dir is None:
+        return frozenset()
+    path = Path(store_dir) / DENYLIST_NAME
+    if not path.is_file():
+        return frozenset()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    if isinstance(payload, Mapping):
+        payload = payload.get("record_ids") or payload.get("denylist") or ()
+    if isinstance(payload, str) or not isinstance(payload, Iterable):
+        return frozenset()
+    return frozenset(str(v) for v in payload)
+
+
+def _explicit_invalid(df: pd.DataFrame) -> np.ndarray:
+    """Per-row "this row says ``valid=False``" (a null / absent column reads False).
+
+    Only an explicit ``False`` counts — a null / absent ``valid`` is "no evidence
+    of a harness fault" (:func:`valid_flags`), never a quarantine, or a partial kit
+    that lacks the column would deny-list the whole store.
+    """
+    if "valid" not in df.columns:
+        return np.zeros(len(df), dtype=bool)
+    col = df["valid"]
+    return (col.notna() & ~col.where(col.notna(), True).astype(bool)).to_numpy()
+
+
+def _quarantine_tagged(df: pd.DataFrame) -> np.ndarray:
+    """Per-row "this row carries a hand-written quarantine ``failure`` tag".
+
+    The PRIMARY C4-1 signature (:data:`QUARANTINE_FAILURE_PREFIXES`).  Requires
+    ``valid=False`` as well, so a stray tag on a row that still claims validity
+    cannot deny-list a ``record_id`` on its own.
+    """
+    if "failure" not in df.columns:
+        return np.zeros(len(df), dtype=bool)
+    labels = df["failure"].astype("string").fillna("").to_numpy(dtype=object)
+    hit = np.zeros(len(df), dtype=bool)
+    for prefix in QUARANTINE_FAILURE_PREFIXES:
+        hit |= np.fromiter((str(v).startswith(prefix) for v in labels),
+                           dtype=bool, count=len(labels))
+    return hit & _explicit_invalid(df)
+
+
+def _converged_flags(df: pd.DataFrame) -> np.ndarray:
+    """Per-row ``converged is True`` (null / absent reads False)."""
+    if "converged" not in df.columns:
+        return np.zeros(len(df), dtype=bool)
+    col = df["converged"]
+    return (col.notna() & col.where(col.notna(), False).astype(bool)).to_numpy()
+
+
+def _quarantine_mask(df: pd.DataFrame) -> np.ndarray:
+    """Per-row "this row IS the quarantine" — either C4-1 signature."""
+    return _quarantine_tagged(df) | (_converged_flags(df) & _explicit_invalid(df))
+
+
+def quarantined_ids(df: pd.DataFrame) -> set:
+    """``record_id``s the frame itself proves are QUARANTINED, not merely failed.
+
+    Two signatures, unioned:
+
+    * **the ``failure`` tag** (:data:`QUARANTINE_FAILURE_PREFIXES`) — the memo's
+      registered key and the ONLY one that fires on the live store, where
+      ``quarantine_campaign.py --unconverge`` left every quarantined row
+      ``converged=False``;
+    * **``converged=True & valid=False``** — defensive.  ``outcome_to_record``
+      never emits that combination (see :func:`_quality_rank`, ranks 8-11 are
+      documented as defensive-only), so it can only be hand-written, and it
+      catches a quarantine applied WITHOUT ``--unconverge`` under a tag this
+      module has not been taught yet.
+
+    An ordinary error row (``converged=False, valid=False`` with harness text in
+    ``failure`` — ``non_finite_flux``, ``MasterRunError: …``) matches NEITHER, so
+    a successful retry still upgrades it
+    (``tests/test_store.py::test_upsert_nonconverged_over_error``).
+    :data:`DENYLIST_NAME` remains available for an untagged ad-hoc quarantine.
+    """
+    if "record_id" not in df.columns:
+        return set()
+    denied = _quarantine_mask(df)
+    if not denied.any():
+        return set()
+    return set(df["record_id"].to_numpy()[denied])
+
+
+def _apply_quarantine_denylist(df: pd.DataFrame, rank: np.ndarray,
+                               denylist: Iterable[str] = ()) -> np.ndarray:
+    """Demote every re-upgrade candidate of a quarantined ``record_id`` below it.
+
+    **Merge denylist — C4-1** (``fxy_era_adversarial_verification_20260831.md``
+    §6.4(a), §9 rank 4).  Quarantine is a column write (``valid=False``,
+    ``lpopt/tools/quarantine_campaign.py``) on a row that is otherwise the BEST
+    evidence for its ``record_id``.  :func:`_quality_rank` scores ``valid`` as a
+    +4 bit, so a kit copy that PREDATES the quarantine — same ``record_id``, same
+    converged label, ``valid=True`` — outranks the quarantined row by exactly that
+    bit and silently wins the upsert.  Merging such a kit therefore *un-quarantines*
+    the row: the measured case is the r1 re-kit restoring the HGD569 ``cyclen``
+    763.934 row to rank 12, into every elite pool and every training filter, while
+    the merge CLI classifies it as a routine "upgrade".
+
+    So quarantine is STICKY: for a denied ``record_id``, no row that does not
+    ITSELF say ``valid=False`` may win, whatever its rank.  Demoting (rank ``-1``,
+    below the ``0`` floor) rather than dropping keeps the forensic row readable —
+    same discipline as ``test_quarantined_row_still_survives_the_upsert_dedup``.
+    Lifting a quarantine is then a deliberate in-place store repair (the way
+    :func:`backfill_e_core` repairs), never a side effect of merging a stale mirror.
+
+    Denied ids come from the frame itself (:func:`quarantined_ids` — the
+    ``failure`` tag and the converged-and-invalid signature) plus any ``denylist``
+    the caller supplies (:func:`load_denylist`).
+
+    THE ONE EXCEPTION (memo §6.6: "더 높은 접미사 ``_v2``/``_v3`` 캠페인 태그만
+    예외").  A quarantine says "this campaign's labels are wrong", not "this
+    ``record_id`` may never be evaluated again" — the repair path is a CORRECTED
+    re-run published under a higher-suffixed campaign tag, and 152 of the 160
+    HGD569 record_ids were legitimately upgraded in place exactly that way.  So a
+    row whose ``campaign`` shares the quarantined row's base and carries a
+    strictly greater ``_vN`` suffix is NOT demoted.  Everything else — the stale
+    kit copy, which by construction carries the SAME campaign tag as the row it
+    would overwrite — is.
+    """
+    denied = quarantined_ids(df) | {str(v) for v in denylist}
+    if not denied or "record_id" not in df.columns:
+        return rank
+    rids = df["record_id"].to_numpy()
+    mask = np.fromiter((str(r) in denied for r in rids), dtype=bool, count=len(rids))
+    mask &= ~_explicit_invalid(df)
+    if not mask.any():
+        return rank
+    mask &= ~_supersedes_quarantine(df, mask)
+    if not mask.any():
+        return rank
+    out = rank.astype(np.int16, copy=True)
+    out[mask] = -1
+    return out
+
+
+def _supersedes_quarantine(df: pd.DataFrame, candidates: np.ndarray) -> np.ndarray:
+    """Per-row "this is a CORRECTED re-run of the quarantine it would replace".
+
+    True only for a candidate whose ``campaign`` has the same base tag as some
+    quarantined row of the SAME ``record_id`` and a strictly greater ``_vN``
+    version (see :func:`_apply_quarantine_denylist`).  With no ``campaign``
+    column — a partial kit, or a frame built for a unit test — nothing supersedes
+    anything and quarantine stays fully sticky.
+    """
+    blank = np.zeros(len(df), dtype=bool)
+    if "campaign" not in df.columns or not candidates.any():
+        return blank
+    quarantine = _quarantine_mask(df)
+    if not quarantine.any():
+        return blank
+    rids = df["record_id"].to_numpy()
+    tags = df["campaign"].to_numpy()
+    #: record_id -> {base tag: highest quarantined version under it}
+    pinned: dict[str, dict[str, int]] = {}
+    for idx in np.flatnonzero(quarantine):
+        base, version = _campaign_version(tags[idx])
+        per_rid = pinned.setdefault(str(rids[idx]), {})
+        per_rid[base] = max(per_rid.get(base, 0), version)
+    for idx in np.flatnonzero(candidates):
+        per_rid = pinned.get(str(rids[idx]))
+        if not per_rid:
+            continue
+        base, version = _campaign_version(tags[idx])
+        if base in per_rid and version > per_rid[base]:
+            blank[idx] = True
+    return blank
+
+
+def dedup_upsert(df: pd.DataFrame, *, denylist: Iterable[str] = ()) -> pd.DataFrame:
     """Collapse duplicate ``record_id`` rows keeping the highest-quality one.
 
     UPSERT semantics (plan 4.2; store is the authoritative record of an LP
@@ -205,12 +494,24 @@ def dedup_upsert(df: pd.DataFrame) -> pd.DataFrame:
     stored row must write a strictly better one (or repair the store in place,
     the way :func:`backfill_e_core` does).
 
+    QUARANTINE IS STICKY.  Before ranking, :func:`_apply_quarantine_denylist`
+    demotes every row of a QUARANTINED ``record_id`` (the frame's own rows tagged
+    :data:`QUARANTINE_FAILURE_PREFIXES` or converged-and-invalid, plus any
+    ``denylist`` the caller passes) that does not itself carry ``valid=False``, so
+    a kit copy predating the quarantine can never re-upgrade it (C4-1,
+    ``fxy_era_adversarial_verification_20260831.md`` §6.4(a) / §6.6 / §9 rank 4).
+    Nothing is dropped — the quarantined row still wins and every row stays
+    readable.  An ordinary error row (harness text in ``failure``) is NOT a
+    quarantine, so a successful retry still upgrades it as before; and a CORRECTED
+    re-run under a higher ``_vN`` campaign tag still upgrades the quarantine it
+    repairs.
+
     Rows are returned in stable arrival order (existing rows first, then new).
     """
     if df.empty:
         return df.reset_index(drop=True)
     work = df.reset_index(drop=True)
-    rank = _quality_rank(work)
+    rank = _apply_quarantine_denylist(work, _quality_rank(work), denylist)
     order = np.arange(len(work), dtype=np.int64)
     # Best row per record_id = max rank, min arrival order.  Sort by rank
     # ASCENDING and order DESCENDING and keep the last occurrence: the highest
@@ -331,6 +632,16 @@ class StoreWriter:
         self._fuel_loaded = False
 
     @property
+    def denylist(self) -> frozenset[str]:
+        """``record_id``s this store PERMANENTLY quarantines (:data:`DENYLIST_NAME`).
+
+        Re-read on every access, not cached: a quarantine applied while a long
+        campaign is running must take effect on that campaign's next write, and
+        the file is tiny.  Empty (and therefore inert) on every existing store.
+        """
+        return load_denylist(self.store_dir)
+
+    @property
     def fuel_library(self) -> "FuelLibrary | None":
         """``fuel_types.parquet`` of this store, loaded once (``None`` if absent)."""
         if not self._fuel_loaded:
@@ -380,9 +691,9 @@ class StoreWriter:
             # an equal-quality one LOSES the tie (dedup_upsert keeps the first
             # occurrence) and a worse one is dropped: local truth is authoritative.
             combined = pd.concat([existing, new_slice], ignore_index=True)
-            combined = dedup_upsert(combined)
+            combined = dedup_upsert(combined, denylist=self.denylist)
         else:
-            combined = dedup_upsert(new_df[SCHEMA_COLUMNS])
+            combined = dedup_upsert(new_df[SCHEMA_COLUMNS], denylist=self.denylist)
 
         table = frame_to_table(combined)
         _atomic_write(self.records_path, lambda p: pq.write_table(table, p))

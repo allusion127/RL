@@ -10,7 +10,8 @@ source.  Each item carries:
 * ``targets``     ``float32[T]`` raw ``[f_r, f_q, cbc_max, cyclen, ao_abs,
   discharge_burnup, max_pin_burnup]`` (Phase D promoted the two burnup axes to
   first-class targets, plan sec. 12.4),
-* ``target_mask`` ``float32[T]`` — 0 for a non-converged chain, a NaN target,
+* ``target_mask`` ``float32[T]`` — 0 for an untrustworthy row (a non-converged
+  chain, or one quarantined with ``valid=False``), a NaN target,
   ``cbc_max`` on a ``cbc_kind=="boc_only"`` record, or (when
   ``censor_dataset_a_pin_labels``, the default) ``max_pin_burnup`` on a
   ``dataset=="A"`` row — A's pin label is a MOCHA-cache surrogate, not a
@@ -20,8 +21,10 @@ source.  Each item carries:
   its other five labels still train,
 * ``conv_label``  ``float32`` converged flag, with
 * ``conv_mask``   ``float32`` — 0 when ``converged_at_cap`` (label is *unknown*,
-  not a physical non-convergence),
-* ``maps``        ``float32[4,9,9]`` EDIT5 stack (NaN-filled when absent) and
+  not a physical non-convergence) or when a quarantined row claims convergence
+  (``converged=True, valid=False``: contradictory, so no label at all),
+* ``maps``        ``float32[4,9,9]`` EDIT5 stack (NaN-filled when absent, and
+  withheld from an untrustworthy row exactly as ``axial``/``traj`` are) and
 * ``maps_mask``   ``float32[4,9,9]`` — 1 only where a present map cell is finite.
 
 With ``include_axial=True`` (default **off**) two more keys appear:
@@ -61,7 +64,7 @@ from ..data.axial import ANCHORS as AXIAL_ANCHORS
 from ..data.axial import N_PLANES as AXIAL_PLANES
 from ..data.axial import anchor_profiles, load_axial
 from ..data.fuel_types import FuelLibrary
-from ..data.store import StoreReader
+from ..data.store import StoreReader, row_trustworthy, row_valid
 from ..data.traj import DEFAULT_ANCHORS as TRAJ_ANCHORS
 from ..data.traj import N_PLANES as TRAJ_PLANES
 from ..data.traj import QUARTER as TRAJ_QUARTER
@@ -183,7 +186,11 @@ class LPDataset(Dataset):
         return len(self.df)
 
     def _targets(self, row: pd.Series) -> tuple[np.ndarray, np.ndarray]:
-        converged = bool(row["converged"])
+        # ``row_trustworthy``, not ``row["converged"]``: a quarantined row
+        # (``valid=False``) carries labels for a core that was never actually
+        # loaded, so its targets must be masked exactly like a non-converged
+        # chain's.  Identical on every row whose ``valid`` is True/absent.
+        converged = row_trustworthy(row)
         names = self.targets
         vals = np.zeros(len(names), dtype=np.float32)
         mask = np.zeros(len(names), dtype=np.float32)
@@ -214,10 +221,19 @@ class LPDataset(Dataset):
 
     def _maps(self, record_id: str, row: pd.Series
               ) -> tuple[np.ndarray, np.ndarray]:
+        """``((4,9,9) EDIT5 stack, mask)`` — NaN/0 when the label is absent.
+
+        Gated by :func:`row_trustworthy` for the same reason :meth:`_axial` and
+        :meth:`_traj` are, and this method used NOT to be: a map is a harvested
+        EOC label of the SAME chain the scalar targets come from, so a
+        quarantined or non-converged row's map is exactly as untrustworthy as its
+        ``f_r``.  Without the gate the map head kept training on the rows the
+        scalar heads had already masked out — the leak this predicate closes.
+        """
         shape = (4, 9, 9)
         maps_key = row.get("maps_key")
         arr = None
-        if self.include_maps and maps_key is not None and not (
+        if self.include_maps and row_trustworthy(row) and maps_key is not None and not (
             isinstance(maps_key, float) and math.isnan(maps_key)
         ):
             arr = self.reader.maps(str(maps_key))
@@ -236,13 +252,13 @@ class LPDataset(Dataset):
         The axial stack is keyed ``<record_id>__axial`` (not ``maps_key``): the
         high-resolution harvest writes it per record id, and a record can carry a
         map without an axial stack (every pre-EDIT6-harvest row does).  A
-        non-converged chain is masked out by the same rule the scalar targets
-        use — its EOC step is not a converged equilibrium state.
+        non-converged (or quarantined) chain is masked out by the same rule the
+        scalar targets use — its EOC step is not a converged equilibrium state.
         """
         a_n = len(self.axial_anchors)
         blank = (np.full((a_n, AXIAL_PLANES), np.nan, dtype=np.float32),
                  np.zeros(a_n, dtype=np.float32))
-        if not bool(row["converged"]):
+        if not row_trustworthy(row):
             return blank
         stack = load_axial(self.reader, record_id)
         if stack is None:
@@ -268,7 +284,7 @@ class LPDataset(Dataset):
             want,
             np.zeros(t_n, dtype=np.float32),
         )
-        if not bool(row["converged"]):
+        if not row_trustworthy(row):
             return blank
         stack = load_traj(self.reader, record_id)
         if stack is None:
@@ -290,8 +306,19 @@ class LPDataset(Dataset):
             )
 
         targets, target_mask = self._targets(row)
-        conv_label = 1.0 if bool(row["converged"]) else 0.0
+        conv_flag = bool(row["converged"])
+        conv_label = 1.0 if conv_flag else 0.0
         conv_mask = 0.0 if bool(row.get("converged_at_cap", False)) else 1.0
+        # A quarantined row that nevertheless CLAIMS convergence is self-
+        # contradictory evidence — the chain the flag describes was never the
+        # chain that ran — so it must not train the convergence head as a
+        # positive.  Only that contradictory combination is masked: an INVALID
+        # NON-converged row is still an honest "this evaluation produced no
+        # converged result" negative, and masking those too would silently drop
+        # the 8,760 valid=False rows of the live store from the head that
+        # splits.py deliberately routes every non-converged row into.
+        if conv_flag and not row_valid(row):
+            conv_mask = 0.0
         maps, maps_mask = self._maps(record_id, row)
 
         item = {
@@ -462,6 +489,66 @@ def cyclen_cell_codes(
     return codes
 
 
+def fxy_cell_key(case_pair: Any, feed: Any) -> str:
+    """The GATE cell key ``"<case_pair>/f<feed>"`` (``""`` when unresolvable).
+
+    This is the *scorer's* key, character-for-character: every f_xy gate script
+    (``data/reports/fxy_gate_eval_*.py``) groups its rows with
+    ``case_pair.astype(str) + "/f" + feed.astype(int).astype(str)``.  It is
+    defined here, next to the codes built from it, so the loss and the gate can
+    never drift onto two different partitions of the same corpus.
+    """
+    if feed is None or case_pair is None:
+        return ""
+    try:
+        f = int(feed)                       # NaN / "" raise, and are unresolved
+    except (TypeError, ValueError):
+        return ""
+    cp = str(case_pair)
+    if not cp or cp.lower() in ("nan", "none"):
+        return ""
+    return f"{cp}/f{f}"
+
+
+def fxy_cell_codes(df: pd.DataFrame) -> np.ndarray:
+    """Per-row integer ``(case_pair, feed)`` GATE-cell code for the within-cell
+    ``f_xy`` rank loss (prereg Amendment E.8-②).
+
+    Sibling of :func:`cyclen_cell_codes`, but deliberately NOT the same cell.
+    The cyclen cell is ``(feed, e_core-bin, dataset)``; every f_xy gate scores
+    within ``(case_pair, feed)``, and the two partitions do not nest — measured
+    on the S1j train fold (prereg E.1.4), 43 of 78 legacy cells MIX two or more
+    gate cells (up to 5) and 28 of 119 gate cells are SPLIT across legacy cells
+    (up to 6).  Optimizing a partition the gate does not score is how a ranking
+    term can improve its own loss and move nothing the gate can see, so the loss
+    is given the gate's own cell.
+
+    A row whose ``case_pair``/``feed`` does not resolve gets code ``-1`` and is
+    excluded from pairing (same contract as :func:`cyclen_cell_codes`).  Only
+    equality of the codes matters, so the mapping is a plain dense
+    factorization, deterministic under a fixed row order.
+    """
+    n = len(df)
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    codes = np.full(n, -1, dtype=np.int64)
+    if "case_pair" not in df.columns or "feed" not in df.columns:
+        return codes
+    case_pair = df["case_pair"].to_numpy()
+    feed = df["feed"].to_numpy()
+    lut: dict[str, int] = {}
+    for i in range(n):
+        key = fxy_cell_key(case_pair[i], feed[i])
+        if not key:
+            continue
+        c = lut.get(key)
+        if c is None:
+            c = len(lut)
+            lut[key] = c
+        codes[i] = c
+    return codes
+
+
 # --------------------------------------------------------------------------- #
 # CBC label-convention provenance (A/B round-2 arm A2)
 # --------------------------------------------------------------------------- #
@@ -527,6 +614,7 @@ def cbc_provenance_codes(df: pd.DataFrame) -> np.ndarray:
 
 __all__ = ["LPDataset", "TARGETS", "TARGETS_WITH_ASM_BU", "targets_for",
            "compute_cell_weights", "cyclen_cell_codes",
+           "fxy_cell_key", "fxy_cell_codes",
            "CBC_PROVENANCE_GROUPS", "CBC_PROVENANCE_REFERENCE",
            "CBC_PROVENANCE_REFERENCE_CODE",
            "cbc_provenance_labels", "cbc_provenance_codes"]

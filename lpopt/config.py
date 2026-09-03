@@ -68,6 +68,13 @@ class MasterConfig:
     executable: str | None = None
     workers: int = 0                         # 0 = auto (fill the core pool)
     timeout: int = 3600
+    #: Per-MASTER wall cap on the ``design bootstrap`` path ONLY (cy1 + every
+    #: reload cycle of ``make_band_restart``).  ``timeout`` above stays the
+    #: campaign/produce cap and is NOT changed by this key.  A healthy bootstrap
+    #: cycle is 17-24 s; the 2026-09-03 S6 failure burned 3,600 s per divergence
+    #: because ``timeout`` was the only defence.  The NaN watchdog now kills a
+    #: divergence in ~10 s, so this is the backstop for a genuine hang.
+    bootstrap_timeout_s: float = 900.0
     max_cycles: int = 16
     consecutive: int = 2
     tolerances: dict[str, float | None] | None = None
@@ -457,6 +464,9 @@ class AcquisitionConfig:
     #: v2's score for every elite child in the wave metadata
     #: (``policy_shadow_scores``).  Shadow is the arm that collects the review's
     #: prospective A/B data without letting an ungated policy touch selection.
+    #: ``"v3"`` / ``"shadow_v3"`` are the same two roles for the v3 ensemble from
+    #: :attr:`policy_prior_model_dir_v3`, ranking on its ``fxy`` head — the
+    #: campaign objective itself rather than the F_r proxy the r1 wave rejected.
     policy_prior: str = "off"
     #: Checkpoint directory (5 ``cnn_seed*`` members + their ``meta.json``).
     policy_prior_model_dir: str = "data/models/policy_v1"
@@ -464,6 +474,10 @@ class AcquisitionConfig:
     #: from :attr:`policy_prior_model_dir` so an A/B deck can name both arms'
     #: checkpoints at once and switch arms by ``policy_prior`` alone.
     policy_prior_model_dir_v2: str = "data/models/policy_v2"
+    #: Checkpoint directory for the v3 modes (``v3`` / ``shadow_v3``).  Separate
+    #: for the same reason the v2 one is: the registered A/B/C names all three
+    #: arms' checkpoints at once and switches arms by ``policy_prior`` alone.
+    policy_prior_model_dir_v3: str = "data/models/policy_v3"
     #: FAIL-CLOSED switch (review section 6.12).  ``false`` (default) is research
     #: behaviour: a policy that will not load prints a WARNING, the elite arm
     #: falls back to unscored random mutation, and the wave metadata records
@@ -488,6 +502,14 @@ class AcquisitionConfig:
     #: ~10x sampling-odds ratio on v2's scale
     #: (``data/reports/policy_v2_results_20260817.md`` section 8, item 3).
     policy_prior_temperature_v2: float = 0.08
+    #: Softmax temperature for the v3 modes.  **0.0 means NOT YET DERIVED and a
+    #: selecting v3 arm refuses to build a pool with it** — the value is the one
+    #: that reproduces v1's ~10x sampling-odds ratio on the v3 gate fold's own
+    #: p90-p10 score spread, it is computed and written down BEFORE arm C
+    #: launches, and re-deriving it after seeing an outcome is forbidden
+    #: (``policy_v3_prereg_20260831.md`` §5d).  A default that happened to work
+    #: would let an underived arm launch and be read as a treatment.
+    policy_prior_temperature_v3: float = 0.0
     #: Edits proposed per scored parent expansion before the softmax pick
     #: (report section 7: "generate N ~ 16 mutations ... and admit the top m").
     policy_prior_candidates: int = 16
@@ -887,8 +909,15 @@ class DesignConfig:
     package_root: str | None = None
     n_types: int = 96                        # LHS grid sample size
     seed: int = 0
-    max_parallel: int = 4                    # concurrent DeCART2D runs
-    decart_timeout: int = 5400
+    #: Concurrent DeCART2D runs.  2 is the PROVEN HOST_181 recipe (the queue
+    #: script ran the serial exe two at a time); the queue was retired in favour
+    #: of ``lattice.run_batch``, so this value is now the only place that recipe
+    #: lives (assembly on-demand task #10 (3)).
+    max_parallel: int = 2                    # concurrent DeCART2D runs
+    #: Per-case DeCART wall-clock cap [s].  2.33x the HOST_199 serial measurement
+    #: of 3,084 s; the previous 5400 was only 1.75x and is too thin for an
+    #: authored 20-Gd lattice (task #10 (2)).
+    decart_timeout: int = 7200
     bootstrap_max_cycles: int = 16
     enable_pin_burnup: bool = True
     #: Cap the throwaway cy1 fresh-core cycle at this many EFPD instead of running
@@ -1694,7 +1723,8 @@ def _validate_objective(value: str, path: Path) -> None:
 #: :data:`lpopt.search.construct.POLICY_MODES`, which is the single source of
 #: truth; ``tests/test_config.py`` asserts the two lists agree (the import is
 #: deliberately NOT taken here — ``lpopt.search`` imports this module).
-_VALID_POLICY_PRIORS = {"off", "fr", "flat", "both", "v1", "v2", "shadow_v2"}
+_VALID_POLICY_PRIORS = {"off", "fr", "flat", "both", "v1", "v2", "shadow_v2",
+                        "v3", "shadow_v3"}
 
 
 def _validate_policy_prior(value: str, path: Path) -> None:

@@ -677,6 +677,30 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_kpi(args: argparse.Namespace) -> int:
+    """Sample-efficiency KPI (A1-A4) of a finished/in-flight run — MASTER 0 calls.
+
+    Delegates to :mod:`lpopt.tools.kpi_calls_to_frontier`, which writes
+    ``kpi.json`` into the run dir (and, with ``--post``, the A2 "after"
+    snapshot).  Read-only over ``labels.jsonl`` / ``waves/*/selection.json`` /
+    the record store; nothing here loads a checkpoint or calls MASTER.
+    """
+
+    from .tools.kpi_calls_to_frontier import main as kpi_main
+
+    argv = ["--run", args.run]
+    if args.store:
+        argv += ["--store", args.store]
+    argv += ["--metric", args.metric, "--epsilon", str(args.epsilon)]
+    if args.feasible_only:
+        argv.append("--feasible-only")
+    if args.post:
+        argv.append("--post")
+    if args.freeze:
+        argv.append("--freeze")
+    return kpi_main(argv)
+
+
 def cmd_sdm_mtc(args: argparse.Namespace) -> int:
     """SDM/MTC post-verification of a campaign run's top-K feasible candidates.
 
@@ -727,10 +751,30 @@ def cmd_sdm_mtc(args: argparse.Namespace) -> int:
               "sdm_required_pcm, or --mtc-limit / --sdm-limit) — running "
               "REPORT-ONLY: values are measured and recorded, nothing is marked "
               "a violator.")
-    top_k = args.top_k if args.top_k is not None else (
-        (uc.post_verify_top_k if uc and uc.post_verify_top_k else None)
-        or (sc.top_k if sc else 5)
-    )
+    # top-K precedence: --top-k > [constraints] post_verify_top_k (the ONLY knob
+    # the live gate reads, sdm_mtc.py:1517) > [sdm_mtc] top_k > 5.  An explicit
+    # ``post_verify_top_k = 0`` means OFF (config.py: "0 = off") and must survive
+    # as 0 — the previous ``or`` chain treated it as unset and silently verified
+    # 5 candidates, i.e. ~5 unrequested MASTER calls.
+    #
+    # RECORDED DEVIATION (assembly on-demand task #21, which budgets "0 lines of
+    # code" for this command).  The registered slice-Z decks pass --top-k 5 and
+    # set post_verify_top_k = 5, so the registered recipe is unaffected: the only
+    # input whose meaning changes is an explicit 0, which now honours the config
+    # comment instead of falling through to [sdm_mtc] top_k.  Covered by
+    # tests/test_sdm_mtc_topk.py::test_top_k_zero_means_off_and_spends_no_master_call.
+    if args.top_k is not None:
+        top_k = int(args.top_k)
+    elif uc is not None:
+        top_k = int(uc.post_verify_top_k)
+    elif sc is not None:
+        top_k = int(sc.top_k)
+    else:
+        top_k = 5
+    if top_k <= 0:
+        print("[NOTE] post-verification is OFF (top_k = 0 from "
+              "[constraints] post_verify_top_k / --top-k) — nothing to verify.")
+        return 0
     mtc_params = BranchParams(
         mtc_delta_c=(sc.mtc_delta_c if sc else 5.0),
         mtc_output_units=(sc.mtc_output_units if sc else "pcm_per_c"),
@@ -834,6 +878,7 @@ def cmd_optimize(args: argparse.Namespace) -> int:
             cfg, model, evaluator_factory,
             dry_run=dry_run, budget=args.budget, run_dir=args.run_dir,
             resume=bool(args.resume), max_waves=args.max_waves,
+            allow_uncalibrated=bool(getattr(args, "allow_uncalibrated", False)),
             backend_factory=backend_factory, progress=True,
             early_stop=not bool(args.no_early_stop),
         )
@@ -1247,27 +1292,52 @@ def cmd_design_run(args: argparse.Namespace) -> int:
         print(f"[ERROR] {exc}")
         return 1
     from .design.spec import FuelDesign
-    from .design.lattice import run_batch
+    from .design.lattice import (
+        BatchOptions, LatticeError, designs_from_wave, gate_products, run_batch,
+    )
 
     manifest = store / "decks"
     # designs come from the registry (type_id -> alias); reconstruct FuelDesigns.
     from .design.spec import DESIGN_GRID  # noqa: F401  (kept for future validation)
-    designs = _designs_from_registry(registry)
+    wave_meta: dict = {}
+    if args.wave:
+        # task #10 (1): the case list, and the predicted FF/k the manifest records.
+        try:
+            designs, wave_meta = designs_from_wave(_res(args.wave))
+        except LatticeError as exc:
+            print(f"[ERROR] {exc}")
+            return 1
+    else:
+        designs = _designs_from_registry(registry)
     if args.limit:
         designs = designs[: args.limit]
     if not designs:
         print("[ERROR] no designs in registry; run `design generate` first")
         return 1
+    # task #10 (2)(3): the timeout and the parallelism come from [design]
+    # (defaults 7200 s / 2 = the proven 181 recipe), never from a literal here.
+    options = (BatchOptions.recipe_181(wave_meta=wave_meta)
+               if getattr(args, "recipe_181", False) else None)
     exe = d.decart_exe
     runs = run_batch(designs, store / "work", registry, _res(d.apr1400_root),
-                     exe=exe, max_parallel=d.max_parallel, timeout_s=d.decart_timeout)
+                     exe=exe, max_parallel=d.max_parallel, timeout_s=d.decart_timeout,
+                     options=options)
     ok = sum(1 for r in runs if r.hgc_path is not None)
     print(f"design run: {ok}/{len(runs)} DeCART runs produced HGCs")
     for r in runs:
         wall = f"{r.wall_s:.0f}s" if r.wall_s else "?"
         print(f"  {r.alias:3s}  wall={wall:>6s}  "
               f"{'OK ' + r.hgc_path.name if r.hgc_path else 'FAIL ' + (r.error or '')}")
-    return 0 if ok == len(runs) else 1
+    gated_ok = True
+    if getattr(args, "gate_hgc", False):
+        report = gate_products(runs)
+        for alias, entry in report.items():
+            print(f"  [HGC GATE] {alias:3s}  {entry['verdict']}")
+            for g in entry["gates"]:
+                if g["status"] != "PASS":
+                    print(f"      {g['gate']}: {g['status']} — {g['detail']}")
+        gated_ok = all(e["verdict"] != "FAIL" for e in report.values())
+    return 0 if (ok == len(runs) and gated_ok) else 1
 
 
 def cmd_design_build_lib(args: argparse.Namespace) -> int:
@@ -1321,9 +1391,13 @@ def cmd_design_bootstrap(args: argparse.Namespace) -> int:
     if cy1_cap is not None:
         print(f"design bootstrap: cy1 capped at {float(cy1_cap):g} EFPD "
               f"(natural-EOC cy1 disabled)")
+    # [master].bootstrap_timeout_s is the BOOTSTRAP-path wall cap (default 900 s);
+    # [master].timeout (campaign/produce) is deliberately not read here.
+    timeout_s = float(cfg.master.bootstrap_timeout_s)
     res = make_band_restart(pkg, args.pair, args.feed, _random.Random(d.seed),
                             exe=exe, max_cycles=d.bootstrap_max_cycles,
                             enable_pin_burnup=d.enable_pin_burnup,
+                            timeout_s=timeout_s,
                             cy1_cap_efpd=cy1_cap)
     if res.error:
         print(f"[ERROR] bootstrap failed: {res.error}")
@@ -1875,6 +1949,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_opt.add_argument("--max-waves", type=int, default=None, help="stop after N waves (pause; resumable)")
     p_opt.add_argument("--no-early-stop", action="store_true",
                        help="disable the on-target early-stop rule (run the full budget: 12 waves + reserve)")
+    p_opt.add_argument("--allow-uncalibrated", action="store_true",
+                       help="downgrade the C2-4 calibration-set refusal to a WARNING on resume AND on every champion save (env: LPOPT_ALLOW_UNCALIBRATED=1)")
     p_opt.set_defaults(func=cmd_optimize)
 
     p_fcs = sub.add_parser(
@@ -1908,6 +1984,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-delivery", dest="delivery", action="store_false",
         help="report.md only; skip the delivery.json rebuild")
     p_report.set_defaults(func=cmd_report, delivery=True)
+
+    # kpi: sample-efficiency KPI A1-A4 of a run (active_frontier_loop_spec sec.5 P0-2)
+    p_kpi = sub.add_parser(
+        "kpi",
+        help="sample-efficiency KPI (A1-A4) of a runs/<ts> -> kpi.json (no MASTER)")
+    p_kpi.add_argument("--run", required=True, help="the runs/<ts> directory")
+    p_kpi.add_argument("--store", default=None,
+                       help="record store dir (default: data/store near the run)")
+    p_kpi.add_argument("--metric", default="f_r", help="objective axis (default f_r)")
+    p_kpi.add_argument("--epsilon", type=float, default=0.005,
+                       help="A1 tolerance on the objective axis (default 0.005)")
+    p_kpi.add_argument("--feasible-only", action="store_true",
+                       help="trajectory on the run's feasible flag, not `converged`")
+    p_kpi.add_argument("--post", action="store_true",
+                       help="also write the A2 'after' snapshot (ood_snapshot_post.json)")
+    p_kpi.add_argument("--freeze", action="store_true",
+                       help="write kpi_baseline.json if the run has none "
+                            "(never overwrites an existing frozen record)")
+    p_kpi.set_defaults(func=cmd_kpi)
 
     # sdm-mtc: SDM/MTC post-verification of a run's top-K feasible candidates (plan 12.5)
     p_sm = sub.add_parser("sdm-mtc", help="SDM/MTC post-verify top-K feasible candidates of a run")
@@ -2000,6 +2095,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_dr = dsub.add_parser("run", help="run DeCART2D on generated decks (concurrent)")
     p_dr.add_argument("--input", "-i", default="lpopt.inp", help="campaign TOML deck")
     p_dr.add_argument("--limit", type=int, default=None, help="cap number of lattices run")
+    p_dr.add_argument("--wave", default=None,
+                      help="design_wave.json case list (task #10); default = the registry")
+    p_dr.add_argument("--recipe-181", action="store_true",
+                      help="enforce the proven HOST_181 recipe: exe/XS SHA-256 preflight "
+                           "+ nxfile rewrite, OMP_NUM_THREADS=1, host-wide DeCART process "
+                           "gate (<2), 'JOB FINISHED' completion marker, manifest.json")
+    p_dr.add_argument("--gate-hgc", action="store_true",
+                      help="run the HGC delivery gates (G-H1/G-H1b/G-H1c/G-H2, task #11) "
+                           "on the products and fail the command on any FAIL")
     p_dr.set_defaults(func=cmd_design_run)
 
     p_dl = dsub.add_parser("build-lib", help="build paramA MAS_XSL/MAS_HFF via TotalBatcher4")
@@ -2047,7 +2151,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gv.add_argument("--model-dir", default=None,
                       help="champion ensemble dir for a live run (default [model].model_dir)")
     p_gv.add_argument("--scratch", default=None,
-                      help="scratch dir (default C:/Users/USER/AppData/Local/Temp/eqlp_geomchk)")
+                      help="scratch dir (default C:/Users/MK/AppData/Local/Temp/eqlp_geomchk)")
     p_gv.add_argument("--seed", type=int, default=0, help="probe RNG seed")
     p_gv.set_defaults(func=cmd_geom_validate)
 

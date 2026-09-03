@@ -113,6 +113,23 @@ def _read_text_flex(path: Path) -> str:
     return data.decode("ascii", errors="replace")
 
 
+def _looks_like_existing_file(s: str) -> bool:
+    """``True`` when the string plausibly names a file that exists.
+
+    Parsers here accept either a path or the file's text, so a text argument
+    also reaches this probe.  Multi-line or long strings are text by
+    construction, and ``Path.is_file()`` still raises for names the OS rejects
+    outright (Linux ENAMETOOLONG, errno 36, is not among the errors pathlib
+    swallows), so guard the probe rather than let a stray argument crash it.
+    """
+    if "\n" in s or "\x00" in s or not 0 < len(s) < 500:
+        return False
+    try:
+        return Path(s).is_file()
+    except OSError:
+        return False
+
+
 # --------------------------------------------------------------------------- #
 # parsing (ported verbatim from master_sum.py)
 # --------------------------------------------------------------------------- #
@@ -228,9 +245,7 @@ def _parse_edit5(lines: list[str]) -> list[AssemblyMaps]:
 
 def parse_mas_sum(path_or_text: str | Path) -> Summary:
     """Parse a ``MAS_SUM`` file (or its text) into a :class:`Summary`."""
-    if isinstance(path_or_text, Path) or (
-        len(str(path_or_text)) < 500 and Path(str(path_or_text)).is_file()
-    ):
+    if isinstance(path_or_text, Path) or _looks_like_existing_file(str(path_or_text)):
         text = _read_text_flex(Path(path_or_text))
     else:
         text = str(path_or_text)

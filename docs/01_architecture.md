@@ -936,3 +936,15 @@ python autoeng.py --config autoeng.toml
 6. **실패는 시끄럽게** — 알 수 없는 덱 키는 하드 에러, 자산 미해결 `MissingCaseAssetError`,
    스플릿 노후화 `SplitStaleError`, 모델/보정 불일치 `ModelMismatchError`. 조용한 폴백은
    사고로 취급한다.
+
+---
+
+## 2026-09-03 업데이트
+
+패키지 구조에 다음 모듈이 추가/개편됐다: `lpopt/design/{screen,opscreen_chain,need,hgc_gates,
+compliance,spec}.py`(assembly-on-demand 파이프라인의 스크리닝·게이트 체인), `lpopt/policy/
+{v3,train_v3,metrics_v31}.py`(정책 v3.1), `lpopt/search/{sdm_mtc,coverage}.py`,
+`lpopt/tools/kpi_calls_to_frontier.py`. `lpopt/data/store.py`에 신뢰가능(trustworthy) 행 술어가,
+`lpopt/search/{campaign,verify}.py`에 provenance/parity 검증 계층이 추가됐다 — 08-29~31
+적대적 검토에서 드러난 서빙 경로 재구성 결함(`fxy_era_adversarial_verification_20260831.md`)의
+재발을 막기 위한 구조적 대응이다.

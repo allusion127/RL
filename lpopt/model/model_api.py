@@ -52,6 +52,7 @@ import pandas as pd
 import torch
 
 from ..data.fuel_types import FuelLibrary, core_enrichment_split, resolve_type_id
+from ..data.map_calibration import ARTIFACT_NAME as _MAP_CALIB_NAME
 from ..vendor.masterrl.domain import CaseKey, Pattern
 from ..vendor.masterrl.surrogate import SurrogatePrediction, TARGET_NAMES
 from .calibrate import CALIB_NAME, apply_calibration, apply_platt, load_calibration
@@ -144,6 +145,44 @@ _FEATURE_OOD_NAME = "feature_ood.json"
 #: Ensemble-level meta sidecar (written by training; members list + split).  Read at
 #: load time ONLY for the f_xy serve-sigma bar below — nothing else consults it.
 _ENSEMBLE_NAME = "ensemble.json"
+#: Every CALIBRATION artifact a serving checkpoint dir carries, as
+#: ``(filename, in-memory attribute)``, in the order :meth:`PosValCnnBackend.from_dir`
+#: reads them.  :meth:`PosValCnnBackend.save` round-trips ALL of them.
+#:
+#: Defect C2-4 (``data/reports/fxy_era_adversarial_verification_20260831.md`` §4.4 D,
+#: §9 rank 3): ``save()`` used to write members + ``ensemble.json`` +
+#: ``calibration.json`` + ``feature_ood.json`` + ``backend.json`` and NOTHING else,
+#: while ``from_dir`` reads six more per-cell files from the directory it is handed.
+#: Since ``campaign._save_champion`` writes ``<run_dir>/models/champion_wave_NN``
+#: with this method and ``--resume`` reloads exactly that directory, every resumed
+#: campaign served an `s1j` descendant with the per-cell LEVEL calibration GONE —
+#: the F_r <= 1.55 / F_q / CBC / |AO| level gates and the cyclen LCB all shifted,
+#: silently, with no guard anywhere (the D3 guard looks only at ``serve_sigma``).
+#: r1 was resumed three times.  Artifacts are COPIED from the in-memory dicts,
+#: never synthesised: a backend that carries none writes none, so every pre-fix
+#: checkpoint round-trips byte-identically to what it was.
+_CALIBRATION_ARTEFACTS: tuple[tuple[str, str], ...] = (
+    (CALIB_NAME, "calibration"),
+    (CELL_CALIB_NAME, "cell_calibration"),
+    (FR_CALIB_NAME, "fr_calibration"),
+    (CBC_CALIB_NAME, "cbc_calibration"),
+    (FQ_CALIB_NAME, "fq_calibration"),
+    (AO_CALIB_NAME, "ao_calibration"),
+    (FLAT_CALIB_NAME, "flatness_calibration"),
+    (PINBU_PHYSICS_NAME, "pinbu_physics"),
+    (CONFORMAL_NAME, "conformal"),
+)
+#: The calibration artifact FILENAMES, for a caller that only needs to ask "does
+#: this checkpoint dir carry its calibration set?" without loading a backend
+#: (:func:`..search.campaign.checkpoint_calibration_set`).
+CALIBRATION_ARTEFACT_NAMES: tuple[str, ...] = tuple(
+    name for name, _ in _CALIBRATION_ARTEFACTS)
+#: Artifacts a checkpoint dir can carry that the backend keeps NO in-memory copy of.
+#: ``map_calibration.json`` is fitted against ONE champion and normally read from
+#: the STORE dir, but a checkpoint that ships one alongside its weights must not
+#: lose it on a re-save — there is nothing in memory to re-emit it from, so it is
+#: copied byte-for-byte from the source dir (:attr:`PosValCnnBackend.source_dir`).
+_COPY_ONLY_ARTEFACTS: tuple[str, ...] = (_MAP_CALIB_NAME,)
 #: ``fxy_head.serve_sigma`` value that BARS this checkpoint's f_xy head sigma from
 #: serving.  `s1j` (11th champion, promoted 2026-08-30) carries it: its head passed
 #: G1/G2'/G3' but FAILED G4 (68% coverage 0.831 > the 0.80 ceiling — over-wide), and
@@ -457,6 +496,12 @@ class PosValCnnBackend:
             (conformal or {}).get("bin_width", CONFORMAL_BIN_WIDTH)
         )
         self.device = torch.device(device)
+        #: The checkpoint DIRECTORY this backend was loaded from (``None`` when it
+        #: was constructed in memory).  :meth:`save` re-emits the calibration
+        #: artifacts it holds from memory, and copies from here the ones it holds
+        #: no in-memory copy of (:data:`_COPY_ONLY_ARTEFACTS`).  Set by
+        #: :meth:`from_dir`; never used for anything a prediction depends on.
+        self.source_dir: Path | None = None
 
         # Conditioning schema + target order come from the checkpoint meta so a
         # served pattern re-normalizes exactly as it was trained.  A mixed-schema
@@ -807,16 +852,20 @@ class PosValCnnBackend:
             # disagreement means the checkpoint dir was assembled inconsistently.
             _cross_check_manifest(mani, metas)
         fuel = FuelLibrary.from_parquet(Path(store_dir) / "fuel_types.parquet")
-        return cls(members, metas, fuel=fuel, library_id=library_id,
-                   calibration=calib, cell_calibration=cell_calib,
-                   fr_calibration=fr_calib, cbc_calibration=cbc_calib,
-                   fq_calibration=fq_calib, ao_calibration=ao_calib,
-                   flatness_calibration=flat_calib,
-                   flatness_sigma_floor=sigma_floor,
-                   pinbu_physics=pinbu, conformal=conformal, device=device,
-                   feature_ood_envelope=feature_ood,
-                   fxy_serve_sigma=fxy_serve_sigma,
-                   ensemble_meta=ensemble_meta)
+        backend = cls(members, metas, fuel=fuel, library_id=library_id,
+                      calibration=calib, cell_calibration=cell_calib,
+                      fr_calibration=fr_calib, cbc_calibration=cbc_calib,
+                      fq_calibration=fq_calib, ao_calibration=ao_calib,
+                      flatness_calibration=flat_calib,
+                      flatness_sigma_floor=sigma_floor,
+                      pinbu_physics=pinbu, conformal=conformal, device=device,
+                      feature_ood_envelope=feature_ood,
+                      fxy_serve_sigma=fxy_serve_sigma,
+                      ensemble_meta=ensemble_meta)
+        # Remember where the artifacts came from, so :meth:`save` can carry the
+        # ones with no in-memory representation onto a derived checkpoint (C2-4).
+        backend.source_dir = d
+        return backend
 
     @classmethod
     def load(cls, path: str | Path, **kwargs: Any) -> "PosValCnnBackend":
@@ -2066,10 +2115,7 @@ class PosValCnnBackend:
             save_member(out / name, model, meta)
             written.append(name)
         self._save_ensemble_meta(out, written)
-        if self.calibration is not None:
-            (out / CALIB_NAME).write_text(
-                json.dumps(self.calibration, indent=2, sort_keys=True),
-                encoding="utf-8")
+        self._save_calibration_artefacts(out)
         # Freeze the training-population feature envelope next to the champion so the
         # serve-time OOD guard uses the exact train-time range (review sec. 4b).
         (out / _FEATURE_OOD_NAME).write_text(
@@ -2090,6 +2136,47 @@ class PosValCnnBackend:
                         "globals": list(getattr(self.encoder, "globals_names", ()))},
                        indent=2, sort_keys=True),
             encoding="utf-8")
+        return out
+
+    def _save_calibration_artefacts(self, out: Path) -> Path:
+        """Round-trip EVERY calibration artifact ``from_dir`` reads (defect C2-4).
+
+        Closes ``data/reports/fxy_era_adversarial_verification_20260831.md`` §4.4 D
+        / §9 rank 3.  ``save()`` used to emit ``calibration.json`` alone, so the six
+        per-cell files (``cell_``/``f_r_``/``cbc_``/``f_q_``/``ao_abs_``/
+        ``flatness_calibration.json``) — plus ``pinbu_physics.json`` and
+        ``conformal.json``, read by the same ``from_dir`` block — vanished from
+        every derived checkpoint.  ``campaign._save_champion`` writes such a
+        checkpoint after each accepted wave and ``--resume`` reloads exactly it, so
+        a resumed campaign served the model with its LEVEL calibration removed:
+        F_r / F_q / CBC / |AO| level gates and the cyclen LCB all move, silently.
+
+        COPIED, never synthesised — same discipline as :meth:`_save_ensemble_meta`.
+        An artifact the backend does not hold is not written, so a checkpoint that
+        never had one still does not, and the pre-fix files are byte-identical
+        (same ``indent=2, sort_keys=True`` encoding the old ``calibration.json``
+        branch used).  Artifacts with NO in-memory form (``map_calibration.json``)
+        are copied from :attr:`source_dir` when the source dir shipped one.
+        """
+        out.mkdir(parents=True, exist_ok=True)
+        for name, attr in _CALIBRATION_ARTEFACTS:
+            payload = getattr(self, attr, None)
+            if payload is None:
+                continue
+            (out / name).write_text(
+                json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        src = getattr(self, "source_dir", None)
+        if src is not None:
+            for name in _COPY_ONLY_ARTEFACTS:
+                s, d = Path(src) / name, out / name
+                try:
+                    if not s.is_file():
+                        continue
+                    if d.exists() and s.samefile(d):   # re-save in place
+                        continue
+                    shutil.copyfile(s, d)
+                except OSError:              # pragma: no cover - exotic path
+                    continue
         return out
 
     def _save_ensemble_meta(self, out: Path, members: Sequence[str]) -> None:
@@ -2150,7 +2237,7 @@ def _as_frame(rows: Any) -> pd.DataFrame:
 __all__ = [
     "PositionValueModel", "PosValCnnBackend", "ExtraPrediction",
     "IntervalPrediction", "QuantileSurrogatePrediction", "TARGET_NAMES",
-    "EncoderChannelMismatch",
+    "EncoderChannelMismatch", "CALIBRATION_ARTEFACT_NAMES",
 ]
 
 

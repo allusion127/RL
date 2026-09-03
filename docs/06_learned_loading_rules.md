@@ -1244,3 +1244,12 @@ alias 맵이 빈 resolver가 fallback으로 생성되고, `alias_pattern()`이 `
 ---
 
 *본 문서의 수치는 `data/store/records.parquet` 스냅샷(규칙집 v1 시점 71,517행; 캐노니컬 73,903행; §4.12는 2026-08-31 **76,693행**, `f_xy` 라벨 7,667)의 함수다. 규칙의 수치는 스냅샷과 함께 갱신하되, **사전등록된 성공 기준(§5.4)은 소급 수정하지 않는다.***
+
+---
+
+## 2026-09-03 업데이트
+
+`assembly_sigma_chain_retrodiction_20260903.md`와 `sliceZ_s6_diagnosis_20260903.md`가
+σ-체인 역추정과 S6 진단을 통해 기존 장전 규칙의 적용 경계(assembly-on-demand 파이프라인
+맥락)를 재점검했다 — 규칙표 자체의 개정은 없으나, 다음 acid test 라운드의 입력으로
+등록됐다.

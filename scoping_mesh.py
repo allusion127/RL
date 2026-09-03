@@ -504,6 +504,19 @@ def main() -> int:
                     "data/models.  s1g is the 8th champion (gate_s1g.json "
                     "pass=true, promoted 2026-08-16); s1f/s1e runs are "
                     "preserved as mesh_nodes_s1f.csv / mesh_nodes_s1e.csv")
+    ap.add_argument("--coverage-in-distribution", action="store_true",
+                    help="compute `in_distribution` from the TrustRegion SUPPORT "
+                         "BIN set (KPI A3, active_frontier_loop_spec_20260903.md "
+                         "sec.4d) instead of the shipped `feed == 121` constant.  "
+                         "DEFAULT OFF: mesh_nodes.csv keeps its historic column "
+                         "so mesh_vs_db.py / autoeng.py readouts are unchanged.")
+    ap.add_argument("--coverage-e-core-band", type=float, default=0.05,
+                    help="e_core bin width for --coverage-in-distribution "
+                         "([trust_region].e_core_band default 0.05)")
+    ap.add_argument("--coverage-promote-after", type=int, default=16,
+                    help="labels that make a bin SUPPORTED for "
+                         "--coverage-in-distribution ([trust_region]."
+                         "promote_after default 16)")
     ap.add_argument("--pairs-only", action="store_true")
     ap.add_argument("--figure-only", action="store_true")
     ap.add_argument("--out-dir", default="", help="report directory for this "
@@ -595,6 +608,28 @@ def main() -> int:
     model.quantile_targets = ()
     log(f"model: data/models/{args.model}, {len(model.members)} members, cpu, "
         f"{args.threads} torch threads, quantile heads off")
+    # KPI A3 (spec sec.4d): the shipped `in_distribution` is the CONSTANT
+    # `feed == 121`, which answers "is this the feed the study was centred on",
+    # not "has the model seen this bin" -- so the coverage-expansion KPI is not
+    # measurable from it.  Behind --coverage-in-distribution the column becomes
+    # the TrustRegion support-bin membership of the node's own (feed, e-bin).
+    # Default off: every existing readout of mesh_nodes.csv is byte-identical.
+    _cov_bins: set = set()
+    if args.coverage_in_distribution:
+        from lpopt.search.coverage import bin_counts, in_distribution as _cov_in
+        _counts = bin_counts(store, e_core_band=args.coverage_e_core_band)
+        _cov_bins = {k for k, n in _counts.items()
+                     if n >= int(args.coverage_promote_after)}
+        log(f"coverage: {len(_cov_bins)} SUPPORTED (feed, e-bin) bins at "
+            f">= {args.coverage_promote_after} labels, band "
+            f"{args.coverage_e_core_band} (KPI A3)")
+
+    def _in_dist(feed_: int, e_core_: float) -> bool:
+        if not args.coverage_in_distribution:
+            return bool(feed_ == 121)
+        return _cov_in(feed_, e_core_, _cov_bins,
+                       e_core_band=args.coverage_e_core_band)
+
     donors = store[_store_feasible(store)].nsmallest(N_ELITE_DONOR * 2, "f_r")
     log(f"flat donors: {donors.case_pair.value_counts().to_dict()} "
         f"F_r {donors.f_r.min():.3f}-{donors.f_r.max():.3f}")
@@ -610,7 +645,9 @@ def main() -> int:
                 fr.update(cell=f"e{p.e_target:.1f}_f{feed}", e_target=p.e_target,
                           library_id=p.library_id, pair=p.pair, feed=feed,
                           M_HM_tU=round(p.M_HM_tU, 3), B_cycle=bc,
-                          B_d=bc * N_FA / feed, in_distribution=bool(feed == 121))
+                          B_d=bc * N_FA / feed,
+                          in_distribution=_in_dist(feed, fr.get("cand_e_core",
+                                                                p.e_core)))
                 fronts.append(fr)
             B_cycle = (r["pred_cyclen"] * P_TH_MW / p.M_HM_tU / 1000.0
                        if r["n_feasible"] else np.nan)
@@ -631,7 +668,7 @@ def main() -> int:
                                            (store.library_id == p.library_id)).sum()),
                      n_store_pair_feed=int(((store.feed == feed) &
                                             (store.case_pair == p.pair)).sum()),
-                     in_distribution=bool(feed == 121))
+                     in_distribution=_in_dist(feed, p.e_core))
             rows.append(r)
     df = pd.DataFrame(rows)
     cols = ["cell", "e_target", "e_targets", "n_targets",

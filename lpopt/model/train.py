@@ -18,6 +18,16 @@ Key contracts:
 * **Optimizer** — AdamW 3e-4 → cosine to 3e-5, wd 1e-4, batch 256, max 150
   epochs, early-stop patience 15 on the S1-val composite
   = within-case Spearman(F_r) − z-MAE(cyclen) (both logged).
+* **Fine-tune modes (both need ``--init-from``)** — ``--freeze-trunk-cyclen``
+  bundles TWO things: the shared trunk is frozen (``requires_grad=False`` +
+  excluded from the optimizer) AND the cyclen rows of the output heads are
+  gradient-masked (so served cyclen stays byte-identical to the champion, which
+  is also why the champion's cyclen physics prior + per-cell cyclen calibration
+  are copied verbatim instead of re-fit).  ``--trunk-finetune-lr-mult M``
+  (mutually exclusive with it) keeps **only the cyclen half**: the trunk is NOT
+  frozen but trains in its own optimizer group at ``base_lr * M`` while every
+  cyclen protection above still applies.  Both default OFF, so the flag-off path
+  is the legacy one, module-for-module and byte-for-byte.
 * **Checkpoint (plan sec. 4.7, hard)** — ``model.pt`` (``state_dict`` only) +
   ``meta.json`` (cond_schema, channel/global lists, z-score constants, target
   names, torch/python versions, vendor manifest hash, seed, config, best
@@ -47,13 +57,14 @@ from torch.utils.data import DataLoader
 
 from ..data.fuel_types import FuelLibrary
 from ..safelog import configure_stdio
-from ..data.store import StoreReader
+from ..data.store import StoreReader, trustworthy
 from ..data.traj import DEFAULT_ANCHORS as TRAJ_ANCHORS
 from ..data.traj import N_PLANES as TRAJ_PLANES
 from ..data.traj import STEP_PLANES as TRAJ_STEP_PLANES
 from .dataset_torch import (
     CBC_PROVENANCE_GROUPS, LPDataset, TARGETS, TARGETS_WITH_ASM_BU,
-    cbc_provenance_codes, compute_cell_weights, cyclen_cell_codes, targets_for,
+    cbc_provenance_codes, compute_cell_weights, cyclen_cell_codes,
+    fxy_cell_codes, fxy_cell_key, targets_for,
 )
 from .featurize import (
     CHANNELS, CHANNELS_BY_SCHEMA, DEFAULT_COND_SCHEMA, FeatureEncoder)
@@ -197,6 +208,34 @@ class TrainConfig:
     #      able to select on it: arm 1 picked epochs 4-37 on a composite blind to
     #      f_xy, before its own LR warmup ended, and shipped an untrained residual.
     fxy_select_weight: float = 0.0
+    # (3b-iv) arm 5 (prereg Amendment E.3): a within-cell pairwise margin-rank
+    #      hinge on the COMPOSED f_xy row.  The r2 RANK gate demoted the arm-4
+    #      head to a LEVEL estimator because a level objective has no reason to
+    #      order rows INSIDE a cell — measured on the exploit slot, the
+    #      estimator's own level error (0.0117) is the size of the whole spread
+    #      it must order (0.0114) — while E.1.2 showed the ordering axis IS in
+    #      the trunk embedding (leave-one-wave-out ridge +0.4688 vs a serving
+    #      head +0.2858).  So the term that was missing is an objective, not a
+    #      feature.  ``fxy_rank_weight = 0.0`` (the default) never builds the
+    #      term: every existing training path is byte-identical.
+    fxy_rank_weight: float = 0.0
+    fxy_rank_margin_z: float = 0.1
+    fxy_rank_min_gap: float = 0.005       # 3 orders above MASTER FXYP repeat noise
+    fxy_rank_low_thresh: float = 1.60     # up-weight the low-f_xy boundary band
+    fxy_rank_low_weight: float = 3.0
+    #      "gate" == (case_pair, feed), the partition every f_xy gate scores on;
+    #      "legacy" == the cyclen cell (feed, e_core-bin, dataset).  The two do
+    #      not nest (E.1.4), and the registered choice is the gate's.
+    fxy_rank_cell: str = "gate"
+    # (3b-v) Restrict the f_xy SELECTION metric to the elite band the ranking
+    #      clause (G6a) is scored on: within each GATE cell, the rows whose
+    #      MEASURED f_xy is at or below that cell's ``band`` quantile.  1.0 (the
+    #      default) is the legacy metric exactly — every labelled row, grouped by
+    #      ``case_pair`` alone.  Note the registered mismatch this closes: the
+    #      legacy metric groups by ``case_pair`` while every gate groups by
+    #      ``(case_pair, feed)``, so best-epoch selection was reading a coarser
+    #      partition than the bar it is judged against (prereg E.8-⑥).
+    fxy_select_band: float = 1.0
     # --- post-train artifacts -------------------------------------------------
     # Fit the per-cell cyclen + F_r affine calibrations into the new model dir at
     # the end of a retrain (train-split rows only, leakage-asserted).  This writes
@@ -257,6 +296,15 @@ class TrainConfig:
     # are field-for-field the legacy path when they are off (state_dict-identical).
     init_from: str | None = None
     freeze_trunk_cyclen: bool = False
+    # ``trunk_finetune_lr_mult`` (prereg Amendment D-③, arm 4) splits that bundle:
+    # > 0 keeps the CYCLEN half of ``freeze_trunk_cyclen`` (row-masked cyclen
+    # gradients, weight-decay-free masked heads, champion cyclen prior + per-cell
+    # calibration COPIED not re-fit) but does NOT freeze the trunk — it trains in
+    # its own optimizer group at ``lr * mult``.  Requires ``init_from`` (fine-
+    # tuning a random trunk at 5% LR is not a fine-tune) and is mutually
+    # exclusive with ``freeze_trunk_cyclen``.  0.0 == OFF == byte-identical to
+    # the pre-flag path (no extra param group, the legacy scheduler object).
+    trunk_finetune_lr_mult: float = 0.0
     # --- hires bundle (design doc data/reports/hires_model_ab_design_20260725.md)
     # Three independent, default-OFF knobs.  All three off == the pre-hires path,
     # module-for-module and byte-for-byte (regression-tested).
@@ -328,8 +376,13 @@ class TrainConfig:
 # normalization
 # --------------------------------------------------------------------------- #
 def _valid_target_values(df: pd.DataFrame, name: str) -> np.ndarray:
-    """Converged, finite target values (cbc_max additionally drops boc_only)."""
-    converged = df["converged"].astype(bool).to_numpy()
+    """Trustworthy, finite target values (cbc_max additionally drops boc_only).
+
+    ``trustworthy`` (converged AND not quarantined), not ``converged`` alone: a
+    ``valid=False`` row's labels describe a core that was never loaded, and the
+    z-scoring statistics they would shift reach EVERY head.
+    """
+    converged = trustworthy(df).to_numpy()
     vals = pd.to_numeric(df[name], errors="coerce").to_numpy()
     ok = converged & np.isfinite(vals)
     if name == "cbc_max" and "cbc_kind" in df.columns:
@@ -722,6 +775,65 @@ def f_r_rank_loss(
     return (hinge * w).sum() / denom
 
 
+def f_xy_rank_loss(
+    mu_fxy_z: torch.Tensor,
+    raw_fxy: torch.Tensor,
+    valid: torch.Tensor,
+    cell_code: torch.Tensor,
+    *,
+    margin: float,
+    min_gap: float,
+    low_thresh: float,
+    low_weight: float,
+    stats: dict[str, float] | None = None,
+) -> torch.Tensor:
+    """Within-cell margin-ranking hinge on the COMPOSED ``f_xy`` row (prereg E.8-①).
+
+    The arithmetic is exactly :func:`f_r_rank_loss`'s — same-cell ordered pairs
+    whose RAW gap exceeds ``min_gap`` are penalized unless the model ranks them
+    apart by ``margin`` in z-space, with pairs whose ``min(raw_i, raw_j) <=
+    low_thresh`` up-weighted — so it is CALLED rather than copied; what is new is
+    everything around it, and that is why this wrapper exists as a named term:
+
+    * it is attached to ``out["mu"][:, fxy_idx]``, the row
+      :meth:`~lpopt.model.net.PosValNet._compose_fxy` has already ADDED the
+      ``a*mu[f_r]+b`` prior onto, so the hinge ranks the served quantity.  No
+      prior is added back here (unlike :func:`cyclen_rank_loss`, whose prior
+      lives outside the net) — doing so would double-count it;
+    * ``mu[f_r]`` inside that composition is ``detach()``-ed, so this term
+      structurally cannot reach the F_r head, which is what keeps a ~2%-labelled
+      axis from perturbing the seven dense targets;
+    * the cell is the GATE cell ``(case_pair, feed)``
+      (:func:`~lpopt.model.dataset_torch.fxy_cell_codes`), not the cyclen cell;
+    * the target is *minimized*, so ``low_thresh`` (1.60) selects the low-``f_xy``
+      boundary the F_xy <= 1.65 search actually queries.
+
+    ``stats`` (optional) is filled in-place with the batch's ``n_pairs`` /
+    ``n_cells`` census.  A term that silently sees no pair is the failure mode
+    this arm cannot detect from the loss value alone (it is 0 either way), so the
+    trainer always asks for it (prereg E.8-⑦).  Passing ``None`` costs nothing.
+    """
+    if stats is not None:
+        with torch.no_grad():
+            v = valid.bool() & (cell_code >= 0)
+            n_pairs = 0
+            n_cells = 0
+            if int(v.sum()) >= 2:
+                raw = raw_fxy[v].float()
+                code = cell_code[v]
+                pair = ((code.unsqueeze(0) == code.unsqueeze(1))
+                        & ((raw.unsqueeze(1) - raw.unsqueeze(0)) > float(min_gap)))
+                n_pairs = int(pair.sum())
+                if n_pairs:
+                    contrib = pair.any(dim=0) | pair.any(dim=1)
+                    n_cells = int(torch.unique(code[contrib]).numel())
+            stats["n_pairs"] = float(n_pairs)
+            stats["n_cells"] = float(n_cells)
+    return f_r_rank_loss(mu_fxy_z, raw_fxy, valid, cell_code, margin=margin,
+                         min_gap=min_gap, low_thresh=low_thresh,
+                         low_weight=low_weight)
+
+
 def map_fr_consistency_loss(
     map_pred: torch.Tensor,
     mu_fr_z: torch.Tensor,
@@ -1029,7 +1141,7 @@ def _fit_power_prior_for_split(reader: StoreReader, manifest: SplitManifest,
     train_ids = set(manifest.record_ids("train"))
     df = df[df["record_id"].astype(str).isin(train_ids)]
     if "converged" in df.columns:
-        df = df[df["converged"].astype(bool)]
+        df = df[trustworthy(df)]     # quarantined maps must not fit the prior
     df = df[df["maps_key"].notna()]
     if len(df) > _POWER_PRIOR_FIT_ROWS:
         df = df.sample(n=_POWER_PRIOR_FIT_ROWS, random_state=0)
@@ -1144,6 +1256,13 @@ def build_precomputed(
     # rank loss — aligned to the base rows (transpose leaves target/cell intact).
     tensors["cyclen_cell"] = torch.as_tensor(
         cyclen_cell_codes(base.df), dtype=torch.long)
+    # per-row (case_pair, feed) GATE cell code for the within-cell f_xy rank
+    # loss (prereg E.8-②/③).  Attached unconditionally for the same reason
+    # ``cyclen_cell`` is — an int64 column costs 8 bytes/row and is read ONLY
+    # when ``fxy_rank_weight > 0`` — and it is a DIFFERENT partition from
+    # ``cyclen_cell`` on purpose (the two do not nest; see ``fxy_cell_codes``).
+    tensors["fxy_cell"] = torch.as_tensor(
+        fxy_cell_codes(base.df), dtype=torch.long)
     # per-row e_core (for arm1 cyclen distill boost); NaN -> -1 (matches no band)
     _ec = base.df["e_core"].to_numpy(dtype="float64") if "e_core" in base.df.columns \
         else np.full(len(base.df), np.nan)
@@ -1361,9 +1480,45 @@ def composite_metric(pred: dict[str, np.ndarray], df: pd.DataFrame,
     }
 
 
+def _band_cell_spearman(pred_vals: np.ndarray, true_vals: np.ndarray,
+                        mask: np.ndarray, cells: np.ndarray,
+                        band: float, min_case: int
+                        ) -> tuple[float, int, int]:
+    """``(mean rho, n_rows, n_cells)`` over each cell's low-``band`` quantile.
+
+    Per cell: keep the labelled rows whose MEASURED value is ``<= quantile(band)``
+    of that cell's labelled values, Spearman them, and average the cells
+    UNWEIGHTED.  Cells left with fewer than ``min_case`` banded rows are dropped,
+    NOT pooled — pooling elite rows across cells measures the between-cell level
+    spread, not the within-cell ordering (prereg E.2.2).  There is deliberately
+    no global fallback: with no qualifying cell the answer is NaN (unknown), and
+    a NaN selection term falls back to the plain composite.
+    """
+    rs: list[float] = []
+    n_rows = 0
+    for c in np.unique(cells):
+        sel = (cells == c) & (mask > 0)
+        if not sel.any():
+            continue
+        vals = true_vals[sel]
+        keep = sel.copy()
+        keep[sel] = vals <= float(np.quantile(vals, band))
+        n_keep = int(keep.sum())
+        if n_keep < min_case:
+            continue
+        r = _spearman(pred_vals[keep], true_vals[keep])
+        if math.isfinite(r):
+            rs.append(r)
+            n_rows += n_keep
+    if not rs:
+        return float("nan"), 0, 0
+    return float(np.mean(rs)), n_rows, len(rs)
+
+
 def fxy_metrics(pred: dict[str, np.ndarray], df: pd.DataFrame,
                 tmean: np.ndarray, tstd: np.ndarray,
-                target_names: Sequence[str], min_case: int) -> dict[str, float]:
+                target_names: Sequence[str], min_case: int,
+                band: float = 1.0) -> dict[str, float]:
     """Val-fold ``f_xy`` metrics on the LABELLED SUBSET only (``{}`` when off).
 
     Deliberately NOT folded into :func:`composite_metric`: the composite selects
@@ -1384,6 +1539,18 @@ def fxy_metrics(pred: dict[str, np.ndarray], df: pd.DataFrame,
     what it already means everywhere else in this file.  Labelled rows are sparse,
     so it usually falls back to that helper's global-Spearman branch — the
     ``n_fxy_cells`` count says which happened (0 == the global fallback).
+
+    ``band`` (prereg E.8-⑥, ``--fxy-select-band``) < 1.0 ADDS the elite-band
+    ranking axis the promotion clause G6a is actually scored on: within each
+    GATE cell ``(case_pair, feed)``, only the rows whose MEASURED ``f_xy`` is at
+    or below that cell's ``band`` quantile are ranked, and the per-cell Spearmans
+    are averaged UNWEIGHTED (never row-pooled — a pooled elite statistic is a
+    between-cell level artifact, prereg E.2.2).  ``fxy_select`` then selects on
+    that number instead of the whole-cell one.  Two things move together here on
+    purpose: the band, and the switch from ``case_pair`` to ``(case_pair, feed)``
+    — the legacy metric's grouping is COARSER than every gate's, a registered
+    mismatch.  ``band >= 1.0`` (the default) emits the legacy keys only, computed
+    exactly as before.
     """
     names = list(target_names)
     if "f_xy" not in names:
@@ -1393,10 +1560,15 @@ def fxy_metrics(pred: dict[str, np.ndarray], df: pd.DataFrame,
     true = pred["targets"][:, k]
     sel = mask > 0
     n = int(sel.sum())
+    banded = 0.0 < float(band) < 1.0
     if n == 0:
-        return {"n_fxy_val": 0.0, "mae_f_xy": float("nan"),
-                "z_mae_f_xy": float("nan"), "fxy_select": float("nan"),
-                "within_cell_spearman_f_xy": float("nan"), "n_fxy_cells": 0.0}
+        out = {"n_fxy_val": 0.0, "mae_f_xy": float("nan"),
+               "z_mae_f_xy": float("nan"), "fxy_select": float("nan"),
+               "within_cell_spearman_f_xy": float("nan"), "n_fxy_cells": 0.0}
+        if banded:
+            out.update({"within_cell_spearman_f_xy_band": float("nan"),
+                        "n_fxy_band_rows": 0.0, "n_fxy_band_cells": 0.0})
+        return out
     mean_raw = denormalize(pred["mu_z_members"].mean(axis=0), tmean, tstd)
     rid_to_cp = dict(zip(df["record_id"].astype(str), df["case_pair"].astype(str)))
     case_pairs = np.asarray([rid_to_cp.get(str(r), "?") for r in pred["record_ids"]])
@@ -1405,16 +1577,33 @@ def fxy_metrics(pred: dict[str, np.ndarray], df: pd.DataFrame,
     mae = float(np.mean(np.abs(mean_raw[sel, k] - true[sel])))
     scale = float(tstd[k])
     z_mae = mae / scale if math.isfinite(scale) and scale > 0 else float("nan")
-    select = (sp - z_mae if math.isfinite(sp) and math.isfinite(z_mae)
-              else float("nan"))
-    return {
+    rank_sp = sp
+    out = {
         "n_fxy_val": float(n),
         "mae_f_xy": mae,
         "z_mae_f_xy": z_mae,
-        "fxy_select": select,
+        "fxy_select": float("nan"),
         "within_cell_spearman_f_xy": sp,
         "n_fxy_cells": float(n_cells),
     }
+    if banded:
+        # GATE cell, not case_pair: the band exists to make selection read the
+        # same partition the bar is measured on.
+        rid_to_gate = {str(r): fxy_cell_key(cp, fd) for r, cp, fd
+                       in zip(df["record_id"].astype(str), df["case_pair"],
+                              df["feed"])}
+        gate_cells = np.asarray(
+            [rid_to_gate.get(str(r), "") for r in pred["record_ids"]])
+        rank_sp, band_rows, band_cells = _band_cell_spearman(
+            mean_raw[:, k], true, np.where(gate_cells == "", 0.0, mask),
+            gate_cells, float(band), min_case)
+        out.update({"within_cell_spearman_f_xy_band": rank_sp,
+                    "n_fxy_band_rows": float(band_rows),
+                    "n_fxy_band_cells": float(band_cells)})
+    out["fxy_select"] = (rank_sp - z_mae
+                         if math.isfinite(rank_sp) and math.isfinite(z_mae)
+                         else float("nan"))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1562,11 +1751,25 @@ def _cyclen_quantile_rows(model: PosValNet, q_names: Sequence[str]) -> list[int]
     return list(range(c * nq, (c + 1) * nq))
 
 
-def _apply_freeze_trunk_cyclen(model: PosValNet, q_names: Sequence[str]) -> list[Any]:
+def _cyclen_masked_mode(cfg: TrainConfig) -> bool:
+    """Whether this run masks the cyclen rows (freeze mode OR trunk fine-tune).
+
+    Both modes promise the SAME cyclen contract — gradient-masked cyclen rows,
+    champion physics prior and per-cell cyclen calibration copied verbatim — and
+    both therefore require ``init_from``.  They differ only in whether the trunk
+    is frozen (see :func:`_apply_freeze_trunk_cyclen`).
+    """
+    return bool(cfg.freeze_trunk_cyclen) or float(cfg.trunk_finetune_lr_mult) > 0.0
+
+
+def _apply_freeze_trunk_cyclen(model: PosValNet, q_names: Sequence[str],
+                               *, freeze_trunk: bool = True) -> list[Any]:
     """Freeze trunk + cyclen output so cyclen stays byte-identical to the champion.
 
     * ``requires_grad=False`` on every param of ``stem`` / ``blocks`` / ``films`` /
       ``head_trunk`` / ``conv_head`` (the whole shared trunk + convergence head).
+      ``freeze_trunk=False`` (the ``--trunk-finetune-lr-mult`` mode) SKIPS this
+      loop only — every cyclen protection below is applied identically.
     * ``mu_head`` / ``log_sigma_head`` stay trainable, but the CYCLEN weight row
       (``_CYCLEN_IDX``) and bias element get a backward hook zeroing their gradient.
     * ``quantile_head`` (when present) gets the same treatment on its CYCLEN block.
@@ -1578,12 +1781,13 @@ def _apply_freeze_trunk_cyclen(model: PosValNet, q_names: Sequence[str]) -> list
     AdamW's decoupled weight-decay term, which would otherwise shrink the frozen
     cyclen rows.
     """
-    for name in _FREEZE_WHOLE_MODULES:
-        mod = getattr(model, name, None)
-        if mod is None:
-            continue
-        for p in mod.parameters():
-            p.requires_grad_(False)
+    if freeze_trunk:
+        for name in _FREEZE_WHOLE_MODULES:
+            mod = getattr(model, name, None)
+            if mod is None:
+                continue
+            for p in mod.parameters():
+                p.requires_grad_(False)
     handles: list[Any] = []
     for head_name in ("mu_head", "log_sigma_head"):
         head = getattr(model, head_name)
@@ -1606,8 +1810,19 @@ def _masked_head_param_ids(model: PosValNet) -> set[int]:
     return ids
 
 
+def _trunk_param_ids(model: PosValNet) -> set[int]:
+    """id()s of the shared-trunk params (the modules freeze mode freezes whole)."""
+    ids: set[int] = set()
+    for name in _FREEZE_WHOLE_MODULES:
+        mod = getattr(model, name, None)
+        if mod is not None:
+            ids.update(id(p) for p in mod.parameters())
+    return ids
+
+
 def _build_member_optim(model: PosValNet, *, lr: float, weight_decay: float,
-                        freeze: bool) -> torch.optim.Optimizer:
+                        freeze: bool, trunk_lr_mult: float = 0.0
+                        ) -> torch.optim.Optimizer:
     """AdamW over a member's params (freeze-aware).
 
     Legacy (``freeze`` off): one group over ``model.parameters()`` with
@@ -1619,19 +1834,53 @@ def _build_member_optim(model: PosValNet, *, lr: float, weight_decay: float,
     rows also see no decay.  (The non-cyclen f_r rows of those heads therefore
     train without weight decay — a negligible, intended trade-off for cyclen
     byte-identity, since per-tensor WD cannot spare only some rows.)
+
+    ``trunk_lr_mult > 0`` (the ``--trunk-finetune-lr-mult`` mode, which sets
+    ``freeze`` too): the trunk is NOT frozen, so its params enter a THIRD group
+    at ``lr * trunk_lr_mult`` with the normal weight decay.  Group 0 stays the
+    head/decay group, so the logged ``metrics["lr"]`` keeps meaning the head LR.
     """
     if not freeze:
         return torch.optim.AdamW(model.parameters(), lr=lr,
                                  weight_decay=weight_decay)
     masked = _masked_head_param_ids(model)
+    trunk = _trunk_param_ids(model) if float(trunk_lr_mult) > 0.0 else set()
     decay = [p for p in model.parameters()
-             if p.requires_grad and id(p) not in masked]
+             if p.requires_grad and id(p) not in masked and id(p) not in trunk]
     no_decay = [p for p in model.parameters()
                 if p.requires_grad and id(p) in masked]
-    return torch.optim.AdamW(
-        [{"params": decay, "weight_decay": weight_decay},
-         {"params": no_decay, "weight_decay": 0.0}],
-        lr=lr)
+    groups: list[dict[str, Any]] = [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+    if trunk:
+        trunk_params = [p for p in model.parameters()
+                        if p.requires_grad and id(p) in trunk]
+        groups.append({"params": trunk_params, "weight_decay": weight_decay,
+                       "lr": lr * float(trunk_lr_mult)})
+    return torch.optim.AdamW(groups, lr=lr)
+
+
+class _PerGroupCosineAnnealingLR(torch.optim.lr_scheduler.CosineAnnealingLR):
+    """Cosine schedule whose floor scales with each group's OWN base LR.
+
+    ``CosineAnnealingLR`` anneals every param group toward one shared
+    ``eta_min``.  With the champion schedule (3e-4 -> 3e-5) and a trunk group at
+    ``lr * 0.05`` = 1.5e-5, that shared floor is ABOVE the trunk's starting LR,
+    so the trunk LR would RISE to 2x its registered multiple over the run.  Each
+    group's floor is instead ``eta_min * base_lr / base_lrs[0]``, which keeps the
+    trunk at exactly ``mult x`` the head LR at every epoch.  Used ONLY when
+    ``trunk_finetune_lr_mult > 0``; every other run builds the stock scheduler.
+    """
+
+    def get_lr(self) -> list[float]:            # noqa: D102 - see class docstring
+        ref = self.base_lrs[0] if self.base_lrs else 0.0
+        cos = 1.0 + math.cos(math.pi * self.last_epoch / self.T_max)
+        out = []
+        for base in self.base_lrs:
+            eta = self.eta_min * (base / ref) if ref > 0 else self.eta_min
+            out.append(eta + (base - eta) * cos / 2.0)
+        return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1749,7 +1998,7 @@ def _gather_train_batch(host_t: dict[str, torch.Tensor],
         "maps": src["maps"].index_select(0, sel),
         "maps_mask": src["maps_mask"].index_select(0, sel),
     }
-    for opt in ("cyclen_cell", "cyclen_prior", "e_core",  # optional (absent in unit stubs)
+    for opt in ("cyclen_cell", "fxy_cell", "cyclen_prior", "e_core",  # optional (absent in unit stubs)
                 "distill_soft", "distill_mask", "axial_coeff", "axial_mask",
                 "traj", "traj_frac", "traj_mask", "cbc_prov"):
         if opt in src:
@@ -1850,6 +2099,28 @@ def _step_member(m: _MemberState, batch: dict[str, torch.Tensor],
                 margin=cfg.f_r_rank_margin_z, min_gap=cfg.f_r_rank_min_gap,
                 low_thresh=cfg.f_r_rank_low_thresh, low_weight=cfg.f_r_rank_low_weight)
             loss = loss + cfg.f_r_rank_weight * loss_fr_rank
+        fxy_i = int(getattr(m, "fxy_idx", -1))
+        rank_cell = "fxy_cell" if cfg.fxy_rank_cell == "gate" else "cyclen_cell"
+        if cfg.fxy_rank_weight > 0.0 and fxy_i >= 0 and rank_cell in batch:
+            # arm 5 (prereg E.3): rank the COMPOSED f_xy row within its GATE
+            # cell.  ``out["mu"][:, fxy_i]`` already carries the a*mu[f_r]+b
+            # prior (net._compose_fxy), so — unlike the cyclen hinge above —
+            # nothing is added back here; and mu[f_r] is detached inside that
+            # composition, so this term cannot reach the F_r head.
+            stats: dict[str, float] = {}
+            loss_fxy_rank = f_xy_rank_loss(
+                out["mu"][:, fxy_i], batch["targets"][:, fxy_i],
+                batch["target_mask"][:, fxy_i], batch[rank_cell],
+                margin=cfg.fxy_rank_margin_z, min_gap=cfg.fxy_rank_min_gap,
+                low_thresh=cfg.fxy_rank_low_thresh,
+                low_weight=cfg.fxy_rank_low_weight, stats=stats)
+            loss = loss + cfg.fxy_rank_weight * loss_fxy_rank
+            # A hinge that sees no pair contributes exactly 0 and is
+            # indistinguishable from a satisfied one in the loss value; the
+            # census is the only instrument that catches it (prereg E.8-⑦).
+            m.fxy_rank_pairs = getattr(m, "fxy_rank_pairs", 0.0) + stats["n_pairs"]
+            m.fxy_rank_cells = getattr(m, "fxy_rank_cells", 0.0) + stats["n_cells"]
+            m.fxy_rank_batches = getattr(m, "fxy_rank_batches", 0) + 1
         if cfg.map_fr_consistency_weight > 0.0:
             map_present = (batch["maps_mask"][:, _BOC_POWER_MAP_IDX]
                            .flatten(1).amax(dim=1) > 0)
@@ -1976,10 +2247,11 @@ def _train_members(
     """
     # freeze-and-finetune guard (checked before any dataset access): freezing
     # random cyclen rows would silently ship a garbage cyclen head.
-    if bool(cfg.freeze_trunk_cyclen) and init_states is None:
+    if _cyclen_masked_mode(cfg) and init_states is None:
         raise ValueError(
-            "freeze_trunk_cyclen requires init_from (champion weights to freeze); "
-            "refusing to freeze randomly-initialized cyclen rows")
+            "freeze_trunk_cyclen / trunk_finetune_lr_mult requires init_from "
+            "(champion weights to freeze); refusing to freeze randomly-"
+            "initialized cyclen rows")
     device = torch.device(device)
     n_train = len(train_ds)
     train_df = train_ds.df
@@ -2035,6 +2307,16 @@ def _train_members(
                   f"{warm} serves the INITIAL sigma (the 20260829 arm-1 failure: "
                   "best epochs 4-37, warm 80, 68% coverage 0.99).  Lower "
                   "--warmup-epochs for a head-only finetune.", flush=True)
+        if cfg.fxy_rank_weight > 0.0:
+            print(f"=== f_xy rank hinge: w={cfg.fxy_rank_weight} "
+                  f"cell={cfg.fxy_rank_cell} margin={cfg.fxy_rank_margin_z}z "
+                  f"min_gap={cfg.fxy_rank_min_gap} "
+                  f"low<={cfg.fxy_rank_low_thresh} x{cfg.fxy_rank_low_weight} "
+                  f"(watch rkPairs: a 0 there means the term is inert) ===",
+                  flush=True)
+        if 0.0 < cfg.fxy_select_band < 1.0:
+            print(f"=== f_xy selection band: q={cfg.fxy_select_band} on GATE "
+                  f"cells (case_pair, feed) ===", flush=True)
 
     # The z-score constants are identical for every member (same norm frame,
     # same target order); resolved once so the pre-training f_xy prior refit can
@@ -2047,6 +2329,15 @@ def _train_members(
             "against a RANDOMLY initialized F_r head would fit noise.")
 
     freeze = bool(cfg.freeze_trunk_cyclen)   # guarded above (needs init_states)
+    trunk_mult = float(cfg.trunk_finetune_lr_mult)
+    if trunk_mult > 0.0 and freeze:
+        raise ValueError(
+            "trunk_finetune_lr_mult and freeze_trunk_cyclen are mutually "
+            "exclusive: the first exists to keep the cyclen half of the second "
+            "WITHOUT freezing the trunk")
+    # cyclen protection (row-masked gradients + no weight decay on those heads)
+    # is applied in BOTH modes; only the trunk freeze differs.
+    cyclen_mask = freeze or trunk_mult > 0.0
     # hires A2: resolve the power-prior input channel ONCE.  ``-1`` (the default,
     # and the only possibility for a cond_schema without the channel) builds a
     # net whose module set is byte-identical to the pre-hires network.
@@ -2175,12 +2466,22 @@ def _train_members(
             elif verbose:
                 print(f"  [seed {seed}] f_xy prior refit on predicted f_r "
                       "DEGENERATE; keeping the measured-f_r fit", flush=True)
-        freeze_handles = _apply_freeze_trunk_cyclen(model, q_names) if freeze else []
+        freeze_handles = (_apply_freeze_trunk_cyclen(model, q_names,
+                                                     freeze_trunk=freeze)
+                          if cyclen_mask else [])
         fwd = torch.compile(model) if compile_flag else model
         optim = _build_member_optim(model, lr=lr,
-                                    weight_decay=cfg.weight_decay, freeze=freeze)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optim, T_max=cfg.epochs, eta_min=lr_final)
+                                    weight_decay=cfg.weight_decay,
+                                    freeze=cyclen_mask, trunk_lr_mult=trunk_mult)
+        sched_cls = (_PerGroupCosineAnnealingLR if trunk_mult > 0.0
+                     else torch.optim.lr_scheduler.CosineAnnealingLR)
+        sched = sched_cls(optim, T_max=cfg.epochs, eta_min=lr_final)
+        if trunk_mult > 0.0 and verbose and i == 0:
+            print(f"=== trunk fine-tune: lr x {trunk_mult:g} "
+                  f"(trunk group lr={lr * trunk_mult:.3g}, head lr={lr:.3g}); "
+                  f"trainable {count_parameters(model):,} of "
+                  f"{sum(p.numel() for p in model.parameters()):,} params; "
+                  "cyclen rows still gradient-masked ===", flush=True)
         tmean, tstd = compute_target_norm(norm_df, target_names)
         mmean, mstd = compute_map_norm(reader, train_df, cfg.map_norm_subset, seed=seed)
         m = _MemberState()
@@ -2234,6 +2535,12 @@ def _train_members(
             m.use_nll = epoch >= warm
             m.running = 0.0
             m.n_batches = 0
+            if cfg.fxy_rank_weight > 0.0:
+                # Only the arm-5 path carries this bookkeeping, so a flag-off
+                # member's state is untouched down to its attribute set.
+                m.fxy_rank_pairs = 0.0
+                m.fxy_rank_cells = 0.0
+                m.fxy_rank_batches = 0
         for start in range(0, n_train, eff_batch):
             end = min(start + eff_batch, n_train)
             for m in live:
@@ -2251,8 +2558,14 @@ def _train_members(
             metrics = composite_metric(val_pred, val_df, m.tmean, m.tstd,
                                        cfg.min_case_val, val_prior)
             metrics.update(fxy_metrics(val_pred, val_df, m.tmean, m.tstd,
-                                       target_names, cfg.min_case_val))
+                                       target_names, cfg.min_case_val,
+                                       band=cfg.fxy_select_band))
             metrics["train_loss"] = m.running / max(1, m.n_batches)
+            if getattr(m, "fxy_rank_batches", 0):
+                # Mean EFFECTIVE pairs / contributing cells per batch (E.8-⑦).
+                nb = float(m.fxy_rank_batches)
+                metrics["fxy_rank_pairs"] = m.fxy_rank_pairs / nb
+                metrics["fxy_rank_cells"] = m.fxy_rank_cells / nb
             metrics["epoch"] = epoch
             metrics["lr"] = m.optim.param_groups[0]["lr"]
             # Selection score: the composite, PLUS the opted-in f_xy term.  With
@@ -2277,6 +2590,15 @@ def _train_members(
                     line += (f" fxyMAE={metrics['mae_f_xy']:.4f}"
                              f" fxyRho={metrics['within_cell_spearman_f_xy']:.3f}"
                              f" n={int(metrics['n_fxy_val'])}")
+                    if "within_cell_spearman_f_xy_band" in metrics:
+                        line += (f" fxyRhoBand="
+                                 f"{metrics['within_cell_spearman_f_xy_band']:.3f}"
+                                 f"/{int(metrics['n_fxy_band_cells'])}c")
+                    if "fxy_rank_pairs" in metrics:
+                        # A silently pair-starved hinge is the one failure this
+                        # arm cannot read off the loss; print it every epoch.
+                        line += (f" rkPairs={metrics['fxy_rank_pairs']:.0f}"
+                                 f" rkCells={metrics['fxy_rank_cells']:.1f}")
                     if fxy_select_w > 0.0:
                         line += f" sel={score:.4f}"
                 print(line, flush=True)
@@ -2303,6 +2625,18 @@ def _train_members(
             m.model.load_state_dict(m.best["state"])
         m.model.eval()
     return members
+
+
+def _last_history_value(m: Any, key: str) -> float:
+    """The last epoch's value of ``key`` in a member's history (NaN if absent).
+
+    Used for the meta census of terms that are per-epoch training statistics
+    rather than checkpoint state; NaN means "the term never ran".
+    """
+    for h in reversed(list(getattr(m, "history", []) or [])):
+        if key in h:
+            return float(h[key])
+    return float("nan")
 
 
 def _finalize_member(
@@ -2423,6 +2757,19 @@ def _finalize_member(
             "serve_convention": CBC_PROVENANCE_GROUPS[0],
             "serve_affecting": False,
         }
+    # Trunk fine-tune (prereg Amendment D-3, arm 4).  NOT serve-affecting -- it
+    # is provenance the gate reads to tell an arm-4 checkpoint from an arm-3 one:
+    # the trunk moved, the cyclen rows did not.  Added ONLY when the mode is on,
+    # so a flag-off meta.json is key-for-key the legacy one (the multiplier is
+    # also in ``train_config.trunk_finetune_lr_mult``, which records the CLI).
+    if float(cfg.trunk_finetune_lr_mult) > 0.0:
+        meta["trunk_finetune"] = {
+            "enabled": True,
+            "trunk_lr_mult": float(cfg.trunk_finetune_lr_mult),
+            "trunk_frozen": False,
+            "cyclen_masked": True,
+            "init_from": str(cfg.init_from) if cfg.init_from else None,
+        }
     # F_xy prior-residual head.  SERVE-AFFECTING: ``predict_fxy`` reads
     # ``enabled`` to decide whether this checkpoint can answer at all, and the
     # prior is what the served f_xy is a residual against — so the fitted
@@ -2453,6 +2800,24 @@ def _finalize_member(
             "n_labelled_train": int(m.fxy_prior.n_fit),
             "min_labels": int(MIN_FXY_LABELS),
             "select_weight": float(cfg.fxy_select_weight),
+            "select_band": float(cfg.fxy_select_band),
+            # arm 5 (prereg E.8-⑦).  NOT serve-affecting — a ranking term
+            # changes the weights, not how they are read — but it is stamped
+            # here so a checkpoint can always say whether the hinge was on, on
+            # which partition, and whether it actually saw pairs: a term that
+            # silently found none trains to exactly the same loss as one that
+            # was satisfied, and only this census tells them apart.
+            "rank": {
+                "enabled": bool(cfg.fxy_rank_weight > 0.0),
+                "weight": float(cfg.fxy_rank_weight),
+                "cell": str(cfg.fxy_rank_cell),
+                "margin_z": float(cfg.fxy_rank_margin_z),
+                "min_gap": float(cfg.fxy_rank_min_gap),
+                "low_thresh": float(cfg.fxy_rank_low_thresh),
+                "low_weight": float(cfg.fxy_rank_low_weight),
+                "mean_pairs_per_batch": _last_history_value(m, "fxy_rank_pairs"),
+                "mean_cells_per_batch": _last_history_value(m, "fxy_rank_cells"),
+            },
             "serve_affecting": True,
         }
     if getattr(m, "axial_basis", None) is not None:
@@ -2585,14 +2950,15 @@ def _prepare_cyclen_prior(cfg: TrainConfig,
         "cyclen physics-prior fit frame intersects the val fold; the prior must "
         "be fit on train rows only"
     )
-    # Freeze-and-finetune: the cyclen residual head is byte-identical to the
+    # Freeze-and-finetune (and the trunk fine-tune mode, whose cyclen rows are
+    # equally gradient-masked): the cyclen residual head is byte-identical to the
     # champion, and that head was trained against the CHAMPION's prior. Re-fitting
     # alpha/beta on the (now larger) store would shift the served cyclen (=
     # residual + prior) and change within-cell cyclen RANKING, so the honest gate's
     # cyclen worst-drop would NOT be ~=0. LOAD the champion's prior VERBATIM instead
     # of re-fitting it — this is the serve-read value (it is embedded per-member in
     # meta.json). The from-scratch (flag-off) path below still fits, unchanged.
-    if cfg.freeze_trunk_cyclen and cfg.init_from:
+    if _cyclen_masked_mode(cfg) and cfg.init_from:
         src = Path(cfg.init_from) / PRIOR_NAME
         prior = CyclenPhysicsPrior.load(src)
         print(f"=== cyclen physics prior: LOADED from champion {src} "
@@ -2686,8 +3052,9 @@ def train_member(
     eff_batch, lr, lr_final, warm, sched_meta = _resolve_schedule(cfg, device)
     resident = _resident_fits(train_pre, val_pre, device, cfg)
     # freeze-and-finetune: a single member initializes from champion member 0.
-    if cfg.freeze_trunk_cyclen and not cfg.init_from:
-        raise ValueError("freeze_trunk_cyclen requires init_from")
+    if _cyclen_masked_mode(cfg) and not cfg.init_from:
+        raise ValueError(
+            "freeze_trunk_cyclen / trunk_finetune_lr_mult requires init_from")
     init_states = ([_load_champion_member_states(cfg.init_from)[0]]
                    if cfg.init_from else None)
     members = _train_members(
@@ -2768,13 +3135,15 @@ def train_ensemble(
     pm = max(1, int(cfg.parallel_members))
     # freeze-and-finetune: load the champion members ONCE and index them by
     # ensemble position (reusing member 0 when the champion has fewer members).
-    if cfg.freeze_trunk_cyclen and not cfg.init_from:
-        raise ValueError("freeze_trunk_cyclen requires init_from")
+    if _cyclen_masked_mode(cfg) and not cfg.init_from:
+        raise ValueError(
+            "freeze_trunk_cyclen / trunk_finetune_lr_mult requires init_from")
     champ_states = (_load_champion_member_states(cfg.init_from)
                     if cfg.init_from else None)
     if champ_states is not None:
         print(f"=== init-from {cfg.init_from}: {len(champ_states)} champion "
-              f"member(s), freeze_trunk_cyclen={cfg.freeze_trunk_cyclen} ===",
+              f"member(s), freeze_trunk_cyclen={cfg.freeze_trunk_cyclen}, "
+              f"trunk_finetune_lr_mult={cfg.trunk_finetune_lr_mult} ===",
               flush=True)
     store_dir = kwargs.get("store_dir", DEFAULT_STORE)
     splits_dir = kwargs.get("splits_dir", DEFAULT_SPLITS)
@@ -2977,12 +3346,13 @@ def fit_cell_calibrations(model_dir: str | Path, *,
         fit_cell_affine_fq, fit_cell_affine_fr, fit_flatness_calibration,
     )
 
-    # Under freeze-and-finetune the cyclen head is byte-identical to the champion,
-    # so its per-cell calibration must be the champion's VERBATIM — re-fitting it
+    # Under freeze-and-finetune -- and under --trunk-finetune-lr-mult, which keeps
+    # the same cyclen row mask -- the cyclen head is byte-identical to the
+    # champion, so its per-cell calibration must be the champion's VERBATIM — re-fitting it
     # against a (possibly grown) store would silently change served cyclen and
     # break the "cyclen == champion" guarantee.  The F_r calibration is still
     # freshly fit.  Copy (never re-fit) the cyclen artifact in this mode.
-    freeze_copy = bool(cfg.freeze_trunk_cyclen) and bool(cfg.init_from)
+    freeze_copy = _cyclen_masked_mode(cfg) and bool(cfg.init_from)
 
     # cbc_max joined 2026-07-29 (debug-panel); f_q, ao_abs and the flatness pair
     # joined the same day once the panel showed every target carries a per-cell
@@ -3121,6 +3491,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="weight of the f_xy val score (within-cell Spearman "
                          "minus z-MAE) added to the composite for best-epoch / "
                          "early-stop selection; 0 (default) = legacy selection")
+    ap.add_argument("--fxy-select-band", type=float, default=None,
+                    help="restrict the f_xy SELECTION Spearman to each GATE "
+                         "cell's low-f_xy band (e.g. 0.50 = the cell median and "
+                         "below), the axis the ranking clause is scored on; "
+                         "1.0 (default) = the legacy whole-cell metric")
+    # --- arm 5: within-cell pairwise rank hinge on the composed f_xy row -----
+    ap.add_argument("--fxy-rank-weight", type=float, default=None,
+                    help="within-cell f_xy pairwise margin-rank hinge weight "
+                         "(default 0.0 = OFF and byte-identical; prereg arm 5 "
+                         "uses 3.0); requires --promote-fxy")
+    ap.add_argument("--fxy-rank-cell", choices=("gate", "legacy"), default=None,
+                    help="cell the f_xy hinge pairs WITHIN: 'gate' (default) = "
+                         "(case_pair, feed), the partition every f_xy gate "
+                         "scores on; 'legacy' = the cyclen cell "
+                         "(feed, e_core-bin, dataset)")
+    ap.add_argument("--fxy-rank-margin-z", type=float, default=None,
+                    help="z-space margin the f_xy hinge demands per pair (0.1)")
+    ap.add_argument("--fxy-rank-min-gap", type=float, default=None,
+                    help="ignore f_xy pairs whose RAW gap is below this "
+                         "(default 0.005; MASTER FXYP repeat noise is 0.000000)")
+    ap.add_argument("--fxy-rank-low-thresh", type=float, default=None,
+                    help="up-weight pairs whose min RAW f_xy is <= this (1.60)")
+    ap.add_argument("--fxy-rank-low-weight", type=float, default=None,
+                    help="weight multiple for those boundary pairs (3.0)")
     ap.add_argument("--distill-targets", default=None,
                     help="path to a prebuilt soft-target cache (lpopt.model.distill); "
                          "enables per-cell teacher distillation on the FULL corpus")
@@ -3178,6 +3572,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                          "output rows so CYCLEN stays byte-identical to the "
                          "champion while F_r + node_peak/map heads adapt; the "
                          "champion's per-cell cyclen calibration is copied verbatim")
+    ap.add_argument("--trunk-finetune-lr-mult", type=float, default=None,
+                    metavar="MULT",
+                    help="(requires --init-from; MUTUALLY EXCLUSIVE with "
+                         "--freeze-trunk-cyclen) keep the CYCLEN half of "
+                         "--freeze-trunk-cyclen but NOT the trunk freeze: the "
+                         "cyclen rows of mu/log_sigma/quantile stay "
+                         "gradient-masked and weight-decay-free, and the "
+                         "champion's cyclen physics prior + per-cell cyclen "
+                         "calibration are still copied verbatim, while the shared "
+                         "trunk TRAINS in its own optimizer group at "
+                         "base_lr*MULT (0.0 = OFF = the legacy path)")
     # --- hires bundle (hires_model_ab_design_20260725.md) ----------------------
     ap.add_argument("--map-decoder", choices=("linear", "multiscale"), default=None,
                     help="map head architecture (default linear = the single 1x1 "
@@ -3270,6 +3675,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg.fxy_prior_on_predicted = bool(args.fxy_prior_on_predicted)
     if args.fxy_select_weight is not None:
         cfg.fxy_select_weight = float(args.fxy_select_weight)
+    if args.fxy_select_band is not None:
+        cfg.fxy_select_band = float(args.fxy_select_band)
+        if not 0.0 < cfg.fxy_select_band <= 1.0:
+            ap.error("--fxy-select-band must be in (0, 1] (1.0 = legacy metric)")
+    if args.fxy_rank_weight is not None:
+        cfg.fxy_rank_weight = float(args.fxy_rank_weight)
+    if args.fxy_rank_cell is not None:
+        cfg.fxy_rank_cell = str(args.fxy_rank_cell)
+    if args.fxy_rank_margin_z is not None:
+        cfg.fxy_rank_margin_z = float(args.fxy_rank_margin_z)
+    if args.fxy_rank_min_gap is not None:
+        cfg.fxy_rank_min_gap = float(args.fxy_rank_min_gap)
+    if args.fxy_rank_low_thresh is not None:
+        cfg.fxy_rank_low_thresh = float(args.fxy_rank_low_thresh)
+    if args.fxy_rank_low_weight is not None:
+        cfg.fxy_rank_low_weight = float(args.fxy_rank_low_weight)
+    if cfg.fxy_rank_weight < 0.0:
+        ap.error("--fxy-rank-weight must be >= 0 (0 = OFF)")
+    if cfg.fxy_rank_weight > 0.0 and not cfg.promote_fxy:
+        # There is no f_xy row to rank without the head; silently training the
+        # seven legacy targets under an "arm 5" command line is the drift the
+        # cond_schema/head_hidden guards exist to stop.
+        ap.error("--fxy-rank-weight > 0 requires --promote-fxy "
+                 "(there is no f_xy head row to rank without it)")
     cfg.auto_fit_cell_calibration = bool(args.auto_cell_calibration)
     cfg.distill_targets = args.distill_targets
     if args.distill_weight is not None:
@@ -3280,6 +3709,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg.freeze_trunk_cyclen = bool(args.freeze_trunk_cyclen)
     if cfg.freeze_trunk_cyclen and not cfg.init_from:
         ap.error("--freeze-trunk-cyclen requires --init-from")
+    if args.trunk_finetune_lr_mult is not None:
+        cfg.trunk_finetune_lr_mult = float(args.trunk_finetune_lr_mult)
+    if cfg.trunk_finetune_lr_mult < 0.0:
+        ap.error("--trunk-finetune-lr-mult must be >= 0 "
+                 "(0 = OFF = freeze/finetune flags off)")
+    if cfg.trunk_finetune_lr_mult > 0.0:
+        if cfg.freeze_trunk_cyclen:
+            ap.error("--trunk-finetune-lr-mult and --freeze-trunk-cyclen are "
+                     "mutually exclusive: the first keeps the cyclen row mask "
+                     "of the second WITHOUT freezing the trunk")
+        if not cfg.init_from:
+            ap.error("--trunk-finetune-lr-mult requires --init-from "
+                     "(there is no champion trunk to fine-tune otherwise)")
     if args.map_decoder is not None:
         cfg.map_head_mode = str(args.map_decoder)
     cfg.map_prior_residual = bool(args.map_prior_residual)
@@ -3332,7 +3774,7 @@ __all__ = [
     "save_member", "load_member", "norm_from_meta", "denormalize",
     "compute_target_norm", "compute_map_norm", "composite_metric",
     "within_case_spearman", "regression_loss", "cyclen_rank_loss",
-    "f_r_rank_loss", "map_fr_consistency_loss",
+    "f_r_rank_loss", "f_xy_rank_loss", "map_fr_consistency_loss",
     "pinball_loss", "residual_target_frame", "attach_cyclen_prior",
     "fit_cell_calibrations", "build_precomputed",
     "map_loss", "traj_loss", "top_k_slot_weight",

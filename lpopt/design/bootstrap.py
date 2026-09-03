@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,15 +32,40 @@ from ..search.genome import (
 from ..vendor.masterrl.dataset import CaseData
 from ..vendor.masterrl.domain import CaseKey
 from ..vendor.masterrl.equilibrium import EquilibriumTolerances
-from ..vendor.masterrl.master import MasterRunner
-from ..search.verify import PurgingEquilibriumRunner
+from ..vendor.masterrl.master import MasterRunError
+from ..search.verify import (
+    NAN_WATCHDOG_POLL_S,
+    NAN_WATCHDOG_STREAK,
+    PurgingEquilibriumRunner,
+    WatchdogMasterRunner,
+    _mas_out_shows_nan,
+)
 from .coredeck import DEFAULT_CORE, CoreParams, build_cycle1_deck, build_reload_deck
 
 DEFAULT_MASTER_EXE = r"D:\DeCART_MASTER\BIN\master4.0m4_r1.exe"
 
+#: Per-MASTER wall cap on the BOOTSTRAP path only (``[master].bootstrap_timeout_s``).
+#: A healthy bootstrap cycle is 17-24 s; the campaign ``[master].timeout`` (3600)
+#: is untouched by this module.
+DEFAULT_BOOTSTRAP_TIMEOUT_S = 900.0
+
 
 class BootstrapError(RuntimeError):
     pass
+
+
+class MasterDivergenceError(MasterRunError, BootstrapError):
+    """MASTER's flux solve went non-finite and the run was killed by the watchdog.
+
+    MASTER V4.00 MOD3 has no NaN guard (``err < epsflx`` is always False once
+    ``err`` is NaN), so a divergent core loops on ``MGOUTER .. NaN NaN NaN``
+    forever and only the wall timeout ends it — 3,600 s per divergence in the
+    2026-09-03 S6 failure (data/reports/sliceZ_s6_diagnosis_20260903.md P2).
+    The watchdog polls the growing ``MAS_OUT`` and kills the process instead.
+
+    Subclasses ``MasterRunError`` so :class:`PurgingEquilibriumRunner` still
+    trims-and-retains the failing work dir; the dir is ALWAYS retained.
+    """
 
 
 @dataclass
@@ -75,24 +102,104 @@ class BootstrapResult:
 # --------------------------------------------------------------------------- #
 # cy1 (no restart) — driven directly, since MasterRunner always stages a restart
 # --------------------------------------------------------------------------- #
-def run_cycle1(cy1_deck: str, xsl: Path, hff: Path, exe: str | Path, work_dir: Path,
-               *, timeout_s: float = 3600.0) -> Path:
-    """Run the fresh-core cy1 deck; return the produced ``MAS_RST.*`` path."""
+class _BootstrapMasterRunner(WatchdogMasterRunner):
+    """The NaN-watchdog runner, with the kill relabelled for the bootstrap path.
+
+    ``WatchdogMasterRunner`` kills a diverging MASTER and lets the vendor report
+    the generic ``MASTER exited with status <n>``.  On the bootstrap path that
+    message is the only thing an operator sees, so map the sentinel the watchdog
+    dropped into an explicit :class:`MasterDivergenceError`.
+    """
+
+    def run(self, *args, **kwargs):                     # noqa: D102 — see class doc
+        try:
+            return super().run(*args, **kwargs)
+        except MasterDivergenceError:
+            raise
+        except MasterRunError as exc:
+            work_dir = getattr(exc, "work_dir", None)
+            if work_dir is not None and (Path(work_dir) / "NONFINITE_FLUX").is_file():
+                raise MasterDivergenceError(
+                    "MASTER diverged: MAS_OUT tail is all-NaN (non-finite flux); "
+                    "the NaN watchdog killed the run",
+                    work_dir=Path(work_dir),
+                ) from exc
+            raise
+
+
+def _nan_watch(proc: subprocess.Popen, mas_out: Path, diverged: threading.Event,
+               stop: threading.Event, poll_s: float, streak: int) -> None:
+    """Poll the growing ``MAS_OUT``; kill ``proc`` once its tail is all-NaN."""
+    while not stop.wait(poll_s):
+        if proc.poll() is not None:
+            return
+        if not mas_out.is_file():
+            continue
+        if _mas_out_shows_nan(mas_out, streak=streak):
+            diverged.set()
+            try:
+                (mas_out.parent / "NONFINITE_FLUX").write_text(
+                    "non_finite_flux\n", encoding="utf-8")
+            except OSError:
+                pass
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return
+
+
+def run_cycle1(cy1_deck: str, xsl: Path, hff: Path,
+               exe: str | Path | Sequence[str | Path], work_dir: Path,
+               *, timeout_s: float = DEFAULT_BOOTSTRAP_TIMEOUT_S,
+               nan_poll_s: float = NAN_WATCHDOG_POLL_S,
+               nan_streak: int = NAN_WATCHDOG_STREAK) -> Path:
+    """Run the fresh-core cy1 deck; return the produced ``MAS_RST.*`` path.
+
+    A daemon thread polls ``MAS_OUT`` every ``nan_poll_s`` seconds and kills
+    MASTER once ``nan_streak`` consecutive non-blank tail lines are non-finite
+    (:class:`MasterDivergenceError`), instead of burning ``timeout_s``.  The work
+    dir is retained on every failure.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "MAS_INP").write_text(cy1_deck, encoding="utf-8")
     for src, name in ((xsl, "MAS_XSL"), (hff, "MAS_HFF")):
         shutil.copyfile(src, work_dir / name)
     before = {p.name for p in work_dir.glob("MAS_RST.*")}
     log = work_dir / "MASTER.stdout"
+    # a bare path OR an argv sequence (e.g. [python, fake_master.py]), matching
+    # the vendor MasterRunner's `Command` contract
+    command = ([str(exe)] if isinstance(exe, (str, Path))
+               else [str(part) for part in exe])
+    diverged, stop = threading.Event(), threading.Event()
     with open(log, "wb") as fh:
-        proc = subprocess.run([str(exe)], cwd=str(work_dir), stdout=fh,
-                              stderr=subprocess.STDOUT, timeout=timeout_s,
-                              **no_window_flags())
+        proc = subprocess.Popen(command, cwd=str(work_dir), stdout=fh,
+                                stderr=subprocess.STDOUT, **no_window_flags())
+        watch = threading.Thread(
+            target=_nan_watch, name="bootstrap-cy1-nan-watchdog", daemon=True,
+            args=(proc, work_dir / "MAS_OUT", diverged, stop,
+                  max(0.05, float(nan_poll_s)), max(2, int(nan_streak))))
+        watch.start()
+        try:
+            returncode = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            raise BootstrapError(
+                f"cy1 MASTER timed out after {timeout_s:g} s "
+                f"(work directory retained at {work_dir})") from exc
+        finally:
+            stop.set()
+    if diverged.is_set():
+        raise MasterDivergenceError(
+            "cy1 MASTER diverged: MAS_OUT tail is all-NaN (non-finite flux); "
+            "the NaN watchdog killed the run",
+            work_dir=work_dir)
     rst = [p for p in sorted(work_dir.glob("MAS_RST.*")) if p.name not in before]
     if not rst:
         tail = log.read_bytes()[-2000:].decode(errors="replace")
         raise BootstrapError(
-            f"cy1 produced no MAS_RST.* (rc={proc.returncode})\n{tail}")
+            f"cy1 produced no MAS_RST.* (rc={returncode})\n{tail}")
     if len(rst) != 1:
         raise BootstrapError(f"cy1 produced {len(rst)} MAS_RST.* files: {rst}")
     return rst[0]
@@ -139,7 +246,7 @@ def make_band_restart(pkg_dir: str | Path, pair: str, feed: int, rng,
                       max_cycles: int = 16, consecutive: int = 2,
                       tolerances=None, enable_pin_burnup: bool = True,
                       hm_mtu: float | None = None,
-                      timeout_s: float = 3600.0,
+                      timeout_s: float = DEFAULT_BOOTSTRAP_TIMEOUT_S,
                       keep_work: bool = False,
                       purge_intermediate: bool = True,
                       cy1_cap_efpd: float | None = None) -> BootstrapResult:
@@ -202,8 +309,12 @@ def make_band_restart(pkg_dir: str | Path, pair: str, feed: int, rng,
         template_path.write_text(reload_deck, encoding="utf-8")
 
         # 3. drive the equilibrium chain
-        master = MasterRunner(pkg, str(exe), work_root=work_root / "master",
-                              timeout=timeout_s, keep_success=True)
+        # _BootstrapMasterRunner = the NaN watchdog (verify.WatchdogMasterRunner)
+        # + an explicit MasterDivergenceError.  Without it a divergent reload
+        # cycle loops on `MGOUTER .. NaN` and burns the whole timeout
+        # (data/reports/sliceZ_s6_diagnosis_20260903.md).
+        master = _BootstrapMasterRunner(pkg, str(exe), work_root=work_root / "master",
+                                        timeout=timeout_s, keep_success=True)
         tol = (tolerances if tolerances is not None
                else EquilibriumTolerances())
         # keep_success=True keeps the FINAL cycle's dir (its MAS_RST is copied out
@@ -272,11 +383,13 @@ def make_band_restart(pkg_dir: str | Path, pair: str, feed: int, rng,
 
 
 __all__ = [
+    "DEFAULT_BOOTSTRAP_TIMEOUT_S",
     "BootstrapError",
     "BootstrapResult",
     "DEFAULT_MASTER_EXE",
     "estimate_discharge_burnup",
     "library_aliases",
+    "MasterDivergenceError",
     "make_band_restart",
     "run_cycle1",
 ]

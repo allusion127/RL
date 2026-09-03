@@ -1699,3 +1699,29 @@ position 40 E2 1건은 원문이 실제로 `y`를 안 찍은 케이스 = "움직
 `hgd569_degeneracy_memo_20260830.md` · `phaseA2_ood_conformal_20260829.md` ·
 `policy_v2_serving_ab_prereg_20260829_DRAFT.md` · `tripletype_f125_r2_results_20260829.md` ·
 `RL_core_loading_engineer_AI_review_2026-08-29.md`(저장소 외부, 독립 검토).*
+
+---
+
+## 2026-09-03 업데이트
+
+**샘플 효율 KPI.** `sample_efficiency_kpi_20260903.md`(+png)가 캠페인당 검증 예산 대비 개선폭을
+정량화했고, `sample_efficiency_control_prereg_20260903_DRAFT.md`가 대조군을 사전등록했다.
+
+**능동 프런티어 루프 사양.** `active_frontier_loop_spec_20260903.md` — 탐색·검증·재학습 루프를
+상시 가동하는 사양.
+
+**Assembly-on-demand.** DeCART2D 서로게이트로 스코핑 → 실 DeCART2D 웨이브 → HGC 재계산 →
+라이브러리 재빌드 → MASTER 부트스트랩까지 이어지는 신규 파이프라인. 설계 v2·태스크 분해·
+slice Z 사전등록(부록 포함)·러너북·r1 구현 기록·σ-체인 역추정·S6 진단이 한 세트로 등록됐다
+(`assembly_on_demand_design_v2_20260903.md` 외 6편). slice Z는 **설계·러너북 완료, 실집행은
+호스트 계정 접근성 이슈로 보류**다.
+
+**F_r 1.35 타당성 스코핑.** `fr135_feasibility_scoping_20260903.md` — 핀 첨두 대 집합체 첨두
+어느 쪽이 병목인지 스코핑.
+
+**bd_backfill_plan.** `bd_backfill_plan_20260903.md` — 연소도 백필 계획.
+
+**신규 코드.** `lpopt/design/{lattice,screen,opscreen_chain,need,hgc_gates,package,library,
+bootstrap,compliance,spec}.py`, `lpopt/search/{sdm_mtc,coverage}.py`,
+`lpopt/tools/kpi_calls_to_frontier.py`, `train_policy_v3.py`, `mine_policy_corpus.py`,
+`scoping_mesh.py`.
