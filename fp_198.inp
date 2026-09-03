@@ -1,5 +1,5 @@
 # lpopt FRONTIER KIT deck -- flat_power for 198 (LOW group E/J/K, maps ON).
-# Fleet reshuffle 2026-07-25 rev2 (199 withdrawn = cms-owned): 198 = 100% use,
+# Fleet reshuffle 2026-07-25 rev2 (199 withdrawn = USER-owned): 198 = 100% use,
 # workers=16, use_all_cores=true, host_reserve=0 -> fill all 16 physical cores.
 # Works LOW group E1_E2/J1_J2/K1_K2 (12 cells), excludes L/N/G via --exclude-cells
 # (CLI). seed 810, round-budget 80 (CLI). New champion 20260724_213535.

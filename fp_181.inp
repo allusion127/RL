@@ -1,5 +1,5 @@
 # lpopt FRONTIER KIT deck -- flat_power for 181 (L1_L2 + N1_N2, maps ON).
-# Fleet reshuffle 2026-07-25 rev2: 181 = FALLBACK (199 withdrawn = cms-owned, so
+# Fleet reshuffle 2026-07-25 rev2: 181 = FALLBACK (199 withdrawn = USER-owned, so
 # 181 is next in fleet priority). workers=16, use_all_cores=true, host_reserve=0 ->
 # fill all 16 physical cores (181 = ctrp-csh2, 16-core HT-off). Works L1_L2 + N1_N2
 # (8 cells), excludes E/J/K/G via --exclude-cells (CLI). seed 820, round-budget 50

@@ -1,12 +1,12 @@
 # lpopt COVERAGE-FILL produce deck -- 198 STAGE 3 (199's orphaned share).
-# 2026-07-25: 199 is EXCLUDED from scheduling (cms returned 09:22, second cycle),
+# 2026-07-25: 199 is EXCLUDED from scheduling (USER returned 09:22, second cycle),
 # so its share moves here.  199 already produced 139 converged labels on the three
 # f121 cells (63/37/39) before it died; those are merged into the main store, so
 # `produce` resumes and only makes the ~311 remaining.
 # PREREQUISITE: ship the MERGED store to 198 before launching, or 198 cannot see
 # the 139 and will redo them (~3 h of wasted MASTER).
 # 2026-07-25 fleet change: 181 PERMANENTLY EXCLUDED (owner keeps using it); 199
-# RETURNS as a worker (cms job ended -- verified master=0/python=0/cpu=1%).
+# RETURNS as a worker (USER job ended -- verified master=0/python=0/cpu=1%).
 # This deck is 181's former share, moved to 199 verbatim except workers/seed.
 # Directive 2026-07-25: coverage-driven gap filling via the produce (DoE) path.
 #
@@ -19,7 +19,7 @@
 #      strata are brand-new (band x feed) territory, the highest-value coverage
 #      cells in the whole grid.
 # 199 = 24 cores, disjoint vs 198 (6.0-6.5) and 104 (ga80).
-# NON-INTRUSION: re-verify owner analysis (cms) IMMEDIATELY before launching.
+# NON-INTRUSION: re-verify owner analysis (USER) IMMEDIATELY before launching.
 
 [flow]
 title = "coverage-fill 198 stage3 (199 share: paramA 5.75-6 + f121, maps ON, seed 1050)"

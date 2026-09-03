@@ -481,7 +481,7 @@ NULL이 나오지 않았으므로 §4.1–§4.3의 귀속 판정은 **전부 moo
 | **D3** | **head σ bar가 resume에서 유실됐다.** wave 11–12(call 89–100)가 head 자체 σ(0.054–0.196)로 서빙됐다 — §6.0의 `exploit` 재구성으로 증명. | 원인: `_save_champion` 이 쓰는 run-dir checkpoint에 **`ensemble.json` 이 없다**(`champion_wave_*/` 확인). `fxy_sigma_barred` 는 그 파일의 `fxy_head.serve_sigma` 를 읽으므로(`model_api.py:610-626`), resume이 champion을 재적재하는 순간 **G4 bar가 조용히 풀린다.** 영향: 마지막 12 call의 acquisition은 사전등록 §9.1 STAMP가 못 박은 규약과 다른 UCB를 썼다. **frontier에는 영향 없음**(1.5322는 call 57, wave 11·12는 무개선). **코드 결함으로 등록하며 r2 이전 수정 필요** |
 | **D4** | launcher hash 불일치. §9.1 STAMP는 `36ACB60D…`(9,537 B), 현재 `D8345C2B…`(9,614 B). | 치환 stamp 이후 launcher가 다시 편집됐다(주석 추가로 보임). deck·store gate 로직 자체는 §9.1 값을 그대로 들고 있다. **재실행 전 재stamp 필요** |
 | **D5** | store가 launcher의 `$wantStore` 를 지나쳤다. `$wantStore = 72516916…`(75,793행), 현재 `255F0E41…`(**75,893행**). | r1의 100행이 merge된 정상 진행. **지금 launcher를 그대로 돌리면 `MINFXY1 REFUSED: store sha256 mismatch` 로 거부된다** — 의도된 동작이며, r2 deck은 자기 값으로 stamp해야 한다 |
-| **D6** | **host 이관 199 → 181.** 사전등록 §9.3은 "**199 전용**"을 등록했다. | `orchestration/migration_stop_199_20260830T083229.json`: 08:32, wave 11, spent 88/100, 사유 "user-directed continuation on 181", `stopped: true`. HOST_181(CTRP-CSH2)이 09:15 `rc=0` 로 완료. **call 1–88 = 199, call 89–100 = 181.** run dir의 `labels.jsonl`·`state.json` 은 181 receipt의 sha256과 **byte-identical** 이므로 canonical 판은 181이다. D3가 정확히 이 이관 지점에서 발생했다 |
+| **D6** | **host 이관 199 → 181.** 사전등록 §9.3은 "**199 전용**"을 등록했다. | `orchestration/migration_stop_199_20260830T083229.json`: 08:32, wave 11, spent 88/100, 사유 "user-directed continuation on 181", `stopped: true`. HOST_181(DESKTOP_HOST_181)이 09:15 `rc=0` 로 완료. **call 1–88 = 199, call 89–100 = 181.** run dir의 `labels.jsonl`·`state.json` 은 181 receipt의 sha256과 **byte-identical** 이므로 canonical 판은 181이다. D3가 정확히 이 이관 지점에서 발생했다 |
 | **D-LOG** | `selection.json` 이 `f_xy` 예측을 기록하지 않는다. `pred_mean` 은 7열 surrogate(`f_r, cbc_max, f_q, cyclen, ao_abs, max_assembly_burnup, max_pin_burnup`)뿐이고, `ScoredPool.fxy_ucb` / head mean / 후보 pool 전체는 버려진다(`campaign.py:2593-2632`). | 그래서 §6은 checkpoint 재적재로 복원해야 했고, §6.3의 regret은 **평가된 8개** 위에서만 정의할 수 있었다(pool 전체 랭킹 비교 불가). **`min_fxy` 라운드에서 목적축 예측을 남기지 않는 것은 판독 결함**이다. 별도 작업으로 수정 중 |
 
 ---
@@ -518,7 +518,7 @@ run-dir 산출물 (HOST_181 completion receipt `fpcamp_resume_181_complete_v1` �
 | — | HOST_199, wave 0–10 실행, spent 88/100 | `fpcamp_minfxy_t6t4_f121_r1_out.log` line 4–14 |
 | wave 10 직후 | 프로세스 사망 → cmd 오류 1줄(`파일 이름, 디렉터리 이름 또는 볼륨 레이블 구문이…`) 후 재기동 | log line 15–16 |
 | 08:32:24 | **migration stop.** wave 11, spent 88, best_fxy 1.5322 고정. `state`/`status`/`labels` sha 봉인 | `orchestration/migration_stop_199_20260830T083229.json` |
-| ~08:3x–09:15 | **HOST_181 (CTRP-CSH2) resume**, wave 11·12 실행, spent 100/100 | `resume_181.stdout.log`, receipt |
+| ~08:3x–09:15 | **HOST_181 (DESKTOP_HOST_181) resume**, wave 11·12 실행, spent 100/100 | `resume_181.stdout.log`, receipt |
 | **09:15:13** | **canonical 완료 `rc=0`**, `report.md` 작성, SDM/MTC gate "not run" | receipt `fpcamp_resume_181_complete_v1` |
 | ~09:45, ~10:16 | HOST_199에서 obsolete duplicate resume 2회 (log의 banner 3회 반복 = spent=88 재기동) | log line 17–24 |
 | 10:15:56 | **duplicate stop.** "199 duplicate resume is obsolete because canonical campaign completed 100/100 on 181; freeze for E migration", `labels: 88`, `master: 0` | `orchestration/duplicate_stop_for_e_migration_20260830T1016.json` |

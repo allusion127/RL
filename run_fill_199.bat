@@ -1,6 +1,6 @@
 @echo off
 REM 199 coverage-fill (paramA 5.75-6 maps + NEW f121 cells). 181's former share.
-REM NON-INTRUSION: confirm cms has not returned (master=0) before running.
+REM NON-INTRUSION: confirm USER has not returned (master=0) before running.
 setlocal
 REM Console/stdout encoding (incident 2026-08-30): stdout here is REDIRECTED to a
 REM log file, so Windows picks the ANSI codepage (cp949 on these boxes) for it and
